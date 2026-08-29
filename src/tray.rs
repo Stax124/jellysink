@@ -51,6 +51,9 @@ fn jellyfin_icons() -> Vec<ksni::Icon> {
 }
 
 impl ksni::Tray for CastTray {
+    // Left clicking the icon should open the menu as right clicking does, rather than doing nothing.
+    const MENU_ON_ACTIVATE: bool = true;
+
     fn id(&self) -> String {
         APP_NAME.into()
     }
@@ -61,10 +64,6 @@ impl ksni::Tray for CastTray {
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         jellyfin_icons()
-    }
-
-    fn activate(&mut self, _x: i32, _y: i32) {
-        // Left-click is a no-op; quit via the menu, `jellysink stop`, or SIGTERM.
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
