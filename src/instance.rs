@@ -35,7 +35,25 @@ impl InstanceLock {
     }
 }
 
-pub async fn listen_stop(paths: &Paths, shutdown: Arc<Notify>) -> color_eyre::Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstanceCommand {
+    Stop,
+    Restart,
+}
+
+pub fn parse_instance_command(buf: &str) -> Option<InstanceCommand> {
+    match buf.trim() {
+        "stop" => Some(InstanceCommand::Stop),
+        "restart" => Some(InstanceCommand::Restart),
+        _ => None,
+    }
+}
+
+pub async fn listen_stop(
+    paths: &Paths,
+    shutdown: Arc<Notify>,
+    restart: Arc<Notify>,
+) -> color_eyre::Result<()> {
     let sock = paths.stop_socket();
     let _ = std::fs::remove_file(&sock);
     let listener =
@@ -53,13 +71,23 @@ pub async fn listen_stop(paths: &Paths, shutdown: Arc<Notify>) -> color_eyre::Re
                 match accepted {
                     Ok((mut stream, _)) => {
                         let mut buf = vec![0u8; 64];
-                        match tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await {
-                            Ok(n) if std::str::from_utf8(&buf[..n]).unwrap_or("").contains("stop") => {
-                                tracing::info!("stop requested");
-                                shutdown.notify_waiters();
-                                break;
+                        if let Ok(n) =
+                            tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await
+                        {
+                            match parse_instance_command(
+                                std::str::from_utf8(&buf[..n]).unwrap_or(""),
+                            ) {
+                                Some(InstanceCommand::Stop) => {
+                                    tracing::info!("stop requested");
+                                    shutdown.notify_waiters();
+                                    break;
+                                }
+                                Some(InstanceCommand::Restart) => {
+                                    tracing::info!("restart requested");
+                                    restart.notify_waiters();
+                                }
+                                None => {}
                             }
-                            _ => {}
                         }
                     }
                     Err(e) => {
@@ -78,13 +106,21 @@ pub fn is_running(paths: &Paths) -> bool {
 }
 
 pub fn request_stop(paths: &Paths) -> color_eyre::Result<()> {
+    write_instance_command(paths, b"stop\n")
+}
+
+pub fn request_restart(paths: &Paths) -> color_eyre::Result<()> {
+    write_instance_command(paths, b"restart\n")
+}
+
+fn write_instance_command(paths: &Paths, msg: &[u8]) -> color_eyre::Result<()> {
     let sock = paths.stop_socket();
     if !sock.exists() {
         return Err(usage_err("jellysink is not running"));
     }
     let mut stream =
         StdUnixStream::connect(&sock).wrap_err("connecting to the running instance")?;
-    stream.write_all(b"stop\n")?;
+    stream.write_all(msg)?;
     Ok(())
 }
 
@@ -125,5 +161,21 @@ mod tests {
             let _a = InstanceLock::acquire(&paths).unwrap();
         }
         let _b = InstanceLock::acquire(&paths).unwrap();
+    }
+
+    #[test]
+    fn parse_instance_command_stop_and_restart() {
+        assert_eq!(parse_instance_command("stop"), Some(InstanceCommand::Stop));
+        assert_eq!(
+            parse_instance_command("restart\n"),
+            Some(InstanceCommand::Restart)
+        );
+        assert_eq!(
+            parse_instance_command("  restart  "),
+            Some(InstanceCommand::Restart)
+        );
+        assert_eq!(parse_instance_command("stopping"), None);
+        assert_eq!(parse_instance_command("stop-please"), None);
+        assert_eq!(parse_instance_command(""), None);
     }
 }

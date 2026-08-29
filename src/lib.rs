@@ -9,6 +9,7 @@ pub mod media;
 pub mod mpv;
 pub mod report;
 pub mod runtime;
+pub mod terminal;
 pub mod tracing;
 pub mod tray;
 pub mod update;

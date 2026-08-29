@@ -106,27 +106,11 @@ impl ksni::Tray for CastTray {
         APP_NAME.into()
     }
 
-    fn status(&self) -> ksni::Status {
-        if self.pending_version.is_some() {
-            ksni::Status::NeedsAttention
-        } else {
-            ksni::Status::Active
-        }
-    }
-
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         if self.pending_version.is_some() {
             jellyfin_update_icons()
         } else {
             jellyfin_icons()
-        }
-    }
-
-    fn attention_icon_pixmap(&self) -> Vec<ksni::Icon> {
-        if self.pending_version.is_some() {
-            jellyfin_update_icons()
-        } else {
-            Vec::new()
         }
     }
 
@@ -239,11 +223,19 @@ mod tests {
     }
 
     #[test]
-    fn pending_update_requests_attention() {
+    fn pending_update_stays_active() {
         let mut t = tray();
         assert_eq!(t.status(), ksni::Status::Active);
         t.set_pending("1.2.3".into());
-        assert_eq!(t.status(), ksni::Status::NeedsAttention);
+        assert_eq!(
+            t.status(),
+            ksni::Status::Active,
+            "NeedsAttention makes hosts emphasize/resize the tray icon"
+        );
+        assert!(
+            t.attention_icon_pixmap().is_empty(),
+            "attention pixmap is what NeedsAttention hosts swap in"
+        );
     }
 
     #[test]
@@ -266,7 +258,15 @@ mod tests {
         let mut t = tray();
         t.set_pending("1.2.3".into());
         let pending = t.icon_pixmap();
-        let attention = t.attention_icon_pixmap();
+
+        assert_eq!(
+            idle.iter().map(|i| (i.width, i.height)).collect::<Vec<_>>(),
+            pending
+                .iter()
+                .map(|i| (i.width, i.height))
+                .collect::<Vec<_>>(),
+            "badge must not change pixmap dimensions"
+        );
 
         let idle_large = idle
             .iter()
@@ -287,8 +287,8 @@ mod tests {
             "badge should sit in a corner, not over the logo"
         );
         assert!(
-            !attention.is_empty(),
-            "NeedsAttention hosts should also get a badged attention icon"
+            t.attention_icon_pixmap().is_empty(),
+            "do not ship an attention pixmap; hosts may swap size when emphasizing"
         );
     }
 
