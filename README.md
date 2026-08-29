@@ -70,7 +70,7 @@ systemctl --user enable --now jellysink
 
 Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink run` yourself.
 
-`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray gets an **Install update** item; choosing it replaces the binary and restarts the daemon. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way.
+`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon badges and requests attention, and the menu gets an **Install update** item; choosing it replaces the binary and restarts the daemon. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way.
 
 ### From source
 
