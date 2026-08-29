@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # X.Y.Z (no leading v). GitHub tag filters are globs, not regex.
+      - "[0-9]*.[0-9]*.[0-9]*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-version:
+    name: Ensure Tag Matches Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Check Cargo Version Matches Tag
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          tag="${GITHUB_REF_NAME}"
+          echo "Cargo.toml version: ${cargo_version}"
+          echo "Git tag: ${tag}"
+          if [ "${tag}" != "${cargo_version}" ]; then
+            echo "Tag ${tag} does not match Cargo.toml version ${cargo_version}"
+            exit 1
+          fi
+
+  build:
+    needs: check-version
+    name: build-${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cargo: cargo
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cargo: cross
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Install cross
+        if: matrix.cargo == 'cross'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: ${{ matrix.cargo }} build --release --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          mv jellysink ../../../jellysink-${{ matrix.target }}
+          cd -
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jellysink-${{ matrix.target }}
+          path: jellysink-${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*

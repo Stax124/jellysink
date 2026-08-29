@@ -1,0 +1,17 @@
+[Unit]
+Description=Forward Jellfin streams to your MPV player
+After=graphical-session.target dbus.service
+Requires=dbus.service
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/jellysink
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=graphical-session.target

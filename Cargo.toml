@@ -1,0 +1,79 @@
+[package]
+name = "jellysink"
+version = "0.1.0"
+edition = "2024"
+description = "Headless Jellyfin cast target that plays in MPV"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4", default-features = false, features = [
+    "std",
+    "derive",
+    "help",
+    "usage",
+    "error-context",
+] }
+color-eyre = "0.6"
+dialoguer = { version = "0.12.0", default-features = false, features = [
+    "password",
+] }
+directories = "6"
+futures-util = { version = "0.3", features = ["sink"] }
+ico = "0.5"
+ksni = "0.3"
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "rustls-no-provider",
+] }
+rustix = { version = "1", features = ["fs", "process", "system"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "logging",
+    "std",
+    "tls12",
+] }
+self_update = { version = "1.1", default-features = false, features = [
+    "github",
+    "reqwest",
+    "rustls",
+    "async",
+    "checksums",
+    "progress-bar",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+    "rt",
+    "macros",
+    "process",
+    "signal",
+    "net",
+    "io-util",
+    "time",
+    "sync",
+    "fs",
+] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = [
+    "connect",
+    "rustls-tls-native-roots",
+] }
+toml = "1"
+tracing = "0.1"
+tracing-error = "0.2"
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "ansi",
+    "std",
+    "smallvec",
+    "tracing-log",
+] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
