@@ -20,7 +20,7 @@ Global CLI flag: `--config DIR` (default `~/.config/jellysink`).
 
 Note: `mpv::tests::ipc_roundtrip_against_fake_socket` creates a Unix domain socket and fails with `PermissionDenied` in sandboxes that block socket creation. It passes on a normal machine — don't "fix" it for sandbox environments.
 
-Release tags are `X.Y.Z` with **no** `v` prefix and must match `Cargo.toml` `version`. GitHub Actions (`.github/workflows/`) runs fmt/clippy/test on push and PR, and on a matching tag builds musl binaries for x86_64 and aarch64.
+Release tags are `X.Y.Z` with **no** `v` prefix and must match `Cargo.toml` `version`. GitHub Actions (`.github/workflows/`) runs fmt/clippy/test and musl release builds (x86_64 and aarch64) on push and PR. A matching tag rebuilds those binaries and publishes the GitHub release.
 
 ## Architecture
 
