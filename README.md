@@ -53,6 +53,43 @@ This project is not trying to be a full replacement for jellyfin-mpv-shim. It is
 - Optional StatusNotifier tray icon (KDE, GNOME AppIndicator, Waybar, …)
 - Self-update from GitHub Releases (`jellysink update`, or **Install update** in the tray)
 
+## Installation
+
+Linux (x86_64 or aarch64). Requires [`mpv`](https://mpv.io/).
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Stax124/jellysink/main/install.sh | sh
+```
+
+This installs a musl binary to `~/.local/bin/jellysink` and a user systemd unit. Then:
+
+```sh
+jellysink login
+systemctl --user enable --now jellysink
+```
+
+Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink run` yourself.
+
+`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray gets an **Install update** item; choosing it replaces the binary and restarts the daemon. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way.
+
+### From source
+
+```bash
+git clone https://github.com/Stax124/jellysink.git
+cd jellysink
+cargo build --release
+install -Dm755 target/release/jellysink ~/.local/bin/jellysink
+install -Dm644 systemd/jellysink.service ~/.config/systemd/user/jellysink.service
+```
+
+Or, without cloning:
+
+```bash
+cargo install --git https://github.com/Stax124/jellysink
+```
+
+A locally built gnu binary still updates from the musl GitHub asset for the same architecture.
+
 ## Usage
 
 ```bash
@@ -120,44 +157,6 @@ glsl-shaders="~~/shaders/Anime4K_*.glsl"
 - [`mpv`](https://mpv.io/) on `PATH` (or set `mpv_path`)
 - A [Jellyfin](https://jellyfin.org/) server
 - Optional: a StatusNotifier tray host
-
-Download a musl binary from [GitHub Releases](https://github.com/Stax124/jellysink/releases) (static, no glibc dependency):
-
-```bash
-# x86_64; use jellysink-aarch64-unknown-linux-musl on ARM
-install -Dm755 jellysink-x86_64-unknown-linux-musl ~/.local/bin/jellysink
-```
-
-A user systemd unit (`systemd/jellysink.service`) starts jellysink with the graphical session and expects that install path. It needs D-Bus for the tray:
-
-```bash
-mkdir -p ~/.config/systemd/user
-curl -fsSLo ~/.config/systemd/user/jellysink.service \
-  https://raw.githubusercontent.com/Stax124/jellysink/master/systemd/jellysink.service
-systemctl --user daemon-reload
-systemctl --user enable --now jellysink
-```
-
-From a clone, `install -Dm644 systemd/jellysink.service ~/.config/systemd/user/jellysink.service` instead of curl.
-
-`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray gets an **Install update** item; choosing it replaces the binary and restarts the daemon. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way.
-
-From source:
-
-```bash
-git clone https://github.com/Stax124/jellysink.git
-cd jellysink
-cargo build --release
-install -Dm755 target/release/jellysink ~/.local/bin/jellysink
-```
-
-Or, without cloning:
-
-```bash
-cargo install --git https://github.com/Stax124/jellysink
-```
-
-The binary is `target/release/jellysink` (or `~/.cargo/bin/jellysink` for `cargo install`). A locally built gnu binary still updates from the musl GitHub asset for the same architecture.
 
 ## Acknowledgements
 

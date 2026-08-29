@@ -91,6 +91,13 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Checksums
+        run: |
+          cd artifacts
+          for f in jellysink-*; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" > "${f}.sha256"
+          done
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
