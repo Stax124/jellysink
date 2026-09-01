@@ -35,7 +35,7 @@ This project is not trying to be a full replacement for jellyfin-mpv-shim. It is
 | Series autoplay                           | ✅         | ✅                 |
 | Pause, seek, volume, audio, and subtitles | ✅         | ✅                 |
 | Progress reporting back to Jellyfin       | ✅         | ✅                 |
-| Next episode list in MPV playlist         | ✅         | ❌                 |
+| MPV playlist integration                  | ✅         | ❌                 |
 | Respects your MPV configuration           | ✅         | ❌                 |
 | GUI for configuration                     | ❌         | ✅                 |
 | Quick Connect                             | ❌         | ✅                 |
