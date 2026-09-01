@@ -27,21 +27,21 @@ I really liked using the [jellyfin-mpv-shim](https://github.com/jellyfin/jellyfi
 
 This project is not trying to be a full replacement for jellyfin-mpv-shim. It is a minimal implementation of its core functionality that I care about in my daily life.
 
-| |jellysink  |  jellyfin-mpv-shim |
-|---|------------------|-----------|
-| Language | Rust | Python |
-| Idle RAM usage | ~10 MB | ~250 MB |
-| DirectPlay / DirectStream | ✅ | ✅ |
-| Series autoplay | ✅ | ✅ |
-| Pause, seek, volume, audio, and subtitles | ✅ | ✅ |
-| Progress reporting back to Jellyfin | ✅ | ✅ |
-| Next episode list in MPV playlist | ✅ | ❌ |
-| Respects your MPV configuration | ✅ | ❌ |
-| GUI for configuration | ❌ | ✅ |
-| Quick Connect | ❌ | ✅ |
-| Transcoding | ❌ | ✅ |
-| SyncPlay | ❌ | ✅ |
-| Multiple simultaneous streams | ❌ | ✅ |
+|                                           | jellysink | jellyfin-mpv-shim |
+| ----------------------------------------- | --------- | ----------------- |
+| Language                                  | Rust      | Python            |
+| Idle RAM usage                            | ~10 MB    | ~250 MB           |
+| DirectPlay / DirectStream                 | ✅         | ✅                 |
+| Series autoplay                           | ✅         | ✅                 |
+| Pause, seek, volume, audio, and subtitles | ✅         | ✅                 |
+| Progress reporting back to Jellyfin       | ✅         | ✅                 |
+| Next episode list in MPV playlist         | ✅         | ❌                 |
+| Respects your MPV configuration           | ✅         | ❌                 |
+| GUI for configuration                     | ❌         | ✅                 |
+| Quick Connect                             | ❌         | ✅                 |
+| Transcoding                               | ❌         | ✅                 |
+| SyncPlay                                  | ❌         | ✅                 |
+| Multiple simultaneous streams             | ❌         | ✅                 |
 
 ## Features
 
@@ -70,7 +70,7 @@ systemctl --user enable --now jellysink
 
 Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink run` yourself.
 
-`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray gets an **Install update** item; choosing it replaces the binary and restarts the daemon. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way.
+`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon gets a green-dot badge and the menu gets an **Install update** item; choosing it opens a terminal, shows download progress, replaces the binary, restarts the daemon, then waits for Enter so the window stays open. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way.
 
 ### From source
 
@@ -102,6 +102,8 @@ jellysink update --check # print whether a newer release exists
 
 Cast a movie or episode to **jellysink** from the Jellyfin web/Android/iOS app. mpv opens with your normal config. Pause, seek, volume, mute, fullscreen, audio, and subtitles work from the controlling app. A series episode continues into the next one (aired order, across seasons) until the last episode or Stop.
 
+When you cast an episode, the episodes that aired before it are loaded into mpv's playlist too, so the playlist selector (and Previous) can reach the whole series rather than only what follows. Set `prepend_previous` to `false` to only look for next episodes.
+
 Quit with the tray icon, `jellysink stop`, SIGTERM, or SIGINT.
 
 ```bash
@@ -117,12 +119,13 @@ Bare host names become `http://host:8096`. Write `:80` if you really want port 8
 
 ## Configuration
 
-| Key         | Default | Notes |
-|-------------|---------|--------|
-| `mpv_path`  | `mpv`   | Binary used to spawn the player |
-| `log_level` | `info`  | `tracing` filter (`error`, `warn`, `info`, `debug`, `trace`); `RUST_LOG` overrides this if set |
-| `autoplay`  | `true`  | Next episode in aired order; `false` stops after the current item |
-| `mpv_args`  | _(empty)_ | Extra argv on top of your mpv config, never instead of it |
+| Key                | Default   | Notes                                                                                                 |
+| ------------------ | --------- | ----------------------------------------------------------------------------------------------------- |
+| `mpv_path`         | `mpv`     | Binary used to spawn the player                                                                       |
+| `log_level`        | `info`    | `tracing` filter (`error`, `warn`, `info`, `debug`, `trace`); `RUST_LOG` overrides this if set        |
+| `autoplay`         | `true`    | Next episode in aired order; `false` stops after the current item                                     |
+| `prepend_previous` | `true`    | Also load the episodes that aired *before* the current one, so mpv's playlist selector can reach them |
+| `mpv_args`         | _(empty)_ | Extra argv on top of your mpv config, never instead of it                                             |
 
 `--config DIR` (global) uses a different configuration directory. The default is `~/.config/jellysink`.
 
@@ -150,6 +153,11 @@ glsl-shaders="~~/shaders/Anime4K_*.glsl"
 - Quick Connect, SyncPlay, the in-window library, Live TV UI, offline sync.
 
 ## Development
+
+Design notes for the trickier subsystems live in [`specs/`](specs/):
+
+- [`specs/playlist.md`](specs/playlist.md) — how the queue is built, when
+  episode data is fetched, and how entries reach mpv's playlist.
 
 ### Requirements
 

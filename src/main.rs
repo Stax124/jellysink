@@ -40,6 +40,9 @@ enum Command {
         /// Only check; do not download
         #[arg(long)]
         check: bool,
+        /// Install from the tray: show progress, restart the daemon, wait for Enter
+        #[arg(long, hide = true)]
+        from_tray: bool,
     },
 }
 
@@ -49,7 +52,7 @@ enum ConfigCmd {
     Path,
     /// Print one key, or the whole file
     Get { key: Option<String> },
-    /// Set a key (mpv_path, mpv_args, log_level, autoplay)
+    /// Set a key (mpv_path, mpv_args, log_level, autoplay, prepend_previous)
     Set {
         key: String,
         /// Values may start with `-` (e.g. `mpv_args --fullscreen`).
@@ -94,7 +97,7 @@ async fn try_main() -> Result<()> {
         },
         Command::Run => cli::cmd_run(paths).await?,
         Command::Stop => cli::cmd_stop(&paths)?,
-        Command::Update { check } => cli::cmd_update(&paths, check).await?,
+        Command::Update { check, from_tray } => cli::cmd_update(&paths, check, from_tray).await?,
     }
     Ok(())
 }

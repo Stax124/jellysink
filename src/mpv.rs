@@ -35,16 +35,46 @@ pub fn encode_command(request_id: i64, args: &[Value]) -> String {
     format!("{v}\n")
 }
 
-/// One-entry M3U so mpv's playlist picker has a title before the file is opened.
-/// `loadfile` `force-media-title` and `playlist/N/title` do not populate unloaded entries.
-pub fn playlist_entry_m3u(title: &str, url: &str) -> String {
-    let title = title.replace(['\r', '\n'], " ");
-    format!("#EXTM3U\n#EXTINF:-1,{title}\n{url}\n")
+/// M3U with one `#EXTINF` entry per `(title, url)`.
+///
+/// `loadfile` `force-media-title` and `playlist/N/title` do not populate
+/// unloaded entries — this is what gives the selector its titles.
+pub fn playlist_m3u<I, T, U>(entries: I) -> String
+where
+    I: IntoIterator<Item = (T, U)>,
+    T: AsRef<str>,
+    U: AsRef<str>,
+{
+    let mut body = String::from("#EXTM3U\n");
+    for (title, url) in entries {
+        let title = title.as_ref().replace(['\r', '\n'], " ");
+        body.push_str("#EXTINF:-1,");
+        body.push_str(&title);
+        body.push('\n');
+        body.push_str(url.as_ref());
+        body.push('\n');
+    }
+    body
 }
 
 /// Args for `loadlist` `append` command to add a file to the playlist
 pub fn loadlist_append_args(path: &str) -> [Value; 3] {
     [json!("loadlist"), json!(path), json!("append")]
+}
+
+/// Args for `loadlist` `insert-at` to splice entries in at `index`.
+///
+/// `insert-at` and the index are separate arguments; `"insert-at0"` as a single
+/// token is `invalid parameter`. Inserting at or below the current position
+/// does not interrupt playback — mpv shifts `playlist-pos` by the number
+/// inserted and keeps playing the same file.
+pub fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
+    [
+        json!("loadlist"),
+        json!(path),
+        json!("insert-at"),
+        json!(index),
+    ]
 }
 
 /// `yes` pauses only on the last playlist entry and auto-plays the rest,
@@ -229,14 +259,47 @@ impl MpvSession {
         Ok(())
     }
 
-    pub async fn loadfile_append(&mut self, url: &str, title: &str) -> color_eyre::Result<()> {
+    /// Appends every entry in one `loadlist`. Titles come from `#EXTINF`.
+    pub async fn loadlist_append(&mut self, entries: &[(&str, &str)]) -> color_eyre::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
         let path = self.socket.with_file_name("append.m3u");
-        tokio::fs::write(&path, playlist_entry_m3u(title, url)).await?;
-        let _ = tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).await;
-        let result = self
-            .command(loadlist_append_args(&path.to_string_lossy()).to_vec())
-            .await;
-        let _ = tokio::fs::remove_file(&path).await;
+        self.loadlist(&path, playlist_m3u(entries.iter().copied()), None)
+            .await
+    }
+
+    /// Splices every entry in at `index` in one `loadlist`. Playback is
+    /// unaffected; mpv shifts `playlist-pos` by the number inserted.
+    pub async fn loadlist_insert_at(
+        &mut self,
+        entries: &[(&str, &str)],
+        index: usize,
+    ) -> color_eyre::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let path = self.socket.with_file_name("insert.m3u");
+        self.loadlist(&path, playlist_m3u(entries.iter().copied()), Some(index))
+            .await
+    }
+
+    /// Writes an M3U next to the IPC socket, loads it, then removes it.
+    /// A temp file is what gives each entry its title before it is opened.
+    async fn loadlist(
+        &mut self,
+        path: &Path,
+        body: String,
+        index: Option<usize>,
+    ) -> color_eyre::Result<()> {
+        tokio::fs::write(path, body).await?;
+        let _ = tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await;
+        let args: Vec<Value> = match index {
+            Some(i) => loadlist_insert_at_args(&path.to_string_lossy(), i).to_vec(),
+            None => loadlist_append_args(&path.to_string_lossy()).to_vec(),
+        };
+        let result = self.command(args).await;
+        let _ = tokio::fs::remove_file(path).await;
         result?;
         Ok(())
     }
@@ -498,21 +561,21 @@ mod tests {
     }
 
     #[test]
-    fn playlist_entry_m3u_puts_title_in_extinf() {
-        let body = playlist_entry_m3u(
-            "Show - s1e02 - Name",
-            "http://h/Videos/i/stream?static=true&ApiKey=t",
-        );
-        assert_eq!(
-            body,
-            "#EXTM3U\n#EXTINF:-1,Show - s1e02 - Name\nhttp://h/Videos/i/stream?static=true&ApiKey=t\n"
-        );
+    fn playlist_m3u_strips_newlines_from_title() {
+        let body = playlist_m3u([("A\nB\rC", "http://h/x")]);
+        assert_eq!(body, "#EXTM3U\n#EXTINF:-1,A B C\nhttp://h/x\n");
     }
 
     #[test]
-    fn playlist_entry_m3u_strips_newlines_from_title() {
-        let body = playlist_entry_m3u("A\nB\rC", "http://h/x");
-        assert_eq!(body, "#EXTM3U\n#EXTINF:-1,A B C\nhttp://h/x\n");
+    fn playlist_m3u_writes_every_entry() {
+        let body = playlist_m3u([
+            ("Show - s1e01 - One", "http://h/a"),
+            ("Show - s1e02 - Two", "http://h/b"),
+        ]);
+        assert_eq!(
+            body,
+            "#EXTM3U\n#EXTINF:-1,Show - s1e01 - One\nhttp://h/a\n#EXTINF:-1,Show - s1e02 - Two\nhttp://h/b\n"
+        );
     }
 
     #[test]
@@ -524,6 +587,27 @@ mod tests {
         assert_eq!(cmd[0], "loadlist");
         assert_eq!(cmd[1], "/tmp/append.m3u");
         assert_eq!(cmd[2], "append");
+    }
+
+    #[test]
+    fn loadlist_insert_at_keeps_the_index_a_separate_argument() {
+        // "insert-at0" as one token is `invalid parameter` in mpv.
+        let line = encode_command(1, &loadlist_insert_at_args("/tmp/insert.m3u", 0));
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        let cmd = v["command"].as_array().unwrap();
+        assert_eq!(cmd.len(), 4);
+        assert_eq!(cmd[0], "loadlist");
+        assert_eq!(cmd[1], "/tmp/insert.m3u");
+        assert_eq!(cmd[2], "insert-at");
+        assert_eq!(cmd[3], 0);
+    }
+
+    #[test]
+    fn loadlist_insert_at_uses_the_given_index() {
+        let line = encode_command(1, &loadlist_insert_at_args("/tmp/insert.m3u", 3));
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        let cmd = v["command"].as_array().unwrap();
+        assert_eq!(cmd[3], 3);
     }
 
     #[test]
