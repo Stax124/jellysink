@@ -82,6 +82,21 @@ impl Queue {
         self.items.extend(ids);
     }
 
+    /// Splices `ids` in immediately before the current item, keeping `index`
+    /// on the same item. Returns how many were inserted.
+    ///
+    /// The splice is at `index`, not at 0: mpv's playlist is the contiguous
+    /// window `items[origin..origin + 1 + tail]`, so entries inserted ahead of
+    /// the current item must land inside that window. Splicing at 0 would put
+    /// them before `origin` and leave a hole the window arithmetic cannot see.
+    pub fn insert_before_current(&mut self, ids: Vec<String>) -> usize {
+        let n = ids.len();
+        let at = self.index;
+        self.items.splice(at..at, ids);
+        self.index += n;
+        n
+    }
+
     pub fn advance(&mut self) -> Option<&str> {
         if self.index + 1 < self.items.len() {
             self.index += 1;
@@ -169,11 +184,6 @@ pub fn playlist_eof(
     } else {
         PlaylistEof::Stop
     }
-}
-
-/// `mpv_count` is how many `Queue[origin..]` entries are already in mpv.
-pub fn next_fill_id(queue: &Queue, origin: usize, mpv_count: usize) -> Option<&str> {
-    queue.items.get(origin + mpv_count).map(String::as_str)
 }
 
 /// `playlist-next` / OSC jump ends the old file with `stop`. That is not a user Stop.
@@ -452,13 +462,39 @@ mod tests {
     }
 
     #[test]
-    fn next_fill_id_is_the_first_not_yet_in_mpv() {
-        let q = Queue {
-            items: vec!["a".into(), "b".into(), "c".into()],
+    fn insert_before_current_keeps_index_on_the_same_item() {
+        let mut q = Queue {
+            items: vec!["c".into(), "d".into()],
             index: 0,
         };
-        assert_eq!(next_fill_id(&q, 0, 1), Some("b"));
-        assert_eq!(next_fill_id(&q, 0, 3), None);
-        assert_eq!(next_fill_id(&q, 1, 1), Some("c"));
+        assert_eq!(q.insert_before_current(vec!["a".into(), "b".into()]), 2);
+        assert_eq!(q.items, vec!["a", "b", "c", "d"]);
+        assert_eq!(q.index, 2);
+        assert_eq!(q.current(), Some("c"));
+    }
+
+    #[test]
+    fn insert_before_current_splices_at_the_index_not_at_zero() {
+        // mpv's playlist is items[origin..origin+1+tail]; entries must land
+        // inside that window, so a mid-queue insert stays put.
+        let mut q = Queue {
+            items: vec!["a".into(), "b".into(), "c".into()],
+            index: 2,
+        };
+        assert_eq!(q.insert_before_current(vec!["z".into()]), 1);
+        assert_eq!(q.index, 3);
+        assert_eq!(q.current(), Some("c"));
+        assert_eq!(q.items, vec!["a", "b", "z", "c"]);
+    }
+
+    #[test]
+    fn insert_before_current_nothing_is_a_no_op() {
+        let mut q = Queue {
+            items: vec!["a".into()],
+            index: 0,
+        };
+        assert_eq!(q.insert_before_current(vec![]), 0);
+        assert_eq!(q.index, 0);
+        assert_eq!(q.items, vec!["a"]);
     }
 }

@@ -24,6 +24,13 @@ Release tags are `X.Y.Z` with **no** `v` prefix and must match `Cargo.toml` `ver
 
 ## Architecture
 
+Design notes for the trickier subsystems live in `specs/`:
+
+- `specs/playlist.md` — the queue/mpv window invariant, when episode data is
+  fetched, and why the prepend is split into two phases. **Read this before
+  touching `src/runtime/queue.rs` or `src/runtime/playback.rs`**; the index
+  arithmetic has subtle invariants that are easy to break.
+
 Single binary crate. `src/main.rs` parses the CLI (clap derive) and dispatches; `src/lib.rs` re-exports the modules:
 
 - `cli.rs` — subcommand implementations (`login`, `logout`, `config`, `run`, `stop`, `update`). CLI `update` stops a running daemon; tray **Install update** opens a terminal (`update --from-tray`) and restarts in place.

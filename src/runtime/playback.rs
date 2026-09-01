@@ -20,9 +20,11 @@ impl Runtime {
             return Ok(());
         };
 
-        self.abort_fill();
         self.prepared.clear();
+        self.titles.clear();
         self.mpv_tail = 0;
+        self.mpv_head = 0;
+        self.pending_prepend.clear();
         self.playlist_origin = self.queue.index;
 
         let reuse = self.mpv.is_some();
@@ -84,7 +86,11 @@ impl Runtime {
             index = self.queue.index,
             "playing"
         );
-        self.spawn_playlist_fill();
+        // After `loadfile ... replace` (which wipes mpv's playlist), put the
+        // rest of the window in: remaining episodes at the end, previous
+        // episodes spliced in ahead of the current file.
+        self.fill_forward_into_mpv().await;
+        self.fill_previous_into_mpv().await;
         Ok(())
     }
 
@@ -303,9 +309,11 @@ impl Runtime {
         self.transitioning = false;
         // A stale resume offset must never seek a later item.
         self.pending_start_ticks = None;
-        self.abort_fill();
         self.prepared.clear();
+        self.titles.clear();
         self.mpv_tail = 0;
+        self.mpv_head = 0;
+        self.pending_prepend.clear();
         let live = if let Some(mpv) = self.mpv.as_mut() {
             mpv.time_pos().await.ok()
         } else {

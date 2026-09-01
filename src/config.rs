@@ -64,6 +64,8 @@ pub struct Config {
     pub log_level: String,
     #[serde(default = "default_autoplay")]
     pub autoplay: bool,
+    #[serde(default = "default_prepend_previous")]
+    pub prepend_previous: bool,
 }
 
 fn default_mpv_path() -> String {
@@ -78,12 +80,17 @@ fn default_autoplay() -> bool {
     true
 }
 
+fn default_prepend_previous() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             mpv_path: default_mpv_path(),
             log_level: default_log_level(),
             autoplay: default_autoplay(),
+            prepend_previous: default_prepend_previous(),
         }
     }
 }
@@ -116,6 +123,7 @@ impl Config {
             Some("mpv_path") => Ok(self.mpv_path.clone()),
             Some("log_level") => Ok(self.log_level.clone()),
             Some("autoplay") => Ok(self.autoplay.to_string()),
+            Some("prepend_previous") => Ok(self.prepend_previous.to_string()),
             Some(other) => Err(usage_err(format!("unknown config key {other:?}"))),
         }
     }
@@ -126,6 +134,9 @@ impl Config {
             "log_level" => self.log_level = value.to_string(),
             "autoplay" => {
                 self.autoplay = parse_bool(value)?;
+            }
+            "prepend_previous" => {
+                self.prepend_previous = parse_bool(value)?;
             }
             other => return Err(usage_err(format!("unknown config key {other:?}"))),
         }

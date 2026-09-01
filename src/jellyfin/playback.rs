@@ -57,18 +57,17 @@ impl<'a> PlaybackEndpoints<'a> {
         resp.json().await.wrap_err("decoding PlaybackInfo")
     }
 
-    /// Inclusive listing from `start_item_id` onward, across seasons.
-    /// `StartItemId` is inclusive; `AdjacentTo` is not a neighbour query.
-    pub async fn episodes_from(
-        &self,
-        series_id: &str,
-        start_item_id: &str,
-    ) -> color_eyre::Result<Value> {
+    /// The whole series in aired order, with no `StartItemId` cursor.
+    ///
+    /// `StartItemId` is a forward-only `SkipWhile`, so it can never return the
+    /// episodes *before* the current one. Omitting it is the only way to see
+    /// them; the caller splits the listing at the current item.
+    pub async fn episodes_all(&self, series_id: &str) -> color_eyre::Result<Value> {
         let path = format!(
-            "/Shows/{series_id}/Episodes?userId={}&StartItemId={start_item_id}&Limit=200",
+            "/Shows/{series_id}/Episodes?userId={}&Limit=500",
             self.api.user_id
         );
-        tracing::debug!(path, "GET episodes");
+        tracing::debug!(path, "GET all episodes");
         self.get_json(&path).await
     }
 
