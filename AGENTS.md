@@ -24,11 +24,18 @@ Release tags are `X.Y.Z` with **no** `v` prefix and must match `Cargo.toml` `ver
 
 ## Architecture
 
+Design notes for the trickier subsystems live in `specs/`:
+
+- `specs/playlist.md` — the queue/mpv window invariant, when episode data is
+  fetched, and why the prepend is split into two phases. **Read this before
+  touching `src/runtime/queue.rs` or `src/runtime/playback.rs`**; the index
+  arithmetic has subtle invariants that are easy to break.
+
 Single binary crate. `src/main.rs` parses the CLI (clap derive) and dispatches; `src/lib.rs` re-exports the modules:
 
-- `cli.rs` — subcommand implementations (`login`, `logout`, `config`, `run`, `stop`, `update`). CLI `update` stops a running daemon; tray **Install update** restarts in place.
+- `cli.rs` — subcommand implementations (`login`, `logout`, `config`, `run`, `stop`, `update`). CLI `update` stops a running daemon; tray **Install update** opens a terminal (`update --from-tray`) and restarts in place.
 - `config.rs` — `Paths` (config dir + file locations), `Config` (config.toml), `MpvArgs` (mpv_args.conf, re-read on every mpv spawn), `Credentials` (cred.json, mode 0600), `normalize_server_url` (bare host → `http://host:8096`).
-- `instance.rs` — single-instance lock and the `stop.sock` socket used by `jellysink stop`.
+- `instance.rs` — single-instance lock and the `stop.sock` socket used by `jellysink stop` (`stop`) and tray update (`restart`).
 - `cast.rs` — `CastEvent` enum: the Jellyfin remote-control commands (PlayNow/Pause/Seek/…) parsed from WebSocket messages. Also `Queue` and playlist-EOF helpers (`end_file_action`, `playlist_eof`) so mpv `keep-open` and user Next do not skip an episode.
 - `jellyfin/` — server API: `auth.rs` (login, `Api` client, auth header), `playback.rs` (playback info / endpoints), `profile.rs` (device profile that requests DirectPlay; `PlayableMediaTypes` is video only), `session.rs` (WebSocket URL + message parsing).
 - `media.rs` — turns a Jellyfin item into a prepared mpv play (URL, title, audio/sub track selection).
@@ -36,6 +43,7 @@ Single binary crate. `src/main.rs` parses the CLI (clap derive) and dispatches; 
 - `runtime/` — the daemon loop: `mod.rs` reconnect/backoff, `playback.rs` applies `CastEvent`s to mpv and reports state back, `queue.rs` series autoplay (next episode in aired order, appended to mpv's playlist).
 - `report.rs` — reports playback state back to the Jellyfin session.
 - `tracing.rs` — `init_tracing`; `log_level` from config, overridden by `RUST_LOG` when set. Uses `Targets` (not `EnvFilter`) to keep the binary small.
+- `terminal.rs` — pick a terminal emulator (`xdg-terminal-exec`, `$TERMINAL`, then a known list) and spawn a command in it.
 - `tray.rs` — optional StatusNotifier tray icon (ksni) with a quit item; shows Install update when a newer GitHub release exists.
 - `update.rs` — GitHub Releases self-update (`self_update`): check on daemon start, install via tray or `jellysink update`.
 

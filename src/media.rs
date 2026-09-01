@@ -1,4 +1,4 @@
-use color_eyre::eyre::{WrapErr, eyre};
+use color_eyre::eyre::eyre;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -330,24 +330,43 @@ pub fn mpv_embedded_sid(maps: &StreamMaps, jellyfin_index: i64) -> Option<i64> {
     maps.subtitle_seq.get(&jellyfin_index).copied()
 }
 
-pub fn parse_playback_info(raw: &str) -> color_eyre::Result<Value> {
-    serde_json::from_str(raw).wrap_err("PlaybackInfo JSON")
-}
-
-/// Ids after `current_id` in an inclusive `StartItemId` episode listing.
-/// Empty if `current_id` is missing — fail closed on specials / library churn.
-pub fn remaining_episode_ids(episodes: &Value, current_id: &str) -> Vec<String> {
+/// Splits a full series listing into the ids before and after `current_id`.
+///
+/// Returns `(previous, remaining)`. Empty on both sides when `current_id` is
+/// not in the listing — fail closed on specials / library churn.
+pub fn split_episode_ids(episodes: &Value, current_id: &str) -> (Vec<String>, Vec<String>) {
     let Some(items) = episodes.get("Items").and_then(Value::as_array) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let ids: Vec<String> = items
         .iter()
         .filter_map(|it| it.get("Id").and_then(Value::as_str).map(str::to_string))
         .collect();
     match ids.iter().position(|id| id == current_id) {
-        Some(i) => ids.into_iter().skip(i + 1).collect(),
-        None => Vec::new(),
+        Some(i) => {
+            let (before, after) = ids.split_at(i);
+            (before.to_vec(), after[1..].to_vec())
+        }
+        None => (Vec::new(), Vec::new()),
     }
+}
+
+/// Display titles from a series episode listing, keyed by item id.
+///
+/// Playlist fill uses this so mpv's selector has names without a per-item
+/// `PlaybackInfo` / `GET /Items/{id}` round trip.
+pub fn episode_titles(listing: &Value) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(items) = listing.get("Items").and_then(Value::as_array) else {
+        return out;
+    };
+    for it in items {
+        let Some(id) = it.get("Id").and_then(Value::as_str) else {
+            continue;
+        };
+        out.insert(id.to_string(), display_title(it));
+    }
+    out
 }
 
 pub fn item_type(item: &Value) -> Option<&str> {
@@ -356,6 +375,41 @@ pub fn item_type(item: &Value) -> Option<&str> {
 
 pub fn series_id(item: &Value) -> Option<&str> {
     item.get("SeriesId").and_then(Value::as_str)
+}
+
+/// Whether this item could have previous episodes worth prepending.
+///
+/// Deliberately ignores `has_next`, unlike [`series_expand_skip_reason`]:
+/// Jellyfin sending 6..20 is exactly when we also want 1..5. Also ignores
+/// `autoplay`, which governs continuing *forward*, not what the playlist
+/// selector can reach.
+pub fn prepend_skip_reason(
+    item_type: Option<&str>,
+    series_id: Option<&str>,
+    prepend_previous: bool,
+) -> Option<&'static str> {
+    if !prepend_previous {
+        return Some("prepend_previous disabled");
+    }
+    if item_type != Some("Episode") {
+        return Some("item is not an episode");
+    }
+    if series_id.is_none() {
+        return Some("item has no SeriesId");
+    }
+    None
+}
+
+/// The subset of `ids` not already present in `queue`.
+///
+/// Keeps prepending idempotent: advancing e6 -> e7 leaves e1..e6 already in
+/// the queue ahead of e7, so re-running the expand must not add them twice.
+pub fn ids_missing_from(ids: &[String], queue: &[String]) -> Vec<String> {
+    let present: HashSet<&str> = queue.iter().map(String::as_str).collect();
+    ids.iter()
+        .filter(|id| !present.contains(id.as_str()))
+        .cloned()
+        .collect()
 }
 
 pub fn series_expand_skip_reason(
@@ -377,15 +431,6 @@ pub fn series_expand_skip_reason(
         return Some("item has no SeriesId");
     }
     None
-}
-
-pub fn should_expand_series(
-    item_type: Option<&str>,
-    series_id: Option<&str>,
-    has_next: bool,
-    autoplay: bool,
-) -> bool {
-    series_expand_skip_reason(item_type, series_id, has_next, autoplay).is_none()
 }
 
 #[cfg(test)]
@@ -578,63 +623,164 @@ mod tests {
     }
 
     #[test]
-    fn remaining_episodes_skip_the_inclusive_start() {
-        let v = episodes_json(&["e3", "e4", "e5"]);
-        assert_eq!(remaining_episode_ids(&v, "e3"), vec!["e4", "e5"]);
+    fn split_episodes_returns_previous_and_remaining() {
+        let v = episodes_json(&["e1", "e2", "e3", "e4"]);
+        let (previous, remaining) = split_episode_ids(&v, "e3");
+        assert_eq!(previous, vec!["e1".to_string(), "e2".to_string()]);
+        assert_eq!(remaining, vec!["e4".to_string()]);
     }
 
     #[test]
-    fn remaining_episodes_empty_when_current_is_last() {
-        let v = episodes_json(&["e5"]);
-        assert!(remaining_episode_ids(&v, "e5").is_empty());
-    }
-
-    #[test]
-    fn remaining_episodes_empty_when_current_is_missing() {
+    fn split_episodes_at_the_first_has_no_previous() {
         let v = episodes_json(&["e1", "e2"]);
-        assert!(remaining_episode_ids(&v, "special").is_empty());
+        let (previous, remaining) = split_episode_ids(&v, "e1");
+        assert!(previous.is_empty());
+        assert_eq!(remaining, vec!["e2".to_string()]);
     }
 
     #[test]
-    fn remaining_episodes_empty_on_malformed_payload() {
-        assert!(remaining_episode_ids(&json!({}), "e1").is_empty());
-        assert!(remaining_episode_ids(&json!({"Items": "nope"}), "e1").is_empty());
+    fn split_episodes_at_the_last_has_no_remaining() {
+        let v = episodes_json(&["e1", "e2"]);
+        let (previous, remaining) = split_episode_ids(&v, "e2");
+        assert_eq!(previous, vec!["e1".to_string()]);
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn split_episodes_empty_when_current_is_missing() {
+        let v = episodes_json(&["e1", "e2"]);
+        assert_eq!(split_episode_ids(&v, "special"), (vec![], vec![]));
+    }
+
+    #[test]
+    fn split_episodes_empty_on_malformed_payload() {
+        assert_eq!(split_episode_ids(&json!({}), "e1"), (vec![], vec![]));
+        assert_eq!(
+            split_episode_ids(&json!({"Items": "nope"}), "e1"),
+            (vec![], vec![])
+        );
+    }
+
+    #[test]
+    fn episode_titles_use_display_title() {
+        let v = json!({
+            "Items": [
+                {
+                    "Id": "e1",
+                    "Type": "Episode",
+                    "Name": "Pilot",
+                    "SeriesName": "Show",
+                    "ParentIndexNumber": 1,
+                    "IndexNumber": 1
+                },
+                {
+                    "Id": "e2",
+                    "Type": "Episode",
+                    "Name": "Next",
+                    "SeriesName": "Show",
+                    "ParentIndexNumber": 1,
+                    "IndexNumber": 2
+                }
+            ]
+        });
+        let titles = episode_titles(&v);
+        assert_eq!(titles.get("e1").unwrap(), "Show - s1e01 - Pilot");
+        assert_eq!(titles.get("e2").unwrap(), "Show - s1e02 - Next");
+    }
+
+    #[test]
+    fn episode_titles_empty_on_malformed_payload() {
+        assert!(episode_titles(&json!({})).is_empty());
+        assert!(episode_titles(&json!({"Items": "nope"})).is_empty());
+    }
+
+    #[test]
+    fn prepend_runs_when_the_queue_already_has_a_next_item() {
+        // The bug: Jellyfin sends 6..20, so has_next is true and the forward
+        // gate bails. Prepending must not share that gate.
+        assert_eq!(
+            prepend_skip_reason(Some("Episode"), Some("series-1"), true),
+            None
+        );
+        assert_eq!(
+            series_expand_skip_reason(Some("Episode"), Some("series-1"), true, true),
+            Some("queue already has a next item")
+        );
+    }
+
+    #[test]
+    fn prepend_ignores_autoplay() {
+        // autoplay governs continuing forward, not what the selector reaches.
+        assert_eq!(
+            prepend_skip_reason(Some("Episode"), Some("series-1"), true),
+            None
+        );
+    }
+
+    #[test]
+    fn prepend_respects_its_own_toggle() {
+        assert_eq!(
+            prepend_skip_reason(Some("Episode"), Some("series-1"), false),
+            Some("prepend_previous disabled")
+        );
+    }
+
+    #[test]
+    fn prepend_skips_non_episodes_and_seriesless_items() {
+        assert_eq!(
+            prepend_skip_reason(Some("Movie"), Some("series-1"), true),
+            Some("item is not an episode")
+        );
+        assert_eq!(
+            prepend_skip_reason(Some("Episode"), None, true),
+            Some("item has no SeriesId")
+        );
+    }
+
+    #[test]
+    fn ids_missing_from_drops_what_the_queue_already_has() {
+        let previous = ["e1".to_string(), "e2".to_string(), "e3".to_string()];
+        let queue = ["e1".to_string(), "e2".to_string(), "e4".to_string()];
+        assert_eq!(ids_missing_from(&previous, &queue), vec!["e3".to_string()]);
+    }
+
+    #[test]
+    fn ids_missing_from_is_empty_when_all_present() {
+        let previous = ["e1".to_string(), "e2".to_string()];
+        let queue = ["e1".to_string(), "e2".to_string(), "e3".to_string()];
+        assert!(ids_missing_from(&previous, &queue).is_empty());
+    }
+
+    #[test]
+    fn ids_missing_from_keeps_order() {
+        let previous = ["e3".to_string(), "e1".to_string(), "e2".to_string()];
+        assert_eq!(
+            ids_missing_from(&previous, &[]),
+            vec!["e3".to_string(), "e1".to_string(), "e2".to_string()]
+        );
     }
 
     #[test]
     fn expand_series_only_for_a_lonely_episode() {
-        assert!(should_expand_series(
-            Some("Episode"),
-            Some("series-1"),
-            false,
-            true
-        ));
-        assert!(!should_expand_series(
-            Some("Movie"),
-            Some("series-1"),
-            false,
-            true
-        ));
-        assert!(!should_expand_series(Some("Episode"), None, false, true));
-        assert!(!should_expand_series(
-            Some("Episode"),
-            Some("series-1"),
-            true,
-            true
-        ));
-        assert!(!should_expand_series(
-            Some("Episode"),
-            Some("series-1"),
-            false,
-            false
-        ));
+        assert_eq!(
+            series_expand_skip_reason(Some("Episode"), Some("series-1"), false, true),
+            None
+        );
+        assert_eq!(
+            series_expand_skip_reason(Some("Movie"), Some("series-1"), false, true),
+            Some("item is not an episode")
+        );
         assert_eq!(
             series_expand_skip_reason(Some("Episode"), None, false, true),
             Some("item has no SeriesId")
         );
         assert_eq!(
-            series_expand_skip_reason(Some("Episode"), Some("s"), true, true),
+            series_expand_skip_reason(Some("Episode"), Some("series-1"), true, true),
             Some("queue already has a next item")
+        );
+        assert_eq!(
+            series_expand_skip_reason(Some("Episode"), Some("series-1"), false, false),
+            Some("autoplay disabled")
         );
     }
 }

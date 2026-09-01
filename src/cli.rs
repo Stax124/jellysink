@@ -6,9 +6,27 @@ use crate::usage_err;
 use crate::{APP_NAME, VERSION};
 use color_eyre::eyre::WrapErr;
 use dialoguer::{Input, Password, theme::ColorfulTheme};
+use std::ffi::OsStr;
 use std::sync::Arc;
 use tokio::sync::Notify;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterInstall {
+    None,
+    Stop,
+    Restart,
+}
+
+fn after_install(from_tray: bool, daemon_running: bool, updated: bool) -> AfterInstall {
+    if !updated || !daemon_running {
+        AfterInstall::None
+    } else if from_tray {
+        AfterInstall::Restart
+    } else {
+        AfterInstall::Stop
+    }
+}
 
 pub async fn cmd_login(paths: &Paths) -> color_eyre::Result<()> {
     paths.ensure()?;
@@ -95,9 +113,15 @@ pub fn cmd_stop(paths: &Paths) -> color_eyre::Result<()> {
 }
 
 pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
+    tracing::info!("jellysink {VERSION}");
+
     let config = Config::load(&paths)?;
     let creds = Credentials::load(&paths)?
         .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
+
+    let exe = crate::update::restart_exe_path(
+        &std::env::current_exe().wrap_err("resolving current executable")?,
+    );
 
     let _lock = InstanceLock::acquire(&paths)?;
     tracing::info!(
@@ -109,12 +133,23 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     );
 
     let shutdown = Arc::new(Notify::new());
+    let restart = Arc::new(Notify::new());
     let tray = tray::start(shutdown.clone()).await;
     spawn_update_check(tray.as_ref().map(|t| t.handle.clone()));
     if let Some(apply) = tray.as_ref().map(|t| t.apply.clone()) {
+        let update_paths = paths.clone();
+        let apply_exe = exe.clone();
+        let apply_restart = restart.clone();
         tokio::spawn(async move {
-            apply.notified().await;
-            apply_update_from_daemon().await;
+            loop {
+                apply.notified().await;
+                apply_update_from_daemon(
+                    update_paths.clone(),
+                    apply_exe.clone(),
+                    apply_restart.clone(),
+                )
+                .await;
+            }
         });
     }
 
@@ -125,22 +160,49 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
 
     let stop_paths = paths.clone();
     let stop_shutdown = shutdown.clone();
-    let stop_task = async move { instance::listen_stop(&stop_paths, stop_shutdown).await };
+    let stop_restart = restart.clone();
+    let stop_fut =
+        async move { instance::listen_stop(&stop_paths, stop_shutdown, stop_restart).await };
 
     let session_shutdown = shutdown.clone();
-    let session_task = crate::runtime::run(config, creds, paths, session_shutdown);
+    let session_fut = crate::runtime::run(config, creds, paths, session_shutdown);
+    tokio::pin!(session_fut, stop_fut);
 
-    tokio::select! {
-        r = session_task => r?,
-        r = stop_task => r?,
-        _ = sigterm.recv() => tracing::info!("SIGTERM"),
-        _ = sigint.recv() => tracing::info!("SIGINT"),
-    }
+    let mut do_restart = false;
+    let outcome = tokio::select! {
+        r = &mut session_fut => r,
+        r = &mut stop_fut => r,
+        _ = sigterm.recv() => {
+            tracing::info!("SIGTERM");
+            Ok(())
+        }
+        _ = sigint.recv() => {
+            tracing::info!("SIGINT");
+            Ok(())
+        }
+        _ = restart.notified() => {
+            tracing::info!("restart requested");
+            do_restart = true;
+            shutdown.notify_waiters();
+            session_fut.await
+        }
+    };
     shutdown.notify_waiters();
+    outcome?;
+    if do_restart {
+        tracing::info!(path = %exe.display(), "replacing process with updated binary");
+        let err = crate::update::exec_updated(&exe);
+        tracing::error!("restart after update failed: {err}");
+        return Err(err).wrap_err("restarting after update");
+    }
     Ok(())
 }
 
-pub async fn cmd_update(paths: &Paths, check_only: bool) -> color_eyre::Result<()> {
+pub async fn cmd_update(
+    paths: &Paths,
+    check_only: bool,
+    from_tray: bool,
+) -> color_eyre::Result<()> {
     if check_only {
         match crate::update::check().await? {
             Some(offer) => {
@@ -151,10 +213,36 @@ pub async fn cmd_update(paths: &Paths, check_only: bool) -> color_eyre::Result<(
         return Ok(());
     }
 
+    let result = install_and_handoff(paths, from_tray).await;
+    if from_tray {
+        if let Err(e) = &result {
+            eprintln!("{e:#}");
+        }
+        println!();
+        println!("Press Enter to close");
+        let _ = std::io::stdin().read_line(&mut String::new());
+        if result.is_err() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    result
+}
+
+async fn install_and_handoff(paths: &Paths, from_tray: bool) -> color_eyre::Result<()> {
     let status = crate::update::install(true).await?;
-    if status.is_updated() {
+    let updated = status.is_updated();
+    if updated {
         println!("Updated to version {}.", status.version());
-        if instance::is_running(paths) {
+    } else {
+        println!("Already up to date.");
+    }
+    match after_install(from_tray, instance::is_running(paths), updated) {
+        AfterInstall::Restart => match instance::request_restart(paths) {
+            Ok(()) => println!("Restarting the running daemon."),
+            Err(e) => println!("Updated, but could not restart the daemon: {e:#}"),
+        },
+        AfterInstall::Stop => {
             instance::request_stop(paths)?;
             println!(
                 "The running daemon was stopped. Start jellysink again to use the new version:"
@@ -162,8 +250,7 @@ pub async fn cmd_update(paths: &Paths, check_only: bool) -> color_eyre::Result<(
             println!("  systemctl --user start jellysink");
             println!("  {APP_NAME} run");
         }
-    } else {
-        println!("Already up to date.");
+        AfterInstall::None => {}
     }
     Ok(())
 }
@@ -183,14 +270,49 @@ fn spawn_update_check(handle: Option<ksni::Handle<tray::CastTray>>) {
     });
 }
 
-async fn apply_update_from_daemon() {
-    match crate::update::install(false).await {
-        Ok(status) if status.is_updated() => {
-            tracing::info!(version = %status.version(), "updated; restarting");
-            let Err(e) = self_update::restart::restart();
-            tracing::error!("restart after update failed: {e}");
+async fn spawn_tray_update(paths: &Paths, exe: &std::path::Path) -> std::io::Result<()> {
+    crate::terminal::spawn_in_terminal(&[
+        exe.as_os_str(),
+        OsStr::new("--config"),
+        paths.config_dir.as_os_str(),
+        OsStr::new("update"),
+        OsStr::new("--from-tray"),
+    ])
+    .await
+}
+
+async fn apply_update_from_daemon(paths: Paths, exe: std::path::PathBuf, restart: Arc<Notify>) {
+    if let Err(e) = spawn_tray_update(&paths, &exe).await {
+        tracing::warn!("could not open a terminal for the update ({e}); updating silently");
+        match crate::update::install(false).await {
+            Ok(status) if status.is_updated() => {
+                tracing::info!(version = %status.version(), "updated; restarting");
+                restart.notify_waiters();
+            }
+            Ok(_) => tracing::info!("already up to date"),
+            Err(e) => tracing::error!("installing update failed: {e:#}"),
         }
-        Ok(_) => tracing::info!("already up to date"),
-        Err(e) => tracing::error!("installing update failed: {e:#}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn after_install_restarts_from_tray_when_running() {
+        assert_eq!(after_install(true, true, true), AfterInstall::Restart);
+    }
+
+    #[test]
+    fn after_install_stops_from_cli_when_running() {
+        assert_eq!(after_install(false, true, true), AfterInstall::Stop);
+    }
+
+    #[test]
+    fn after_install_does_nothing_when_not_running_or_not_updated() {
+        assert_eq!(after_install(true, false, true), AfterInstall::None);
+        assert_eq!(after_install(false, true, false), AfterInstall::None);
+        assert_eq!(after_install(true, true, false), AfterInstall::None);
     }
 }

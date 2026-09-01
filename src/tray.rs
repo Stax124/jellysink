@@ -50,7 +50,54 @@ fn jellyfin_icons() -> Vec<ksni::Icon> {
     ICONS.get_or_init(load_jellyfin_icons).clone()
 }
 
+fn jellyfin_update_icons() -> Vec<ksni::Icon> {
+    static ICONS: OnceLock<Vec<ksni::Icon>> = OnceLock::new();
+    ICONS
+        .get_or_init(|| {
+            jellyfin_icons()
+                .into_iter()
+                .map(with_update_badge)
+                .collect()
+        })
+        .clone()
+}
+
+/// Corner badge so hosts that only display IconPixmap still show a pending update.
+fn with_update_badge(mut icon: ksni::Icon) -> ksni::Icon {
+    let w = icon.width;
+    let h = icon.height;
+    if w <= 0 || h <= 0 {
+        return icon;
+    }
+    let r = (w.min(h) / 5).max(2);
+    let cx = w - r - 1;
+    let cy = h - r - 1;
+    let outer2 = r.saturating_mul(r);
+    let inner = (r * 3 / 4).max(1);
+    let inner2 = inner.saturating_mul(inner);
+    // ARGB32 network byte order
+    const RING: [u8; 4] = [255, 255, 255, 255];
+    const FILL: [u8; 4] = [255, 46, 204, 113];
+
+    for y in 0..h {
+        for x in 0..w {
+            let dx = x - cx;
+            let dy = y - cy;
+            let d2 = dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy));
+            if d2 <= outer2 {
+                let i = ((y as usize) * (w as usize) + (x as usize)) * 4;
+                let px = if d2 <= inner2 { FILL } else { RING };
+                icon.data[i..i + 4].copy_from_slice(&px);
+            }
+        }
+    }
+    icon
+}
+
 impl ksni::Tray for CastTray {
+    // Left clicking the icon should open the menu as right clicking does, rather than doing nothing.
+    const MENU_ON_ACTIVATE: bool = true;
+
     fn id(&self) -> String {
         APP_NAME.into()
     }
@@ -60,11 +107,22 @@ impl ksni::Tray for CastTray {
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        jellyfin_icons()
+        if self.pending_version.is_some() {
+            jellyfin_update_icons()
+        } else {
+            jellyfin_icons()
+        }
     }
 
-    fn activate(&mut self, _x: i32, _y: i32) {
-        // Left-click is a no-op; quit via the menu, `jellysink stop`, or SIGTERM.
+    fn tool_tip(&self) -> ksni::ToolTip {
+        match &self.pending_version {
+            Some(v) => ksni::ToolTip {
+                title: APP_NAME.into(),
+                description: format!("Update available (v{v})"),
+                ..Default::default()
+            },
+            None => Default::default(),
+        }
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
@@ -161,6 +219,76 @@ mod tests {
         assert_eq!(
             standard_labels(&t),
             vec!["Install update (v1.2.3)".to_string(), "Quit".to_string()]
+        );
+    }
+
+    #[test]
+    fn pending_update_stays_active() {
+        let mut t = tray();
+        assert_eq!(t.status(), ksni::Status::Active);
+        t.set_pending("1.2.3".into());
+        assert_eq!(
+            t.status(),
+            ksni::Status::Active,
+            "NeedsAttention makes hosts emphasize/resize the tray icon"
+        );
+        assert!(
+            t.attention_icon_pixmap().is_empty(),
+            "attention pixmap is what NeedsAttention hosts swap in"
+        );
+    }
+
+    #[test]
+    fn pending_update_mentions_version_in_tooltip() {
+        let mut t = tray();
+        assert!(t.tool_tip().description.is_empty());
+        t.set_pending("1.2.3".into());
+        let tip = t.tool_tip();
+        assert_eq!(tip.title, APP_NAME);
+        assert!(
+            tip.description.contains("1.2.3"),
+            "tooltip should name the pending version, got {:?}",
+            tip.description
+        );
+    }
+
+    #[test]
+    fn pending_update_badges_the_icon() {
+        let idle = tray().icon_pixmap();
+        let mut t = tray();
+        t.set_pending("1.2.3".into());
+        let pending = t.icon_pixmap();
+
+        assert_eq!(
+            idle.iter().map(|i| (i.width, i.height)).collect::<Vec<_>>(),
+            pending
+                .iter()
+                .map(|i| (i.width, i.height))
+                .collect::<Vec<_>>(),
+            "badge must not change pixmap dimensions"
+        );
+
+        let idle_large = idle
+            .iter()
+            .find(|i| i.width == 256 && i.height == 256)
+            .unwrap();
+        let pending_large = pending
+            .iter()
+            .find(|i| i.width == 256 && i.height == 256)
+            .unwrap();
+        assert_ne!(
+            idle_large.data, pending_large.data,
+            "pending icon should carry an update badge"
+        );
+        let center = ((128 * 256) + 128) * 4;
+        assert_eq!(
+            &idle_large.data[center..center + 4],
+            &pending_large.data[center..center + 4],
+            "badge should sit in a corner, not over the logo"
+        );
+        assert!(
+            t.attention_icon_pixmap().is_empty(),
+            "do not ship an attention pixmap; hosts may swap size when emphasizing"
         );
     }
 

@@ -74,7 +74,6 @@ async fn run_session(
     let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<CastEvent>();
     let (ka_tx, mut ka_rx) = tokio::sync::mpsc::unbounded_channel::<Duration>();
     let (mpv_tx, mut mpv_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, MpvEvent)>();
-    let (fill_tx, mut fill_rx) = tokio::sync::mpsc::unbounded_channel::<FillMsg>();
 
     tokio::spawn(async move {
         while let Some(msg) = ws_read.next().await {
@@ -137,10 +136,10 @@ async fn run_session(
         pending_start_ticks: None,
         playlist_origin: 0,
         prepared: HashMap::new(),
-        fill: None,
-        fill_gen: 0,
-        fill_tx,
+        titles: HashMap::new(),
         mpv_tail: 0,
+        mpv_head: 0,
+        pending_prepend: Vec::new(),
     };
 
     let mut keepalive = tokio::time::interval(Duration::from_secs(30));
@@ -197,11 +196,6 @@ async fn run_session(
                     }
                 }
             }
-            msg = fill_rx.recv() => {
-                if let Some(msg) = msg {
-                    rt.on_fill_ready(msg).await;
-                }
-            }
         }
     }
 }
@@ -227,16 +221,20 @@ struct Runtime {
     pending_start_ticks: Option<i64>,
     playlist_origin: usize,
     prepared: HashMap<String, PreparedPlay>,
-    fill: Option<tokio::task::JoinHandle<()>>,
-    fill_gen: u64,
-    fill_tx: tokio::sync::mpsc::UnboundedSender<FillMsg>,
+    /// Item id → display title from the series listing (and the current item).
+    /// Playlist fill uses this; `PlaybackInfo` is fetched only when an item
+    /// actually starts.
+    titles: HashMap<String, String>,
+    /// Queue entries already in mpv *after* the current one.
     mpv_tail: usize,
-}
-
-struct FillMsg {
-    generation: u64,
-    item_id: String,
-    prep: PreparedPlay,
+    /// Queue entries already in mpv *before* the current one (previous
+    /// episodes spliced in). mpv's playlist is the contiguous window
+    /// `items[origin .. origin + mpv_head + 1 + mpv_tail]`.
+    mpv_head: usize,
+    /// Previous episodes queued but not yet spliced into mpv. They are held
+    /// until the current file is loaded, because `loadfile ... replace` wipes
+    /// mpv's playlist.
+    pending_prepend: Vec<String>,
 }
 
 impl Runtime {
@@ -274,7 +272,7 @@ impl Runtime {
                     self.queue.insert_next(item_ids);
                     self.log_queue("play-next-insert");
                     if self.mpv_tail == 0 {
-                        self.spawn_playlist_fill();
+                        self.fill_forward_into_mpv().await;
                     } else {
                         tracing::debug!(
                             tail = self.mpv_tail,
@@ -291,7 +289,7 @@ impl Runtime {
                 } else {
                     self.queue.append(item_ids);
                     self.log_queue("play-last-append");
-                    self.spawn_playlist_fill();
+                    self.fill_forward_into_mpv().await;
                 }
             }
             CastEvent::PlayPause => self.toggle_pause().await?,
