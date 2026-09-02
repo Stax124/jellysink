@@ -2,18 +2,18 @@ use color_eyre::eyre::eyre;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-/// Maps mpv audio and subtitle IDs to Jellyfin indices and vice versa
+/// Maps mpv audio and subtitle track ids to Jellyfin stream indexes and vice versa.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StreamMaps {
-    /// mpv aid → Jellyfin Index
-    pub audio_uid: HashMap<i64, i64>,
-    /// Jellyfin Index → mpv aid
-    pub audio_seq: HashMap<i64, i64>,
-    /// mpv sid (embedded only) → Jellyfin Index
-    pub subtitle_uid: HashMap<i64, i64>,
-    /// Jellyfin Index → mpv sid (embedded only)
-    pub subtitle_seq: HashMap<i64, i64>,
-    /// Jellyfin Index → absolute DeliveryUrl
+    /// mpv audio track id (`aid`) → Jellyfin stream index
+    pub audio_stream_index_by_track_id: HashMap<i64, i64>,
+    /// Jellyfin stream index → mpv audio track id (`aid`)
+    pub audio_track_id_by_stream_index: HashMap<i64, i64>,
+    /// mpv subtitle track id (`sid`, embedded only) → Jellyfin stream index
+    pub subtitle_stream_index_by_track_id: HashMap<i64, i64>,
+    /// Jellyfin stream index → mpv subtitle track id (`sid`, embedded only)
+    pub subtitle_track_id_by_stream_index: HashMap<i64, i64>,
+    /// Jellyfin stream index → absolute DeliveryUrl
     pub subtitle_url: HashMap<i64, String>,
 }
 
@@ -25,8 +25,8 @@ pub struct PreparedPlay {
     pub play_session_id: String,
     pub live_stream_id: Option<String>,
     pub maps: StreamMaps,
-    pub aid: Option<i64>,
-    pub sid: Option<i64>,
+    pub audio_stream_index: Option<i64>,
+    pub subtitle_stream_index: Option<i64>,
     pub uses_auth_header: bool,
     pub external_sub_urls: Vec<(i64, String)>,
     pub title: String,
@@ -38,8 +38,8 @@ pub fn prepare_play(
     item_id: &str,
     playback_info: &Value,
     preferred_source: Option<&str>,
-    aid: Option<i64>,
-    sid: Option<i64>,
+    audio_stream_index: Option<i64>,
+    subtitle_stream_index: Option<i64>,
     token: &str,
 ) -> color_eyre::Result<PreparedPlay> {
     let play_session_id = playback_info
@@ -94,19 +94,19 @@ pub fn prepare_play(
         if uses_auth_header { None } else { Some(token) },
     );
 
-    let default_aid = source
+    let default_audio_stream_index = source
         .get("DefaultAudioStreamIndex")
         .and_then(Value::as_i64);
-    let default_sid = source
+    let default_subtitle_stream_index = source
         .get("DefaultSubtitleStreamIndex")
         .and_then(Value::as_i64);
-    let aid = aid.or(default_aid);
+    let audio_stream_index = audio_stream_index.or(default_audio_stream_index);
     // `None` from Play means "use the server default". `-1` from Play is an
     // explicit Off. The server also uses `-1` when SubtitleMode=Default and
     // no stream is flagged default/forced/external — that is still a decision
     // of Off, not "unspecified".
-    let play_sid = sid;
-    let sid = sid.or(default_sid);
+    let play_subtitle_stream_index = subtitle_stream_index;
+    let subtitle_stream_index = subtitle_stream_index.or(default_subtitle_stream_index);
 
     let mut external_sub_urls: Vec<(i64, String)> = maps
         .subtitle_url
@@ -117,11 +117,11 @@ pub fn prepare_play(
 
     tracing::debug!(
         item = %item_id,
-        embedded_subs = maps.subtitle_seq.len(),
+        embedded_subs = maps.subtitle_track_id_by_stream_index.len(),
         external_subs = external_sub_urls.len(),
-        play_sid = ?play_sid,
-        default_sid,
-        resolved_sid = ?sid,
+        play_subtitle_stream_index = ?play_subtitle_stream_index,
+        default_subtitle_stream_index,
+        resolved_subtitle_stream_index = ?subtitle_stream_index,
         "prepared subtitle maps"
     );
 
@@ -131,8 +131,8 @@ pub fn prepare_play(
         play_session_id,
         live_stream_id,
         maps,
-        aid,
-        sid,
+        audio_stream_index,
+        subtitle_stream_index,
         uses_auth_header,
         external_sub_urls,
         title: "Jellyfin".to_string(),
@@ -216,31 +216,33 @@ pub fn map_streams(server: &str, source: &Value) -> StreamMaps {
         return maps;
     };
 
-    let mut index = 1i64;
+    let mut audio_track_id = 1i64;
     for stream in streams {
         if stream.get("Type").and_then(Value::as_str) != Some("Audio") {
             continue;
         }
-        let Some(jf) = stream.get("Index").and_then(Value::as_i64) else {
+        let Some(jellyfin_index) = stream.get("Index").and_then(Value::as_i64) else {
             continue;
         };
-        maps.audio_uid.insert(index, jf);
-        maps.audio_seq.insert(jf, index);
+        maps.audio_stream_index_by_track_id
+            .insert(audio_track_id, jellyfin_index);
+        maps.audio_track_id_by_stream_index
+            .insert(jellyfin_index, audio_track_id);
         if !stream
             .get("IsExternal")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            index += 1;
+            audio_track_id += 1;
         }
     }
 
-    index = 1;
+    let mut subtitle_track_id = 1i64;
     for sub in streams {
         if sub.get("Type").and_then(Value::as_str) != Some("Subtitle") {
             continue;
         }
-        let Some(jf) = sub.get("Index").and_then(Value::as_i64) else {
+        let Some(jellyfin_index) = sub.get("Index").and_then(Value::as_i64) else {
             continue;
         };
         let delivery = sub.get("DeliveryMethod").and_then(Value::as_str);
@@ -260,7 +262,7 @@ pub fn map_streams(server: &str, source: &Value) -> StreamMaps {
         let language = sub.get("Language").and_then(Value::as_str);
         let title = sub.get("DisplayTitle").and_then(Value::as_str);
         tracing::debug!(
-            jellyfin_index = jf,
+            jellyfin_index,
             delivery,
             codec,
             language,
@@ -272,8 +274,10 @@ pub fn map_streams(server: &str, source: &Value) -> StreamMaps {
         );
         match delivery {
             Some("Embed") => {
-                maps.subtitle_uid.insert(index, jf);
-                maps.subtitle_seq.insert(jf, index);
+                maps.subtitle_stream_index_by_track_id
+                    .insert(subtitle_track_id, jellyfin_index);
+                maps.subtitle_track_id_by_stream_index
+                    .insert(jellyfin_index, subtitle_track_id);
             }
             Some("External") => {
                 if let Some(url) = sub.get("DeliveryUrl").and_then(Value::as_str) {
@@ -286,20 +290,20 @@ pub fn map_streams(server: &str, source: &Value) -> StreamMaps {
                     } else {
                         format!("{}{url}", server.trim_end_matches('/'))
                     };
-                    maps.subtitle_url.insert(jf, abs);
+                    maps.subtitle_url.insert(jellyfin_index, abs);
                 } else {
-                    tracing::warn!(jellyfin_index = jf, "external subtitle has no DeliveryUrl");
+                    tracing::warn!(jellyfin_index, "external subtitle has no DeliveryUrl");
                 }
             }
             Some(other) => {
                 tracing::warn!(
-                    jellyfin_index = jf,
+                    jellyfin_index,
                     method = other,
                     "unmapped subtitle delivery method"
                 );
             }
             None => {
-                tracing::warn!(jellyfin_index = jf, "subtitle stream has no DeliveryMethod");
+                tracing::warn!(jellyfin_index, "subtitle stream has no DeliveryMethod");
             }
         }
         if !sub
@@ -307,7 +311,7 @@ pub fn map_streams(server: &str, source: &Value) -> StreamMaps {
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            index += 1;
+            subtitle_track_id += 1;
         }
     }
 
@@ -371,14 +375,18 @@ pub fn coalesce_position_ticks(live_seconds: Option<f64>, last_ticks: i64) -> i6
         .unwrap_or(last_ticks)
 }
 
-/// Resolve a Jellyfin audio Index to an mpv `aid`, if we have a mapping.
-pub fn mpv_aid(maps: &StreamMaps, jellyfin_index: i64) -> Option<i64> {
-    maps.audio_seq.get(&jellyfin_index).copied()
+/// Resolve a Jellyfin audio stream index to an mpv audio track id, if mapped.
+pub fn mpv_audio_track_id(maps: &StreamMaps, jellyfin_index: i64) -> Option<i64> {
+    maps.audio_track_id_by_stream_index
+        .get(&jellyfin_index)
+        .copied()
 }
 
-/// Resolve a Jellyfin subtitle Index to an embedded mpv `sid`.
-pub fn mpv_embedded_sid(maps: &StreamMaps, jellyfin_index: i64) -> Option<i64> {
-    maps.subtitle_seq.get(&jellyfin_index).copied()
+/// Resolve a Jellyfin subtitle stream index to an embedded mpv subtitle track id.
+pub fn mpv_embedded_subtitle_track_id(maps: &StreamMaps, jellyfin_index: i64) -> Option<i64> {
+    maps.subtitle_track_id_by_stream_index
+        .get(&jellyfin_index)
+        .copied()
 }
 
 /// Splits a full series listing into the ids before and after `current_id`.
@@ -569,8 +577,8 @@ mod tests {
             ]
         });
         let maps = map_streams("http://h:8096", &source);
-        assert_eq!(maps.audio_seq.get(&1), Some(&1));
-        assert_eq!(maps.subtitle_seq.get(&2), Some(&1));
+        assert_eq!(maps.audio_track_id_by_stream_index.get(&1), Some(&1));
+        assert_eq!(maps.subtitle_track_id_by_stream_index.get(&2), Some(&1));
         assert_eq!(
             maps.subtitle_url.get(&3).map(String::as_str),
             Some("http://h:8096/Videos/i/Subtitles/3/Stream.srt")
@@ -597,8 +605,8 @@ mod tests {
         assert_eq!(prep.media_source_id, "src");
         assert!(prep.uses_auth_header);
         assert!(!prep.url.contains("ApiKey="));
-        assert_eq!(prep.aid, Some(1));
-        assert_eq!(prep.sid, Some(2));
+        assert_eq!(prep.audio_stream_index, Some(1));
+        assert_eq!(prep.subtitle_stream_index, Some(2));
         assert_eq!(prep.title, "Jellyfin");
     }
 
@@ -629,11 +637,11 @@ mod tests {
             }]
         });
         let prep = prepare_play("http://h:8096", "item", &info, None, None, None, "tok").unwrap();
-        assert_eq!(prep.sid, Some(-1));
+        assert_eq!(prep.subtitle_stream_index, Some(-1));
     }
 
     #[test]
-    fn prepare_play_explicit_sid_wins_over_default_off() {
+    fn prepare_play_explicit_subtitle_stream_index_wins_over_default_off() {
         let info = json!({
             "PlaySessionId": "sess",
             "MediaSources": [{
@@ -646,7 +654,7 @@ mod tests {
         });
         let prep =
             prepare_play("http://h:8096", "item", &info, None, None, Some(2), "tok").unwrap();
-        assert_eq!(prep.sid, Some(2));
+        assert_eq!(prep.subtitle_stream_index, Some(2));
     }
 
     #[test]

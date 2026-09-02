@@ -1,7 +1,7 @@
 use super::Runtime;
 use crate::cast::queue_index_at;
 use crate::jellyfin::auth::Api;
-use crate::media::{self, PreparedPlay, mpv_aid, mpv_embedded_sid};
+use crate::media::{self, PreparedPlay, mpv_audio_track_id, mpv_embedded_subtitle_track_id};
 use crate::mpv::MpvSession;
 use crate::report::{PlayingState, Report};
 use color_eyre::eyre::eyre;
@@ -11,9 +11,9 @@ impl Runtime {
     pub(super) async fn start_current(
         &mut self,
         start_ticks: Option<i64>,
-        aid: Option<i64>,
-        sid: Option<i64>,
-        srcid: Option<&str>,
+        audio_stream_index: Option<i64>,
+        subtitle_stream_index: Option<i64>,
+        media_source_id: Option<&str>,
     ) -> color_eyre::Result<()> {
         let Some(item_id) = self.queue.current().map(str::to_string) else {
             self.stop_playback(true).await;
@@ -38,7 +38,13 @@ impl Runtime {
         }
 
         let (prep, item) = match self
-            .prepare_item(&item_id, start_ticks, aid, sid, srcid)
+            .prepare_item(
+                &item_id,
+                start_ticks,
+                audio_stream_index,
+                subtitle_stream_index,
+                media_source_id,
+            )
             .await
         {
             Ok(pair) => pair,
@@ -74,7 +80,7 @@ impl Runtime {
         self.paused = false;
         self.stopping = false;
         self.last_ticks = start_ticks.unwrap_or(0);
-        self.external_sid.clear();
+        self.external_subtitle_track_ids.clear();
 
         self.pending_start_ticks = resume_seek_ticks(start_ticks);
 
@@ -95,33 +101,35 @@ impl Runtime {
     }
 
     pub(super) async fn adopt_playlist_pos(&mut self) -> color_eyre::Result<()> {
-        let pos = self
+        let playlist_pos = self
             .mpv
             .as_mut()
             .ok_or_else(|| eyre!("mpv missing"))?
             .playlist_pos()
             .await?
             .max(0) as usize;
-        let Some(idx) = queue_index_at(self.playlist_origin, pos, self.queue.items.len()) else {
+        let Some(queue_index) =
+            queue_index_at(self.playlist_origin, playlist_pos, self.queue.items.len())
+        else {
             return Ok(());
         };
-        let id = self.queue.items[idx].clone();
-        if self.item_id.as_deref() == Some(id.as_str()) {
+        let item_id = self.queue.items[queue_index].clone();
+        if self.item_id.as_deref() == Some(item_id.as_str()) {
             return Ok(());
         }
         self.send_stopped();
-        self.queue.index = idx;
-        tracing::info!(item = %id, index = idx, "adopted mpv playlist jump");
-        if let Some(prep) = self.prepared.get(&id).cloned() {
+        self.queue.index = queue_index;
+        tracing::info!(item = %item_id, index = queue_index, "adopted mpv playlist jump");
+        if let Some(prep) = self.prepared.get(&item_id).cloned() {
             self.current = Some(prep);
         } else {
-            let (prep, _) = self.prepare_item(&id, None, None, None, None).await?;
-            self.prepared.insert(id.clone(), prep.clone());
+            let (prep, _) = self.prepare_item(&item_id, None, None, None, None).await?;
+            self.prepared.insert(item_id.clone(), prep.clone());
             self.current = Some(prep);
         }
-        self.item_id = Some(id);
+        self.item_id = Some(item_id);
         self.last_ticks = 0;
-        self.external_sid.clear();
+        self.external_subtitle_track_ids.clear();
         if let Some(title) = self.current.as_ref().map(|p| p.title.clone())
             && let Some(mpv) = self.mpv.as_mut()
         {
@@ -139,32 +147,43 @@ impl Runtime {
             return Ok(());
         };
 
-        self.external_sid.clear();
-        for (jf_index, url) in &prep.external_sub_urls {
+        self.external_subtitle_track_ids.clear();
+        for (jellyfin_index, url) in &prep.external_sub_urls {
             if let Err(e) = mpv.sub_add(url).await {
                 tracing::warn!("sub-add failed for {url}: {e:#}");
                 continue;
             }
-            match mpv.max_sub_sid().await {
-                Ok(sid) => {
-                    tracing::info!(jellyfin_index = *jf_index, mpv_sid = sid, url = %url, "loaded external subtitle track");
-                    self.external_sid.insert(*jf_index, sid);
+            match mpv.max_subtitle_track_id().await {
+                Ok(subtitle_track_id) => {
+                    tracing::info!(
+                        jellyfin_index = *jellyfin_index,
+                        mpv_subtitle_track_id = subtitle_track_id,
+                        url = %url,
+                        "loaded external subtitle track"
+                    );
+                    self.external_subtitle_track_ids
+                        .insert(*jellyfin_index, subtitle_track_id);
                 }
                 Err(e) => {
-                    tracing::warn!("failed getting max_sub_sid after sub-add for {url}: {e:#}");
+                    tracing::warn!(
+                        "failed getting max_subtitle_track_id after sub-add for {url}: {e:#}"
+                    );
                 }
             }
         }
 
-        if let Some(aid) = prep.aid.and_then(|i| mpv_aid(&prep.maps, i)) {
-            let _ = mpv.set_aid(aid).await;
+        if let Some(audio_track_id) = prep
+            .audio_stream_index
+            .and_then(|i| mpv_audio_track_id(&prep.maps, i))
+        {
+            let _ = mpv.set_audio_track_id(audio_track_id).await;
         }
-        if let Some(sid) = prep.sid {
+        if let Some(subtitle_stream_index) = prep.subtitle_stream_index {
             tracing::info!(
-                jellyfin_subtitle_index = sid,
+                jellyfin_subtitle_index = subtitle_stream_index,
                 "configuring initial subtitle stream"
             );
-            let _ = self.apply_subtitle(sid).await;
+            let _ = self.apply_subtitle(subtitle_stream_index).await;
         }
         Ok(())
     }
@@ -175,38 +194,43 @@ impl Runtime {
         };
         if jellyfin_index < 0 {
             tracing::info!(jellyfin_index, "disabling subtitles in mpv (sid=no)");
-            mpv.set_sid(None).await?;
+            mpv.set_subtitle_track_id(None).await?;
             if let Some(prep) = self.current.as_mut() {
-                prep.sid = None;
+                prep.subtitle_stream_index = None;
             }
             return Ok(());
         }
-        if let Some(sid) = self.external_sid.get(&jellyfin_index).copied() {
-            tracing::info!(
-                jellyfin_index,
-                mpv_sid = sid,
-                "applied external subtitle stream"
-            );
-            mpv.set_sid(Some(sid)).await?;
-        } else if let Some(prep) = self.current.as_ref()
-            && let Some(sid) = mpv_embedded_sid(&prep.maps, jellyfin_index)
+        if let Some(subtitle_track_id) = self
+            .external_subtitle_track_ids
+            .get(&jellyfin_index)
+            .copied()
         {
             tracing::info!(
                 jellyfin_index,
-                mpv_sid = sid,
+                mpv_subtitle_track_id = subtitle_track_id,
+                "applied external subtitle stream"
+            );
+            mpv.set_subtitle_track_id(Some(subtitle_track_id)).await?;
+        } else if let Some(prep) = self.current.as_ref()
+            && let Some(subtitle_track_id) =
+                mpv_embedded_subtitle_track_id(&prep.maps, jellyfin_index)
+        {
+            tracing::info!(
+                jellyfin_index,
+                mpv_subtitle_track_id = subtitle_track_id,
                 "applied embedded subtitle stream"
             );
-            mpv.set_sid(Some(sid)).await?;
+            mpv.set_subtitle_track_id(Some(subtitle_track_id)).await?;
         } else {
             tracing::warn!(
                 jellyfin_index,
-                external_map = ?self.external_sid,
-                embedded_map = ?self.current.as_ref().map(|p| &p.maps.subtitle_seq),
+                external_map = ?self.external_subtitle_track_ids,
+                embedded_map = ?self.current.as_ref().map(|p| &p.maps.subtitle_track_id_by_stream_index),
                 "requested subtitle stream index not found in external or embedded subtitle maps"
             );
         }
         if let Some(prep) = self.current.as_mut() {
-            prep.sid = Some(jellyfin_index);
+            prep.subtitle_stream_index = Some(jellyfin_index);
         }
         Ok(())
     }
@@ -243,8 +267,8 @@ impl Runtime {
             is_paused: self.paused,
             is_muted: self.muted,
             volume: self.volume,
-            audio_stream_index: prep.aid.unwrap_or(-1),
-            subtitle_stream_index: prep.sid.unwrap_or(-1),
+            audio_stream_index: prep.audio_stream_index.unwrap_or(-1),
+            subtitle_stream_index: prep.subtitle_stream_index.unwrap_or(-1),
             can_seek: true,
             queue: self.queue.items.clone(),
         })
@@ -360,7 +384,7 @@ impl Runtime {
         self.mpv_gen = self.mpv_gen.wrapping_add(1);
         self.current = None;
         self.item_id = None;
-        self.external_sid.clear();
+        self.external_subtitle_track_ids.clear();
         self.paused = false;
         self.stopping = false;
     }

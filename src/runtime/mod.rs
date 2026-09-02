@@ -6,7 +6,7 @@ use crate::config::{Config, Credentials, Paths};
 use crate::jellyfin::auth::Api;
 use crate::jellyfin::playback::PlaybackEndpoints;
 use crate::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
-use crate::media::{self, PreparedPlay, mpv_aid};
+use crate::media::{self, PreparedPlay, mpv_audio_track_id};
 use crate::mpv::{MpvEvent, MpvSession};
 use crate::report::Report;
 use color_eyre::eyre::{WrapErr, eyre};
@@ -130,7 +130,7 @@ async fn run_session(
         paused: false,
         stopping: false,
         last_ticks: 0,
-        external_sid: HashMap::new(),
+        external_subtitle_track_ids: HashMap::new(),
         report_tx,
         transitioning: false,
         pending_start_ticks: None,
@@ -215,7 +215,8 @@ struct Runtime {
     paused: bool,
     stopping: bool,
     last_ticks: i64,
-    external_sid: HashMap<i64, i64>,
+    /// Jellyfin subtitle stream index → mpv subtitle track id for `sub-add`ed files.
+    external_subtitle_track_ids: HashMap<i64, i64>,
     report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
     transitioning: bool,
     pending_start_ticks: Option<i64>,
@@ -248,22 +249,27 @@ impl Runtime {
                 item_ids,
                 start_index,
                 start_ticks,
-                aid,
-                sid,
-                srcid,
+                audio_stream_index,
+                subtitle_stream_index,
+                media_source_id,
             } => {
                 tracing::info!(
                     n = item_ids.len(),
                     start_index,
-                    aid,
-                    sid,
+                    audio_stream_index,
+                    subtitle_stream_index,
                     ids = %item_ids.join(","),
                     "play now"
                 );
                 self.queue.replace(item_ids, start_index);
                 self.log_queue("play-now");
-                self.start_current(start_ticks, aid, sid, srcid.as_deref())
-                    .await?;
+                self.start_current(
+                    start_ticks,
+                    audio_stream_index,
+                    subtitle_stream_index,
+                    media_source_id.as_deref(),
+                )
+                .await?;
             }
             CastEvent::PlayNext { item_ids } => {
                 tracing::info!(n = item_ids.len(), ids = %item_ids.join(","), "play next");
@@ -309,13 +315,13 @@ impl Runtime {
             }
             CastEvent::Next => self.play_next_or_stop(false).await,
             CastEvent::Previous => {
-                let pos = if let Some(mpv) = self.mpv.as_mut() {
+                let playlist_pos = if let Some(mpv) = self.mpv.as_mut() {
                     mpv.playlist_pos().await.unwrap_or(0)
                 } else {
                     0
                 };
-                if pos > 0 {
-                    tracing::info!(pos, "playlist-prev");
+                if playlist_pos > 0 {
+                    tracing::info!(playlist_pos, "playlist-prev");
                     self.transitioning = true;
                     if let Some(mpv) = self.mpv.as_mut() {
                         let _ = mpv.playlist_prev().await;
@@ -331,20 +337,23 @@ impl Runtime {
             CastEvent::Mute => self.apply_mute(true).await?,
             CastEvent::Unmute => self.apply_mute(false).await?,
             CastEvent::ToggleMute => self.apply_mute(!self.muted).await?,
-            CastEvent::SetAudio { index } => {
-                tracing::info!(index, "set audio stream");
-                let aid = self.current.as_ref().and_then(|p| mpv_aid(&p.maps, index));
-                if let (Some(mpv), Some(aid)) = (self.mpv.as_mut(), aid) {
-                    mpv.set_aid(aid).await?;
+            CastEvent::SetAudio { stream_index } => {
+                tracing::info!(stream_index, "set audio stream");
+                let audio_track_id = self
+                    .current
+                    .as_ref()
+                    .and_then(|p| mpv_audio_track_id(&p.maps, stream_index));
+                if let (Some(mpv), Some(audio_track_id)) = (self.mpv.as_mut(), audio_track_id) {
+                    mpv.set_audio_track_id(audio_track_id).await?;
                 }
                 if let Some(prep) = self.current.as_mut() {
-                    prep.aid = Some(index);
+                    prep.audio_stream_index = Some(stream_index);
                 }
                 self.send_progress();
             }
-            CastEvent::SetSubtitle { index } => {
-                tracing::info!(index, "set subtitle stream");
-                self.apply_subtitle(index).await?;
+            CastEvent::SetSubtitle { stream_index } => {
+                tracing::info!(stream_index, "set subtitle stream");
+                self.apply_subtitle(stream_index).await?;
                 self.send_progress();
             }
             CastEvent::ToggleFullscreen => {
@@ -392,14 +401,14 @@ impl Runtime {
                     EndFileAction::Ignore => {}
                     EndFileAction::Advance => self.play_next_or_stop(true).await,
                     EndFileAction::Stop => {
-                        let count = if let Some(mpv) = self.mpv.as_mut() {
+                        let playlist_count = if let Some(mpv) = self.mpv.as_mut() {
                             mpv.playlist_count().await.unwrap_or(0).max(0) as usize
                         } else {
                             0
                         };
-                        if ignore_stop_for_playlist(&reason, count) {
+                        if ignore_stop_for_playlist(&reason, playlist_count) {
                             tracing::debug!(
-                                count,
+                                playlist_count,
                                 "end-file stop while mpv still has a playlist; waiting for file-loaded"
                             );
                         } else {

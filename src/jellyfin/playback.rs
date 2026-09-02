@@ -26,8 +26,8 @@ impl<'a> PlaybackEndpoints<'a> {
         &self,
         item_id: &str,
         start_ticks: Option<i64>,
-        aid: Option<i64>,
-        sid: Option<i64>,
+        audio_stream_index: Option<i64>,
+        subtitle_stream_index: Option<i64>,
         media_source_id: Option<&str>,
     ) -> color_eyre::Result<Value> {
         let mut body = json!({
@@ -38,14 +38,14 @@ impl<'a> PlaybackEndpoints<'a> {
             "AutoOpenLiveStream": true,
             "MaxStreamingBitrate": 1_200_000_000u64,
         });
-        if let Some(aid) = aid {
-            body["AudioStreamIndex"] = json!(aid);
+        if let Some(audio_stream_index) = audio_stream_index {
+            body["AudioStreamIndex"] = json!(audio_stream_index);
         }
-        if let Some(sid) = sid {
-            body["SubtitleStreamIndex"] = json!(sid);
+        if let Some(subtitle_stream_index) = subtitle_stream_index {
+            body["SubtitleStreamIndex"] = json!(subtitle_stream_index);
         }
-        if let Some(src) = media_source_id {
-            body["MediaSourceId"] = json!(src);
+        if let Some(media_source_id) = media_source_id {
+            body["MediaSourceId"] = json!(media_source_id);
         }
         let path = format!("/Items/{item_id}/PlaybackInfo?UserId={}", self.api.user_id);
         let resp = self

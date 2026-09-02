@@ -6,9 +6,9 @@ pub enum CastEvent {
         item_ids: Vec<String>,
         start_index: usize,
         start_ticks: Option<i64>,
-        aid: Option<i64>,
-        sid: Option<i64>,
-        srcid: Option<String>,
+        audio_stream_index: Option<i64>,
+        subtitle_stream_index: Option<i64>,
+        media_source_id: Option<String>,
     },
     PlayNext {
         item_ids: Vec<String>,
@@ -34,10 +34,10 @@ pub enum CastEvent {
     Unmute,
     ToggleMute,
     SetAudio {
-        index: i64,
+        stream_index: i64,
     },
     SetSubtitle {
-        index: i64,
+        stream_index: i64,
     },
     ToggleFullscreen,
 }
@@ -202,9 +202,9 @@ fn parse_play(data: &Value) -> Option<CastEvent> {
         .unwrap_or(0)
         .max(0) as usize;
     let start_ticks = data.get("StartPositionTicks").and_then(value_as_i64);
-    let aid = data.get("AudioStreamIndex").and_then(value_as_i64);
-    let sid = data.get("SubtitleStreamIndex").and_then(value_as_i64);
-    let srcid = data
+    let audio_stream_index = data.get("AudioStreamIndex").and_then(value_as_i64);
+    let subtitle_stream_index = data.get("SubtitleStreamIndex").and_then(value_as_i64);
+    let media_source_id = data
         .get("MediaSourceId")
         .and_then(Value::as_str)
         .map(str::to_string);
@@ -216,9 +216,9 @@ fn parse_play(data: &Value) -> Option<CastEvent> {
             item_ids,
             start_index,
             start_ticks,
-            aid,
-            sid,
-            srcid,
+            audio_stream_index,
+            subtitle_stream_index,
+            media_source_id,
         }),
     }
 }
@@ -246,10 +246,10 @@ fn parse_general(data: &Value) -> Option<CastEvent> {
             volume: nested_i64(args, "Volume")?.clamp(0, 100),
         }),
         "SetAudioStreamIndex" => Some(CastEvent::SetAudio {
-            index: nested_i64(args, "Index")?,
+            stream_index: nested_i64(args, "Index")?,
         }),
         "SetSubtitleStreamIndex" => Some(CastEvent::SetSubtitle {
-            index: nested_i64(args, "Index")?,
+            stream_index: nested_i64(args, "Index")?,
         }),
         "Mute" => Some(CastEvent::Mute),
         "Unmute" => Some(CastEvent::Unmute),
@@ -309,9 +309,9 @@ mod tests {
                 item_ids: vec!["a".into(), "b".into()],
                 start_index: 1,
                 start_ticks: Some(150_000_000),
-                aid: Some(1),
-                sid: Some(2),
-                srcid: None,
+                audio_stream_index: Some(1),
+                subtitle_stream_index: Some(2),
+                media_source_id: None,
             }
         );
     }

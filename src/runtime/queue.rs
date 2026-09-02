@@ -9,12 +9,18 @@ async fn fetch_prepared(
     api: &Api,
     item_id: &str,
     start_ticks: Option<i64>,
-    aid: Option<i64>,
-    sid: Option<i64>,
-    srcid: Option<&str>,
+    audio_stream_index: Option<i64>,
+    subtitle_stream_index: Option<i64>,
+    media_source_id: Option<&str>,
 ) -> color_eyre::Result<(PreparedPlay, Option<Value>)> {
     let endpoints = PlaybackEndpoints::new(api);
-    let info_fut = endpoints.playback_info(item_id, start_ticks, aid, sid, srcid);
+    let info_fut = endpoints.playback_info(
+        item_id,
+        start_ticks,
+        audio_stream_index,
+        subtitle_stream_index,
+        media_source_id,
+    );
     let item_fut = endpoints.get_item(item_id);
     let (info, item) = tokio::join!(info_fut, item_fut);
     let info = info?;
@@ -25,7 +31,15 @@ async fn fetch_prepared(
             None
         }
     };
-    let mut prep = media::prepare_play(&api.server, item_id, &info, srcid, aid, sid, &api.token)?;
+    let mut prep = media::prepare_play(
+        &api.server,
+        item_id,
+        &info,
+        media_source_id,
+        audio_stream_index,
+        subtitle_stream_index,
+        &api.token,
+    )?;
     if let Some(ref v) = item {
         prep.title = media::display_title(v);
     }
@@ -47,12 +61,12 @@ impl Runtime {
 
     pub(super) async fn play_next_or_stop(&mut self, from_eof: bool) {
         self.log_queue("play-next-or-stop");
-        let pos = if let Some(mpv) = self.mpv.as_mut() {
+        let playlist_pos = if let Some(mpv) = self.mpv.as_mut() {
             mpv.playlist_pos().await.unwrap_or(0).max(0) as usize
         } else {
             0
         };
-        let count = if let Some(mpv) = self.mpv.as_mut() {
+        let playlist_count = if let Some(mpv) = self.mpv.as_mut() {
             mpv.playlist_count().await.unwrap_or(0).max(0) as usize
         } else {
             0
@@ -62,17 +76,23 @@ impl Runtime {
         // after `adopt_playlist_pos` moves the index on a playlist jump.
         let expected_pos = self.queue.index.saturating_sub(self.playlist_origin);
         tracing::info!(
-            pos,
-            count,
+            playlist_pos,
+            playlist_count,
             expected_pos,
             head = self.mpv_head,
             from_eof,
             has_next = self.queue.has_next(),
             "eof playlist state"
         );
-        match playlist_eof(pos, count, self.queue.has_next(), expected_pos, from_eof) {
+        match playlist_eof(
+            playlist_pos,
+            playlist_count,
+            self.queue.has_next(),
+            expected_pos,
+            from_eof,
+        ) {
             PlaylistEof::NextInMpv => {
-                tracing::info!(pos, count, expected_pos, "playlist-next");
+                tracing::info!(playlist_pos, playlist_count, expected_pos, "playlist-next");
                 self.transitioning = true;
                 if let Some(mpv) = self.mpv.as_mut() {
                     let _ = mpv.playlist_next().await;
@@ -81,8 +101,8 @@ impl Runtime {
             }
             PlaylistEof::WaitForMpv => {
                 tracing::info!(
-                    pos,
-                    count,
+                    playlist_pos,
+                    playlist_count,
                     expected_pos,
                     "eof; mpv will play next (waiting for file-loaded)"
                 );
@@ -299,20 +319,28 @@ impl Runtime {
         &mut self,
         item_id: &str,
         start_ticks: Option<i64>,
-        aid: Option<i64>,
-        sid: Option<i64>,
-        srcid: Option<&str>,
+        audio_stream_index: Option<i64>,
+        subtitle_stream_index: Option<i64>,
+        media_source_id: Option<&str>,
     ) -> color_eyre::Result<(PreparedPlay, Option<Value>)> {
-        if aid.is_none()
-            && sid.is_none()
-            && srcid.is_none()
+        if audio_stream_index.is_none()
+            && subtitle_stream_index.is_none()
+            && media_source_id.is_none()
             && start_ticks.unwrap_or(0) == 0
             && let Some(prep) = self.prepared.get(item_id).cloned()
         {
             return Ok((prep, None));
         }
 
-        let (prep, item) = fetch_prepared(&self.api, item_id, start_ticks, aid, sid, srcid).await?;
+        let (prep, item) = fetch_prepared(
+            &self.api,
+            item_id,
+            start_ticks,
+            audio_stream_index,
+            subtitle_stream_index,
+            media_source_id,
+        )
+        .await?;
         if let Some(ref v) = item {
             self.titles
                 .insert(item_id.to_string(), media::display_title(v));
@@ -421,11 +449,11 @@ mod tests {
 
         /// The item mpv is playing, per the window's own arithmetic.
         fn current(&self) -> &str {
-            &self.queue.items[self.origin + self.mpv_pos()]
+            &self.queue.items[self.origin + self.playlist_pos()]
         }
 
         /// The current item's mpv playlist position.
-        fn mpv_pos(&self) -> usize {
+        fn playlist_pos(&self) -> usize {
             self.queue.index - self.origin
         }
     }
@@ -538,8 +566,8 @@ mod tests {
 
         w.queue.index += 1; // adopt_playlist_pos jumps to e7
         assert_eq!(w.current(), "e7");
-        assert_eq!(w.mpv_pos(), 6, "position is index - origin, not head");
-        assert_ne!(w.mpv_pos(), w.head);
+        assert_eq!(w.playlist_pos(), 6, "position is index - origin, not head");
+        assert_ne!(w.playlist_pos(), w.head);
     }
 
     /// Test helper: split a listing of ids at `current`.
@@ -559,7 +587,7 @@ mod tests {
         w.tail = 1;
 
         let count = w.mpv_playlist().len();
-        let expected_pos = w.mpv_pos();
+        let expected_pos = w.playlist_pos();
         assert_eq!(count, 4);
         assert_eq!(expected_pos, 2);
         // mpv already advanced to e9 on EOF: wait rather than playlist-next.

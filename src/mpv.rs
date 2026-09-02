@@ -118,8 +118,8 @@ pub fn json_as_seconds(v: &Value) -> Option<f64> {
         .or_else(|| v.as_u64().map(|n| n as f64))
 }
 
-/// Takes the latest sub title ID from a track list (usually external subtitles not burned into the video)
-pub fn max_sub_sid_from_track_list(list: &Value) -> i64 {
+/// Highest mpv subtitle track id (`sid`) in a track-list, typically after `sub-add`.
+pub fn max_subtitle_track_id_from_track_list(list: &Value) -> i64 {
     let mut max = 0i64;
     if let Some(arr) = list.as_array() {
         for t in arr {
@@ -390,20 +390,23 @@ impl MpvSession {
         self.set_mute(!muted).await
     }
 
-    pub async fn set_aid(&mut self, aid: i64) -> color_eyre::Result<()> {
-        self.set_property("aid", json!(aid)).await
+    pub async fn set_audio_track_id(&mut self, audio_track_id: i64) -> color_eyre::Result<()> {
+        self.set_property("aid", json!(audio_track_id)).await
     }
 
-    pub async fn set_sid(&mut self, sid: Option<i64>) -> color_eyre::Result<()> {
-        match sid {
-            Some(s) if s >= 0 => self.set_property("sid", json!(s)).await,
+    pub async fn set_subtitle_track_id(
+        &mut self,
+        subtitle_track_id: Option<i64>,
+    ) -> color_eyre::Result<()> {
+        match subtitle_track_id {
+            Some(id) if id >= 0 => self.set_property("sid", json!(id)).await,
             _ => self.set_property("sid", json!("no")).await,
         }
     }
 
-    pub async fn max_sub_sid(&mut self) -> color_eyre::Result<i64> {
+    pub async fn max_subtitle_track_id(&mut self) -> color_eyre::Result<i64> {
         let list = self.get_property("track-list").await?;
-        Ok(max_sub_sid_from_track_list(&list))
+        Ok(max_subtitle_track_id_from_track_list(&list))
     }
 
     pub async fn toggle_fullscreen(&mut self) -> color_eyre::Result<()> {
@@ -687,19 +690,19 @@ mod tests {
     }
 
     #[test]
-    fn max_sub_sid_from_track_list_picks_the_highest_sub_id() {
+    fn max_subtitle_track_id_from_track_list_picks_the_highest_sub_id() {
         let list = json!([
             {"type": "audio", "id": 1},
             {"type": "sub", "id": 1},
             {"type": "sub", "id": 3},
             {"type": "video", "id": 1}
         ]);
-        assert_eq!(max_sub_sid_from_track_list(&list), 3);
+        assert_eq!(max_subtitle_track_id_from_track_list(&list), 3);
     }
 
     #[test]
-    fn max_sub_sid_from_track_list_is_zero_when_empty() {
-        assert_eq!(max_sub_sid_from_track_list(&json!([])), 0);
-        assert_eq!(max_sub_sid_from_track_list(&json!(null)), 0);
+    fn max_subtitle_track_id_from_track_list_is_zero_when_empty() {
+        assert_eq!(max_subtitle_track_id_from_track_list(&json!([])), 0);
+        assert_eq!(max_subtitle_track_id_from_track_list(&json!(null)), 0);
     }
 }
