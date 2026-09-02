@@ -1,17 +1,17 @@
 //! Open a command in the user's terminal emulator (tray update progress).
 
 use std::ffi::{OsStr, OsString};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
+use tokio::process::{Child, Command};
 
 const APP_TITLE: &str = "jellysink";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalLaunch {
-    pub program: PathBuf,
-    pub args: Vec<OsString>,
+pub(crate) struct TerminalLaunch {
+    pub(crate) program: PathBuf,
+    pub(crate) args: Vec<OsString>,
 }
 
 /// Fallbacks after `xdg-terminal-exec` and `$TERMINAL`. Prefix is the exec flag(s).
@@ -39,7 +39,7 @@ fn exec_prefix(basename: &str) -> &'static [&'static str] {
         .unwrap_or(&["-e"])
 }
 
-pub fn terminal_candidates(
+pub(crate) fn terminal_candidates(
     argv: &[impl AsRef<OsStr>],
     available: &dyn Fn(&str) -> Option<PathBuf>,
     env_terminal: Option<&OsStr>,
@@ -88,7 +88,7 @@ pub fn terminal_candidates(
     out
 }
 
-pub fn find_on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     let p = Path::new(name);
     if p.is_absolute() {
         return p.is_file().then(|| p.to_path_buf());
@@ -103,7 +103,7 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
 const SPAWN_PROBE: Duration = Duration::from_millis(150);
 
 /// Spawn `argv` inside a terminal window. The daemon does not wait on it.
-pub async fn spawn_in_terminal(argv: &[impl AsRef<OsStr>]) -> std::io::Result<()> {
+pub(crate) async fn spawn_in_terminal(argv: &[impl AsRef<OsStr>]) -> std::io::Result<()> {
     spawn_launches(&terminal_candidates(
         argv,
         &find_on_path,
@@ -122,6 +122,9 @@ async fn spawn_launches(launches: &[TerminalLaunch]) -> std::io::Result<()> {
     let mut last_err =
         std::io::Error::new(std::io::ErrorKind::NotFound, "no terminal emulator found");
     for launch in launches {
+        // tokio's Command, not std's: this runs on the daemon's
+        // `current_thread` runtime, where a synchronous fork/exec stalls the
+        // WebSocket keepalive and mpv IPC along with everything else.
         let mut cmd = Command::new(&launch.program);
         cmd.args(&launch.args)
             .stdin(Stdio::null())
@@ -141,19 +144,19 @@ async fn spawn_launches(launches: &[TerminalLaunch]) -> std::io::Result<()> {
 
 /// Ok if the child is still running or exited 0 (double-fork). Err if it
 /// exited non-zero before `timeout`.
+///
+/// Awaits the child rather than polling `try_wait` every 20 ms: with up to
+/// fifteen candidate terminals, that loop could spend seconds of the daemon's
+/// single runtime thread doing nothing.
 async fn spawn_looks_ok(child: &mut Child, timeout: Duration) -> std::io::Result<()> {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        match child.try_wait()? {
-            Some(status) if status.success() => return Ok(()),
-            Some(status) => {
-                return Err(std::io::Error::other(format!(
-                    "terminal exited with {status}"
-                )));
-            }
-            None if tokio::time::Instant::now() >= deadline => return Ok(()),
-            None => tokio::time::sleep(Duration::from_millis(20)).await,
-        }
+    match tokio::time::timeout(timeout, child.wait()).await {
+        // Still running when the probe expired: it launched.
+        Err(_) => Ok(()),
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(std::io::Error::other(format!(
+            "terminal exited with {status}"
+        ))),
+        Ok(Err(e)) => Err(e),
     }
 }
 
@@ -317,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_looks_ok_rejects_immediate_nonzero_exit() {
-        let mut child = std::process::Command::new("false").spawn().unwrap();
+        let mut child = Command::new("false").spawn().unwrap();
         let err = spawn_looks_ok(&mut child, Duration::from_millis(200))
             .await
             .expect_err("nonzero exit should be a spawn failure");
@@ -326,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_looks_ok_accepts_immediate_zero_exit() {
-        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let mut child = Command::new("true").spawn().unwrap();
         spawn_looks_ok(&mut child, Duration::from_millis(200))
             .await
             .unwrap();
@@ -334,12 +337,9 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_looks_ok_accepts_still_running() {
-        let mut child = std::process::Command::new("sleep")
-            .arg("10")
-            .spawn()
-            .unwrap();
+        let mut child = Command::new("sleep").arg("10").spawn().unwrap();
         let result = spawn_looks_ok(&mut child, Duration::from_millis(80)).await;
-        let _ = child.kill();
+        let _ = child.kill().await;
         result.unwrap();
     }
 

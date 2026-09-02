@@ -13,7 +13,7 @@ use tokio::time::{sleep, timeout};
 
 /// Inbound IPC message from mpv
 #[derive(Debug, Clone, PartialEq)]
-pub enum IpcMessage {
+pub(crate) enum IpcMessage {
     Reply {
         request_id: i64,
         error: String,
@@ -22,12 +22,11 @@ pub enum IpcMessage {
     Event {
         name: String,
         reason: Option<String>,
-        data: Value,
     },
 }
 
 /// Encodes a command to be sent to mpv
-pub fn encode_command(request_id: i64, args: &[Value]) -> String {
+pub(crate) fn encode_command(request_id: i64, args: &[Value]) -> String {
     let v = json!({
         "command": args,
         "request_id": request_id,
@@ -39,7 +38,7 @@ pub fn encode_command(request_id: i64, args: &[Value]) -> String {
 ///
 /// `loadfile` `force-media-title` and `playlist/N/title` do not populate
 /// unloaded entries — this is what gives the selector its titles.
-pub fn playlist_m3u<I, T, U>(entries: I) -> String
+pub(crate) fn playlist_m3u<I, T, U>(entries: I) -> String
 where
     I: IntoIterator<Item = (T, U)>,
     T: AsRef<str>,
@@ -58,7 +57,7 @@ where
 }
 
 /// Args for `loadlist` `append` command to add a file to the playlist
-pub fn loadlist_append_args(path: &str) -> [Value; 3] {
+pub(crate) fn loadlist_append_args(path: &str) -> [Value; 3] {
     [json!("loadlist"), json!(path), json!("append")]
 }
 
@@ -68,7 +67,7 @@ pub fn loadlist_append_args(path: &str) -> [Value; 3] {
 /// token is `invalid parameter`. Inserting at or below the current position
 /// does not interrupt playback — mpv shifts `playlist-pos` by the number
 /// inserted and keeps playing the same file.
-pub fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
+pub(crate) fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
     [
         json!("loadlist"),
         json!(path),
@@ -81,17 +80,16 @@ pub fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
 /// which is also what emits `end-file` so we can adopt the new item.
 /// `always` pauses on the last frame of every file without unloading it,
 /// so we never see `end-file` and autoplay stalls.
-pub const KEEP_OPEN: &str = "yes";
+pub(crate) const KEEP_OPEN: &str = "yes";
 
 /// Parses an IPC line from mpv into an [`IpcMessage`]
-pub fn parse_ipc_line(line: &str) -> color_eyre::Result<IpcMessage> {
+pub(crate) fn parse_ipc_line(line: &str) -> color_eyre::Result<IpcMessage> {
     let v: Value = serde_json::from_str(line.trim()).wrap_err("mpv IPC JSON")?;
     if let Some(name) = v.get("event").and_then(Value::as_str) {
         let reason = v.get("reason").and_then(Value::as_str).map(str::to_string);
         return Ok(IpcMessage::Event {
             name: name.to_string(),
             reason,
-            data: v,
         });
     }
     let request_id = v
@@ -112,14 +110,36 @@ pub fn parse_ipc_line(line: &str) -> color_eyre::Result<IpcMessage> {
 }
 
 /// Converts a JSON value to a `f64` representing seconds
-pub fn json_as_seconds(v: &Value) -> Option<f64> {
+/// Coerce an mpv property answer, or say what we actually got.
+///
+/// These used to fall back to a plausible value (`playlist-pos` → 0, `volume`
+/// → 100), so callers made autoplay and reporting decisions from a number mpv
+/// never gave us and a transient IPC hiccup played the wrong episode. An
+/// mpv-level failure already comes back as `Err` from `command`; this covers a
+/// success carrying the wrong JSON type.
+fn as_i64_property(name: &str, v: &Value) -> color_eyre::Result<i64> {
+    v.as_i64()
+        .ok_or_else(|| eyre!("mpv property {name:?} was not an integer: {v}"))
+}
+
+fn as_f64_property(name: &str, v: &Value) -> color_eyre::Result<f64> {
+    v.as_f64()
+        .ok_or_else(|| eyre!("mpv property {name:?} was not a number: {v}"))
+}
+
+fn as_bool_property(name: &str, v: &Value) -> color_eyre::Result<bool> {
+    v.as_bool()
+        .ok_or_else(|| eyre!("mpv property {name:?} was not a boolean: {v}"))
+}
+
+pub(crate) fn json_as_seconds(v: &Value) -> Option<f64> {
     v.as_f64()
         .or_else(|| v.as_i64().map(|n| n as f64))
         .or_else(|| v.as_u64().map(|n| n as f64))
 }
 
 /// Highest mpv subtitle track id (`sid`) in a track-list, typically after `sub-add`.
-pub fn max_subtitle_track_id_from_track_list(list: &Value) -> i64 {
+pub(crate) fn max_subtitle_track_id_from_track_list(list: &Value) -> i64 {
     let mut max = 0i64;
     if let Some(arr) = list.as_array() {
         for t in arr {
@@ -133,10 +153,58 @@ pub fn max_subtitle_track_id_from_track_list(list: &Value) -> i64 {
     max
 }
 
+/// Why mpv ended a file.
+///
+/// Parsed once here rather than carried up as a `String` and string-matched in
+/// three separate places, so `end_file_action` can match exhaustively and a
+/// typo cannot silently fall into the ignore arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EndFileReason {
+    /// Played through to the end.
+    Eof,
+    /// mpv followed the file to another URL.
+    Redirect,
+    /// Playback was stopped — by the user, or by `playlist-next` / an OSC jump
+    /// moving off the current entry.
+    Stop,
+    /// mpv is exiting.
+    Quit,
+    Error,
+    /// A reason mpv added later, or no `reason` field at all.
+    Other,
+}
+
+impl EndFileReason {
+    fn parse(reason: Option<&str>) -> Self {
+        match reason {
+            Some("eof") => Self::Eof,
+            Some("redirect") => Self::Redirect,
+            Some("stop") => Self::Stop,
+            Some("quit") => Self::Quit,
+            Some("error") => Self::Error,
+            _ => Self::Other,
+        }
+    }
+}
+
+impl std::fmt::Display for EndFileReason {
+    /// mpv's own spelling, so log lines read the same as mpv's.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Eof => "eof",
+            Self::Redirect => "redirect",
+            Self::Stop => "stop",
+            Self::Quit => "quit",
+            Self::Error => "error",
+            Self::Other => "unknown",
+        })
+    }
+}
+
 /// Represents an event received from mpv
 #[derive(Debug, Clone)]
-pub enum MpvEvent {
-    EndFile { reason: String },
+pub(crate) enum MpvEvent {
+    EndFile { reason: EndFileReason },
     FileLoaded,
     Exited,
 }
@@ -145,8 +213,20 @@ struct Pending {
     tx: oneshot::Sender<Result<Value, String>>,
 }
 
+/// Drops pending requests whose caller has gone away — timed out (`command`
+/// gives up after 10 s) or had its future cancelled by a `select!`.
+///
+/// mpv never replies to a command it did not process, so those entries were
+/// never removed: `pending` grew for the life of the session, leaking a
+/// `oneshot::Sender` per abandoned request.
+fn evict_abandoned(pending: &mut HashMap<i64, Pending>) -> usize {
+    let before = pending.len();
+    pending.retain(|_, p| !p.tx.is_closed());
+    before - pending.len()
+}
+
 /// Represents a session with an mpv process
-pub struct MpvSession {
+pub(crate) struct MpvSession {
     child: Child,
     cmd_tx: mpsc::UnboundedSender<IpcCmd>,
     socket: PathBuf,
@@ -165,7 +245,7 @@ enum IpcCmd {
 
 impl MpvSession {
     /// Spawns a new mpv session with the given path and arguments
-    pub async fn spawn(
+    pub(crate) async fn spawn(
         mpv_path: &str,
         extra_args: &[String],
         socket: PathBuf,
@@ -194,6 +274,14 @@ impl MpvSession {
         let stream = wait_for_socket(&socket, Duration::from_secs(8))
             .await
             .wrap_err("waiting for mpv IPC socket")?;
+        // Belt and braces on top of the 0700 config directory: mpv creates this
+        // socket under the ambient umask, and `http-header-fields` on it carries
+        // the Jellyfin access token.
+        if let Err(e) =
+            tokio::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).await
+        {
+            tracing::warn!("could not restrict {}: {e}", socket.display());
+        }
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (ev_tx, ev_rx) = mpsc::unbounded_channel();
@@ -217,7 +305,7 @@ impl MpvSession {
     }
 
     /// Sends a command to the mpv process and returns the response
-    pub async fn command(&mut self, args: Vec<Value>) -> color_eyre::Result<Value> {
+    async fn command(&mut self, args: Vec<Value>) -> color_eyre::Result<Value> {
         let id = self.next_request_id();
         let line = encode_command(id, &args);
         let (tx, rx) = oneshot::channel();
@@ -236,17 +324,25 @@ impl MpvSession {
         }
     }
 
-    pub async fn set_property(&mut self, name: &str, value: Value) -> color_eyre::Result<()> {
+    pub(crate) async fn set_property(
+        &mut self,
+        name: &str,
+        value: Value,
+    ) -> color_eyre::Result<()> {
         self.command(vec![json!("set_property"), json!(name), value])
             .await?;
         Ok(())
     }
 
-    pub async fn get_property(&mut self, name: &str) -> color_eyre::Result<Value> {
+    async fn get_property(&mut self, name: &str) -> color_eyre::Result<Value> {
         self.command(vec![json!("get_property"), json!(name)]).await
     }
 
-    pub async fn loadfile(&mut self, url: &str, title: Option<&str>) -> color_eyre::Result<()> {
+    pub(crate) async fn loadfile(
+        &mut self,
+        url: &str,
+        title: Option<&str>,
+    ) -> color_eyre::Result<()> {
         // Do not pass options as loadfile's 4th argument. Since mpv 0.38 that
         // slot is an insert *index* (integer); a map there is "invalid parameter"
         // and the file never loads. Set force-media-title as a property instead,
@@ -260,7 +356,10 @@ impl MpvSession {
     }
 
     /// Appends every entry in one `loadlist`. Titles come from `#EXTINF`.
-    pub async fn loadlist_append(&mut self, entries: &[(&str, &str)]) -> color_eyre::Result<()> {
+    pub(crate) async fn loadlist_append(
+        &mut self,
+        entries: &[(&str, &str)],
+    ) -> color_eyre::Result<()> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -271,7 +370,7 @@ impl MpvSession {
 
     /// Splices every entry in at `index` in one `loadlist`. Playback is
     /// unaffected; mpv shifts `playlist-pos` by the number inserted.
-    pub async fn loadlist_insert_at(
+    pub(crate) async fn loadlist_insert_at(
         &mut self,
         entries: &[(&str, &str)],
         index: usize,
@@ -292,8 +391,7 @@ impl MpvSession {
         body: String,
         index: Option<usize>,
     ) -> color_eyre::Result<()> {
-        tokio::fs::write(path, body).await?;
-        let _ = tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await;
+        write_private(path, &body).await?;
         let args: Vec<Value> = match index {
             Some(i) => loadlist_insert_at_args(&path.to_string_lossy(), i).to_vec(),
             None => loadlist_append_args(&path.to_string_lossy()).to_vec(),
@@ -304,97 +402,100 @@ impl MpvSession {
         Ok(())
     }
 
-    pub async fn playlist_next(&mut self) -> color_eyre::Result<()> {
+    async fn get_i64(&mut self, name: &str) -> color_eyre::Result<i64> {
+        as_i64_property(name, &self.get_property(name).await?)
+    }
+
+    async fn get_f64(&mut self, name: &str) -> color_eyre::Result<f64> {
+        as_f64_property(name, &self.get_property(name).await?)
+    }
+
+    async fn get_bool(&mut self, name: &str) -> color_eyre::Result<bool> {
+        as_bool_property(name, &self.get_property(name).await?)
+    }
+
+    pub(crate) async fn playlist_next(&mut self) -> color_eyre::Result<()> {
         self.command(vec![json!("playlist-next"), json!("force")])
             .await?;
         Ok(())
     }
 
-    pub async fn playlist_prev(&mut self) -> color_eyre::Result<()> {
+    pub(crate) async fn playlist_prev(&mut self) -> color_eyre::Result<()> {
         self.command(vec![json!("playlist-prev"), json!("force")])
             .await?;
         Ok(())
     }
 
-    pub async fn playlist_pos(&mut self) -> color_eyre::Result<i64> {
-        Ok(self
-            .get_property("playlist-pos")
-            .await?
-            .as_i64()
-            .unwrap_or(0))
+    /// mpv reports `-1` while idle; that is a real answer, not a failure.
+    pub(crate) async fn playlist_pos(&mut self) -> color_eyre::Result<i64> {
+        self.get_i64("playlist-pos").await
     }
 
-    pub async fn playlist_count(&mut self) -> color_eyre::Result<i64> {
-        Ok(self
-            .get_property("playlist-count")
-            .await?
-            .as_i64()
-            .unwrap_or(0))
+    pub(crate) async fn playlist_count(&mut self) -> color_eyre::Result<i64> {
+        self.get_i64("playlist-count").await
     }
 
-    pub async fn set_keep_open(&mut self) -> color_eyre::Result<()> {
+    pub(crate) async fn set_keep_open(&mut self) -> color_eyre::Result<()> {
         self.set_property("keep-open", json!(KEEP_OPEN)).await
     }
 
-    pub async fn sub_add(&mut self, url: &str) -> color_eyre::Result<()> {
+    pub(crate) async fn sub_add(&mut self, url: &str) -> color_eyre::Result<()> {
         self.command(vec![json!("sub-add"), json!(url)]).await?;
         Ok(())
     }
 
-    pub async fn apply_auth_header(&mut self, header_field: &str) -> color_eyre::Result<()> {
+    pub(crate) async fn apply_auth_header(&mut self, header_field: &str) -> color_eyre::Result<()> {
         self.set_property("http-header-fields", json!([header_field]))
             .await
     }
 
-    pub async fn clear_auth_header(&mut self) -> color_eyre::Result<()> {
+    pub(crate) async fn clear_auth_header(&mut self) -> color_eyre::Result<()> {
         self.set_property("http-header-fields", json!([])).await
     }
 
-    pub async fn pause(&mut self) -> color_eyre::Result<()> {
+    pub(crate) async fn pause(&mut self) -> color_eyre::Result<()> {
         self.set_property("pause", json!(true)).await
     }
 
-    pub async fn unpause(&mut self) -> color_eyre::Result<()> {
+    pub(crate) async fn unpause(&mut self) -> color_eyre::Result<()> {
         self.set_property("pause", json!(false)).await
     }
 
-    pub async fn toggle_pause(&mut self) -> color_eyre::Result<()> {
-        let paused = self.get_property("pause").await?.as_bool().unwrap_or(false);
+    pub(crate) async fn toggle_pause(&mut self) -> color_eyre::Result<()> {
+        let paused = self.get_bool("pause").await?;
         self.set_property("pause", json!(!paused)).await
     }
 
-    pub async fn seek_absolute(&mut self, seconds: f64) -> color_eyre::Result<()> {
+    pub(crate) async fn seek_absolute(&mut self, seconds: f64) -> color_eyre::Result<()> {
         self.command(vec![json!("seek"), json!(seconds), json!("absolute")])
             .await?;
         Ok(())
     }
 
-    pub async fn set_volume(&mut self, volume: i64) -> color_eyre::Result<()> {
+    pub(crate) async fn set_volume(&mut self, volume: i64) -> color_eyre::Result<()> {
         self.set_property("volume", json!(volume.clamp(0, 100)))
             .await
     }
 
-    pub async fn add_volume(&mut self, delta: i64) -> color_eyre::Result<i64> {
-        let cur = self.get_property("volume").await?.as_f64().unwrap_or(100.0) as i64;
+    pub(crate) async fn add_volume(&mut self, delta: i64) -> color_eyre::Result<i64> {
+        let cur = self.get_f64("volume").await? as i64;
         let next = (cur + delta).clamp(0, 100);
         self.set_volume(next).await?;
         Ok(next)
     }
 
-    pub async fn set_mute(&mut self, mute: bool) -> color_eyre::Result<()> {
+    pub(crate) async fn set_mute(&mut self, mute: bool) -> color_eyre::Result<()> {
         self.set_property("mute", json!(mute)).await
     }
 
-    pub async fn toggle_mute(&mut self) -> color_eyre::Result<()> {
-        let muted = self.get_property("mute").await?.as_bool().unwrap_or(false);
-        self.set_mute(!muted).await
-    }
-
-    pub async fn set_audio_track_id(&mut self, audio_track_id: i64) -> color_eyre::Result<()> {
+    pub(crate) async fn set_audio_track_id(
+        &mut self,
+        audio_track_id: i64,
+    ) -> color_eyre::Result<()> {
         self.set_property("aid", json!(audio_track_id)).await
     }
 
-    pub async fn set_subtitle_track_id(
+    pub(crate) async fn set_subtitle_track_id(
         &mut self,
         subtitle_track_id: Option<i64>,
     ) -> color_eyre::Result<()> {
@@ -404,38 +505,34 @@ impl MpvSession {
         }
     }
 
-    pub async fn max_subtitle_track_id(&mut self) -> color_eyre::Result<i64> {
+    pub(crate) async fn max_subtitle_track_id(&mut self) -> color_eyre::Result<i64> {
         let list = self.get_property("track-list").await?;
         Ok(max_subtitle_track_id_from_track_list(&list))
     }
 
-    pub async fn toggle_fullscreen(&mut self) -> color_eyre::Result<()> {
-        let fs = self
-            .get_property("fullscreen")
-            .await?
-            .as_bool()
-            .unwrap_or(false);
+    pub(crate) async fn toggle_fullscreen(&mut self) -> color_eyre::Result<()> {
+        let fs = self.get_bool("fullscreen").await?;
         self.set_property("fullscreen", json!(!fs)).await
     }
 
-    pub async fn time_pos(&mut self) -> color_eyre::Result<f64> {
+    pub(crate) async fn time_pos(&mut self) -> color_eyre::Result<f64> {
         let v = self.get_property("time-pos").await?;
         json_as_seconds(&v).ok_or_else(|| eyre!("time-pos was not a number"))
     }
 
-    pub async fn paused(&mut self) -> color_eyre::Result<bool> {
-        Ok(self.get_property("pause").await?.as_bool().unwrap_or(false))
+    pub(crate) async fn paused(&mut self) -> color_eyre::Result<bool> {
+        self.get_bool("pause").await
     }
 
-    pub async fn volume(&mut self) -> color_eyre::Result<i64> {
-        Ok(self.get_property("volume").await?.as_f64().unwrap_or(100.0) as i64)
+    pub(crate) async fn volume(&mut self) -> color_eyre::Result<i64> {
+        Ok(self.get_f64("volume").await? as i64)
     }
 
-    pub async fn muted(&mut self) -> color_eyre::Result<bool> {
-        Ok(self.get_property("mute").await?.as_bool().unwrap_or(false))
+    pub(crate) async fn muted(&mut self) -> color_eyre::Result<bool> {
+        self.get_bool("mute").await
     }
 
-    pub async fn quit_and_wait(&mut self) -> color_eyre::Result<()> {
+    pub(crate) async fn quit_and_wait(&mut self) -> color_eyre::Result<()> {
         let _ = self.command(vec![json!("quit")]).await;
         let _ = self.cmd_tx.send(IpcCmd::Shutdown);
         if timeout(Duration::from_secs(3), self.child.wait())
@@ -470,6 +567,33 @@ impl Drop for MpvSession {
     }
 }
 
+/// Writes a file only the current user can read, creating it with the mode
+/// rather than chmodding after.
+///
+/// The M3U body carries `ApiKey=` whenever the Authorization header is not in
+/// play. `fs::write` + `set_permissions` left it at `0644 & ~umask` in between,
+/// so the token was briefly world-readable. Unlinking first means a stale file
+/// left by a crash cannot donate its old, looser mode.
+async fn write_private(path: &Path, body: &str) -> color_eyre::Result<()> {
+    let _ = tokio::fs::remove_file(path).await;
+    let mut f = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .await
+        .wrap_err_with(|| format!("creating {}", path.display()))?;
+    f.write_all(body.as_bytes())
+        .await
+        .wrap_err_with(|| format!("writing {}", path.display()))?;
+    // tokio's File does not flush on drop, and mpv reads this path back
+    // immediately — without this it loads an empty playlist.
+    f.flush()
+        .await
+        .wrap_err_with(|| format!("flushing {}", path.display()))?;
+    Ok(())
+}
+
 async fn wait_for_socket(path: &Path, max: Duration) -> color_eyre::Result<UnixStream> {
     let start = tokio::time::Instant::now();
     loop {
@@ -499,6 +623,10 @@ async fn ipc_loop(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(IpcCmd::Request { line, id, reply }) => {
+                        let evicted = evict_abandoned(&mut pending);
+                        if evicted > 0 {
+                            tracing::debug!(evicted, "dropped mpv IPC requests the caller gave up on");
+                        }
                         pending.insert(id, Pending { tx: reply });
                         if writer.write_all(line.as_bytes()).await.is_err() {
                             break;
@@ -521,10 +649,10 @@ async fn ipc_loop(
                                     let _ = p.tx.send(r);
                                 }
                             }
-                            Ok(IpcMessage::Event { name, reason, .. }) => {
+                            Ok(IpcMessage::Event { name, reason }) => {
                                 let ev = match name.as_str() {
                                     "end-file" => Some(MpvEvent::EndFile {
-                                        reason: reason.unwrap_or_else(|| "unknown".into()),
+                                        reason: EndFileReason::parse(reason.as_deref()),
                                     }),
                                     "file-loaded" => Some(MpvEvent::FileLoaded),
                                     _ => None,
@@ -642,7 +770,6 @@ mod tests {
             IpcMessage::Event {
                 name: "end-file".into(),
                 reason: Some("eof".into()),
-                data: json!({"event":"end-file","reason":"eof"}),
             }
         );
     }
@@ -704,5 +831,124 @@ mod tests {
     fn max_subtitle_track_id_from_track_list_is_zero_when_empty() {
         assert_eq!(max_subtitle_track_id_from_track_list(&json!([])), 0);
         assert_eq!(max_subtitle_track_id_from_track_list(&json!(null)), 0);
+    }
+
+    #[test]
+    fn property_coercions_accept_the_expected_shapes() {
+        assert_eq!(as_i64_property("playlist-pos", &json!(3)).unwrap(), 3);
+        // mpv reports -1 for playlist-pos while idle; that is a real answer.
+        assert_eq!(as_i64_property("playlist-pos", &json!(-1)).unwrap(), -1);
+        assert_eq!(as_f64_property("volume", &json!(62.5)).unwrap(), 62.5);
+        assert!(as_bool_property("pause", &json!(true)).unwrap());
+    }
+
+    /// The regression: a null or wrong-typed answer used to become 0 / 100.0 /
+    /// false, and `playlist_eof` then picked an episode from it.
+    #[test]
+    fn property_coercions_reject_a_missing_or_wrong_typed_answer() {
+        for v in [json!(null), json!("3"), json!({})] {
+            assert!(
+                as_i64_property("playlist-pos", &v).is_err(),
+                "{v} should not coerce to an integer"
+            );
+        }
+        assert!(as_f64_property("volume", &json!(null)).is_err());
+        assert!(as_bool_property("pause", &json!(null)).is_err());
+        assert!(as_bool_property("pause", &json!(1)).is_err());
+    }
+
+    #[test]
+    fn a_coercion_error_names_the_property_and_what_arrived() {
+        let err = as_i64_property("playlist-count", &json!("nope")).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("playlist-count"), "{msg}");
+        assert!(msg.contains("nope"), "{msg}");
+    }
+
+    fn pending_entry() -> (Pending, oneshot::Receiver<Result<Value, String>>) {
+        let (tx, rx) = oneshot::channel();
+        (Pending { tx }, rx)
+    }
+
+    #[test]
+    fn abandoned_requests_are_evicted() {
+        let mut pending = HashMap::new();
+        let (live, _live_rx) = pending_entry();
+        let (abandoned, abandoned_rx) = pending_entry();
+        pending.insert(1, live);
+        pending.insert(2, abandoned);
+
+        // The caller timed out and dropped its receiver.
+        drop(abandoned_rx);
+
+        assert_eq!(evict_abandoned(&mut pending), 1);
+        assert!(pending.contains_key(&1), "a live waiter must be kept");
+        assert!(!pending.contains_key(&2));
+    }
+
+    #[test]
+    fn evicting_leaves_a_map_of_live_waiters_alone() {
+        let mut pending = HashMap::new();
+        let (a, _a_rx) = pending_entry();
+        let (b, _b_rx) = pending_entry();
+        pending.insert(1, a);
+        pending.insert(2, b);
+        assert_eq!(evict_abandoned(&mut pending), 0);
+        assert_eq!(pending.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn playlist_files_are_created_private_not_chmodded_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("append.m3u");
+        write_private(&path, "#EXTM3U\n").await.unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the body can carry ApiKey=");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "#EXTM3U\n");
+    }
+
+    /// A file left behind by a crash must not donate its looser mode.
+    #[tokio::test]
+    async fn a_stale_world_readable_playlist_file_is_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("insert.m3u");
+        std::fs::write(&path, "stale").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private(&path, "fresh").await.unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "fresh");
+    }
+
+    #[test]
+    fn end_file_reasons_parse_to_their_variants() {
+        assert_eq!(EndFileReason::parse(Some("eof")), EndFileReason::Eof);
+        assert_eq!(
+            EndFileReason::parse(Some("redirect")),
+            EndFileReason::Redirect
+        );
+        assert_eq!(EndFileReason::parse(Some("stop")), EndFileReason::Stop);
+        assert_eq!(EndFileReason::parse(Some("quit")), EndFileReason::Quit);
+        assert_eq!(EndFileReason::parse(Some("error")), EndFileReason::Error);
+    }
+
+    #[test]
+    fn an_unknown_or_missing_reason_becomes_other() {
+        assert_eq!(EndFileReason::parse(None), EndFileReason::Other);
+        assert_eq!(
+            EndFileReason::parse(Some("something-new")),
+            EndFileReason::Other
+        );
+    }
+
+    /// Log lines should keep reading like mpv's own.
+    #[test]
+    fn display_round_trips_mpv_spelling() {
+        for name in ["eof", "redirect", "stop", "quit", "error"] {
+            assert_eq!(EndFileReason::parse(Some(name)).to_string(), name);
+        }
+        assert_eq!(EndFileReason::Other.to_string(), "unknown");
     }
 }

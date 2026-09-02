@@ -27,8 +27,29 @@ jobs:
             exit 1
           fi
 
-  build:
+  # A tag must not publish a release from a commit that would fail CI.
+  verify:
+    name: fmt / clippy / test
     needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: check formatting
+        run: cargo fmt -- --check
+      - name: clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: test
+        run: cargo test --locked
+
+  build:
+    needs: verify
     name: build-${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -63,7 +84,7 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Build
-        run: ${{ matrix.cargo }} build --release --target ${{ matrix.target }}
+        run: ${{ matrix.cargo }} build --locked --release --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |

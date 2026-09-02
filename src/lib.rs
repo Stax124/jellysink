@@ -1,22 +1,24 @@
 use std::fmt;
 
-pub mod cast;
+pub(crate) mod cast;
 pub mod cli;
 pub mod config;
-pub mod instance;
-pub mod jellyfin;
-pub mod media;
-pub mod mpv;
-pub mod report;
-pub mod runtime;
-pub mod terminal;
+pub(crate) mod instance;
+pub(crate) mod jellyfin;
+pub(crate) mod media;
+pub(crate) mod mpv;
+pub(crate) mod report;
+pub(crate) mod runtime;
+pub(crate) mod signal;
+pub(crate) mod terminal;
+pub(crate) mod ticks;
 pub mod tracing;
-pub mod tray;
-pub mod update;
+pub(crate) mod tray;
+pub(crate) mod update;
 
-pub const APP_NAME: &str = "jellysink";
-pub const CLIENT_NAME: &str = "jellysink";
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const APP_NAME: &str = "jellysink";
+pub(crate) const CLIENT_NAME: &str = "jellysink";
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug)]
 pub struct UsageError(pub String);

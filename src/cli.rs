@@ -1,14 +1,15 @@
-use crate::config::{Config, Credentials, MpvArgs, Paths, device_name, normalize_server_url};
+use crate::config::{
+    Config, Credentials, Field, MpvArgs, Paths, device_name, normalize_server_url,
+};
 use crate::instance::{self, InstanceLock};
 use crate::jellyfin::auth::login;
+use crate::signal::Signal;
 use crate::tray;
 use crate::usage_err;
 use crate::{APP_NAME, VERSION};
 use color_eyre::eyre::WrapErr;
 use dialoguer::{Input, Password, theme::ColorfulTheme};
 use std::ffi::OsStr;
-use std::sync::Arc;
-use tokio::sync::Notify;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,30 +82,36 @@ pub fn cmd_config_path(paths: &Paths) -> color_eyre::Result<()> {
 }
 
 pub fn cmd_config_get(paths: &Paths, key: Option<&str>) -> color_eyre::Result<()> {
-    // `mpv_args` lives in its own file so a running daemon re-reads it on
-    // every mpv spawn; it is not part of config.toml.
-    let out = match key {
-        Some("mpv_args") => MpvArgs::get(paths)?,
-        _ => {
-            let cfg = Config::load(paths)?;
-            cfg.get(key)?
+    let Some(key) = key else {
+        // The whole configuration, including mpv_args — which lives in its own
+        // file and used to be silently omitted from this dump.
+        let cfg = Config::load(paths)?;
+        print!("{}", cfg.to_toml()?);
+        let args = MpvArgs::get(paths)?;
+        if !args.trim().is_empty() {
+            println!("\n# {}", Field::MpvArgs.name());
+            println!("{}", args.trim_end());
         }
+        return Ok(());
     };
-    print!("{out}");
-    if key.is_some() {
-        println!();
-    }
+    let field = Field::parse(key)?;
+    let out = match Config::load(paths)?.get(field) {
+        Some(v) => v,
+        // Not in config.toml; a running daemon re-reads it on every mpv spawn.
+        None => MpvArgs::get(paths)?,
+    };
+    println!("{}", out.trim_end());
     Ok(())
 }
 
 pub fn cmd_config_set(paths: &Paths, key: &str, value: &str) -> color_eyre::Result<()> {
-    if key == "mpv_args" {
-        MpvArgs::save(paths, value)?;
-        return Ok(());
-    }
+    let field = Field::parse(key)?;
     let mut cfg = Config::load(paths)?;
-    cfg.set(key, value)?;
-    cfg.save(paths)?;
+    if cfg.set(field, value)? {
+        cfg.save(paths)?;
+    } else {
+        MpvArgs::save(paths, value)?;
+    }
     Ok(())
 }
 
@@ -115,7 +122,7 @@ pub fn cmd_stop(paths: &Paths) -> color_eyre::Result<()> {
 pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     tracing::info!("jellysink {VERSION}");
 
-    let config = Config::load(&paths)?;
+    let config = Config::load_or_create(&paths)?;
     let creds = Credentials::load(&paths)?
         .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
 
@@ -132,8 +139,8 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         "starting"
     );
 
-    let shutdown = Arc::new(Notify::new());
-    let restart = Arc::new(Notify::new());
+    let shutdown = Signal::new();
+    let restart = Signal::new();
     let tray = tray::start(shutdown.clone()).await;
     spawn_update_check(tray.as_ref().map(|t| t.handle.clone()));
     if let Some(apply) = tray.as_ref().map(|t| t.apply.clone()) {
@@ -142,7 +149,8 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         let apply_restart = restart.clone();
         tokio::spawn(async move {
             loop {
-                apply.notified().await;
+                apply.fired().await;
+                apply.take();
                 apply_update_from_daemon(
                     update_paths.clone(),
                     apply_exe.clone(),
@@ -180,14 +188,14 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
             tracing::info!("SIGINT");
             Ok(())
         }
-        _ = restart.notified() => {
+        _ = restart.fired() => {
             tracing::info!("restart requested");
             do_restart = true;
-            shutdown.notify_waiters();
+            shutdown.fire();
             session_fut.await
         }
     };
-    shutdown.notify_waiters();
+    shutdown.fire();
     outcome?;
     if do_restart {
         tracing::info!(path = %exe.display(), "replacing process with updated binary");
@@ -281,13 +289,13 @@ async fn spawn_tray_update(paths: &Paths, exe: &std::path::Path) -> std::io::Res
     .await
 }
 
-async fn apply_update_from_daemon(paths: Paths, exe: std::path::PathBuf, restart: Arc<Notify>) {
+async fn apply_update_from_daemon(paths: Paths, exe: std::path::PathBuf, restart: Signal) {
     if let Err(e) = spawn_tray_update(&paths, &exe).await {
         tracing::warn!("could not open a terminal for the update ({e}); updating silently");
         match crate::update::install(false).await {
             Ok(status) if status.is_updated() => {
                 tracing::info!(version = %status.version(), "updated; restarting");
-                restart.notify_waiters();
+                restart.fire();
             }
             Ok(_) => tracing::info!("already up to date"),
             Err(e) => tracing::error!("installing update failed: {e:#}"),

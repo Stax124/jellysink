@@ -53,6 +53,8 @@ enum ConfigCmd {
     /// Print one key, or the whole file
     Get { key: Option<String> },
     /// Set a key (mpv_path, mpv_args, log_level, autoplay, prepend_previous)
+    ///
+    /// The list is `config::Field`; a test pins it against this help text.
     Set {
         key: String,
         /// Values may start with `-` (e.g. `mpv_args --fullscreen`).

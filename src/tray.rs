@@ -1,23 +1,23 @@
 use crate::APP_NAME;
+use crate::signal::Signal;
 use std::io::Cursor;
-use std::sync::{Arc, OnceLock};
-use tokio::sync::Notify;
+use std::sync::OnceLock;
 
 const JELLYFIN_ICO: &[u8] = include_bytes!("../assets/logo.ico");
 
-pub struct Tray {
-    pub handle: ksni::Handle<CastTray>,
-    pub apply: Arc<Notify>,
+pub(crate) struct Tray {
+    pub(crate) handle: ksni::Handle<CastTray>,
+    pub(crate) apply: Signal,
 }
 
-pub struct CastTray {
-    shutdown: Arc<Notify>,
-    apply: Arc<Notify>,
+pub(crate) struct CastTray {
+    shutdown: Signal,
+    apply: Signal,
     pending_version: Option<String>,
 }
 
 impl CastTray {
-    pub fn set_pending(&mut self, version: String) {
+    pub(crate) fn set_pending(&mut self, version: String) {
         self.pending_version = Some(version);
     }
 }
@@ -45,6 +45,8 @@ fn load_jellyfin_icons() -> Vec<ksni::Icon> {
         .collect()
 }
 
+/// ksni's `icon_pixmap` returns an owned `Vec`, so the clone here is required
+/// by the trait; the `OnceLock` at least keeps the ICO decode to once.
 fn jellyfin_icons() -> Vec<ksni::Icon> {
     static ICONS: OnceLock<Vec<ksni::Icon>> = OnceLock::new();
     ICONS.get_or_init(load_jellyfin_icons).clone()
@@ -133,7 +135,7 @@ impl ksni::Tray for CastTray {
                 StandardItem {
                     label: format!("Install update (v{v})"),
                     activate: Box::new(|this: &mut Self| {
-                        this.apply.notify_waiters();
+                        this.apply.fire();
                     }),
                     ..Default::default()
                 }
@@ -145,7 +147,7 @@ impl ksni::Tray for CastTray {
             StandardItem {
                 label: "Quit".into(),
                 activate: Box::new(|this: &mut Self| {
-                    this.shutdown.notify_waiters();
+                    this.shutdown.fire();
                 }),
                 ..Default::default()
             }
@@ -158,9 +160,9 @@ impl ksni::Tray for CastTray {
 /// Start the StatusNotifierItem. Fail-open: a missing tray host is a warning.
 /// The returned handle must be kept alive for the tray to stay up and to
 /// push a pending update into the menu.
-pub async fn start(shutdown: Arc<Notify>) -> Option<Tray> {
+pub(crate) async fn start(shutdown: Signal) -> Option<Tray> {
     use ksni::TrayMethods;
-    let apply = Arc::new(Notify::new());
+    let apply = Signal::new();
     match (CastTray {
         shutdown,
         apply: apply.clone(),
@@ -186,8 +188,8 @@ mod tests {
 
     fn tray() -> CastTray {
         CastTray {
-            shutdown: Arc::new(Notify::new()),
-            apply: Arc::new(Notify::new()),
+            shutdown: Signal::new(),
+            apply: Signal::new(),
             pending_version: None,
         }
     }

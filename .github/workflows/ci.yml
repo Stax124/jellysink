@@ -42,7 +42,7 @@ jobs:
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   test:
     name: test
@@ -55,7 +55,7 @@ jobs:
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: test
-        run: cargo test
+        run: cargo test --locked
 
   # Same musl release targets as `.github/workflows/release.yml`, without
   # packaging, so a failing binary build is visible before tagging.
@@ -94,4 +94,4 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Build
-        run: ${{ matrix.cargo }} build --release --target ${{ matrix.target }}
+        run: ${{ matrix.cargo }} build --locked --release --target ${{ matrix.target }}

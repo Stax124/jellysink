@@ -1,52 +1,33 @@
 use super::Runtime;
-use crate::cast::queue_index_at;
 use crate::jellyfin::auth::Api;
-use crate::media::{self, PreparedPlay, mpv_audio_track_id, mpv_embedded_subtitle_track_id};
+use crate::media::{PlayRequest, PreparedPlay, mpv_audio_track_id, mpv_embedded_subtitle_track_id};
 use crate::mpv::MpvSession;
 use crate::report::{PlayingState, Report};
 use color_eyre::eyre::eyre;
 use serde_json::json;
 
 impl Runtime {
-    pub(super) async fn start_current(
-        &mut self,
-        start_ticks: Option<i64>,
-        audio_stream_index: Option<i64>,
-        subtitle_stream_index: Option<i64>,
-        media_source_id: Option<&str>,
-    ) -> color_eyre::Result<()> {
-        let Some(item_id) = self.queue.current().map(str::to_string) else {
+    pub(super) async fn start_current(&mut self, req: &PlayRequest) -> color_eyre::Result<()> {
+        let Some(item_id) = self.window.current().map(str::to_string) else {
             self.stop_playback(true).await;
             return Ok(());
         };
 
         self.prepared.clear();
         self.titles.clear();
-        self.mpv_tail = 0;
-        self.mpv_head = 0;
-        self.pending_prepend.clear();
-        self.playlist_origin = self.queue.index;
+        self.window.reset_to_current();
 
         let reuse = self.mpv.is_some();
         if reuse {
             if let Some(mpv) = self.mpv.as_mut() {
                 let live = mpv.time_pos().await.ok();
-                self.last_ticks = media::coalesce_position_ticks(live, self.last_ticks);
+                self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
             }
             self.send_stopped();
             self.transitioning = true;
         }
 
-        let (prep, item) = match self
-            .prepare_item(
-                &item_id,
-                start_ticks,
-                audio_stream_index,
-                subtitle_stream_index,
-                media_source_id,
-            )
-            .await
-        {
+        let (prep, item) = match self.prepare_item(&item_id, req).await {
             Ok(pair) => pair,
             Err(e) => {
                 tracing::error!("{e:#}");
@@ -79,17 +60,17 @@ impl Runtime {
         self.item_id = Some(item_id);
         self.paused = false;
         self.stopping = false;
-        self.last_ticks = start_ticks.unwrap_or(0);
+        self.last_ticks = req.start_ticks.unwrap_or(0);
         self.external_subtitle_track_ids.clear();
 
-        self.pending_start_ticks = resume_seek_ticks(start_ticks);
+        self.pending_start_ticks = resume_seek_ticks(req.start_ticks);
 
         self.send_start();
         tracing::info!(
             item = %self.item_id.as_deref().unwrap_or("?"),
             title = %self.current.as_ref().map(|p| p.title.as_str()).unwrap_or("?"),
-            queue = self.queue.items.len(),
-            index = self.queue.index,
+            queue = self.window.len(),
+            index = self.window.index(),
             "playing"
         );
         // After `loadfile ... replace` (which wipes mpv's playlist), put the
@@ -108,22 +89,20 @@ impl Runtime {
             .playlist_pos()
             .await?
             .max(0) as usize;
-        let Some(queue_index) =
-            queue_index_at(self.playlist_origin, playlist_pos, self.queue.items.len())
-        else {
+        let Some(queue_index) = self.window.queue_index_at(playlist_pos) else {
             return Ok(());
         };
-        let item_id = self.queue.items[queue_index].clone();
+        let item_id = self.window.items()[queue_index].clone();
         if self.item_id.as_deref() == Some(item_id.as_str()) {
             return Ok(());
         }
         self.send_stopped();
-        self.queue.index = queue_index;
+        self.window.adopt_index(queue_index);
         tracing::info!(item = %item_id, index = queue_index, "adopted mpv playlist jump");
         if let Some(prep) = self.prepared.get(&item_id).cloned() {
             self.current = Some(prep);
         } else {
-            let (prep, _) = self.prepare_item(&item_id, None, None, None, None).await?;
+            let (prep, _) = self.prepare_item(&item_id, &PlayRequest::default()).await?;
             self.prepared.insert(item_id.clone(), prep.clone());
             self.current = Some(prep);
         }
@@ -242,7 +221,7 @@ impl Runtime {
         if let Some(mpv) = self.mpv.as_mut() {
             // A dead/zero sample during unload must not throw away a known position.
             let live = mpv.time_pos().await.ok();
-            self.last_ticks = media::coalesce_position_ticks(live, self.last_ticks);
+            self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
             if let Ok(p) = mpv.paused().await {
                 self.paused = p;
             }
@@ -270,7 +249,7 @@ impl Runtime {
             audio_stream_index: prep.audio_stream_index.unwrap_or(-1),
             subtitle_stream_index: prep.subtitle_stream_index.unwrap_or(-1),
             can_seek: true,
-            queue: self.queue.items.clone(),
+            now_playing_queue: self.window.now_playing_queue(),
         })
     }
 
@@ -301,8 +280,9 @@ impl Runtime {
         let Some(mpv) = self.mpv.as_mut() else {
             return Err(eyre!("mpv missing during reuse"));
         };
-        let url = apply_auth(&self.api, mpv, prep, item_id, self.queue.has_next()).await;
-        mpv.loadfile(&url, Some(prep.title.as_str())).await?;
+        let auth = apply_auth(&self.api, mpv, prep, item_id, self.window.has_next()).await;
+        mpv.loadfile(&auth.url, Some(prep.title.as_str())).await?;
+        self.mpv_auth_header_set = auth.header_set;
         let _ = mpv.set_volume(self.volume).await;
         let _ = mpv.set_mute(self.muted).await;
         let _ = mpv.unpause().await;
@@ -317,9 +297,8 @@ impl Runtime {
         // Re-read mpv_args on every spawn so edits apply to the next play
         // without restarting the daemon.
         let mpv_args = crate::config::MpvArgs::load(&self.paths)
-            .map_err(|e| {
+            .inspect_err(|e| {
                 tracing::warn!("mpv_args unreadable; spawning without extra args: {e:#}");
-                e
             })
             .unwrap_or_default();
         let (mut mpv, events) =
@@ -327,25 +306,31 @@ impl Runtime {
         mpv.set_keep_open().await?;
         tracing::info!("mpv spawned");
 
-        let url = apply_auth(&self.api, &mut mpv, prep, item_id, self.queue.has_next()).await;
-        if let Err(e) = mpv.loadfile(&url, Some(prep.title.as_str())).await {
+        let auth = apply_auth(&self.api, &mut mpv, prep, item_id, self.window.has_next()).await;
+        if let Err(e) = mpv.loadfile(&auth.url, Some(prep.title.as_str())).await {
             let _ = mpv.quit_and_wait().await;
             return Err(e);
         }
+        self.mpv_auth_header_set = auth.header_set;
         let _ = mpv.set_volume(self.volume).await;
         let _ = mpv.set_mute(self.muted).await;
 
         self.mpv_gen = self.mpv_gen.wrapping_add(1);
         let generation = self.mpv_gen;
         let tx = self.mpv_tx.clone();
-        tokio::spawn(async move {
+        // Aborting the previous forwarder stops it leaking, but is not enough on
+        // its own: events it already put on the shared channel are still queued.
+        // `generation` is what lets the main loop discard those.
+        if let Some(previous) = self.mpv_events.replace(tokio::spawn(async move {
             let mut events = events;
             while let Some(ev) = events.recv().await {
                 if tx.send((generation, ev)).is_err() {
                     break;
                 }
             }
-        });
+        })) {
+            previous.abort();
+        }
         self.mpv = Some(mpv);
         self.transitioning = true;
         Ok(())
@@ -354,7 +339,7 @@ impl Runtime {
     pub(super) async fn stop_playback(&mut self, report: bool) {
         tracing::info!(
             item = %self.item_id.as_deref().unwrap_or("?"),
-            position_s = media::ticks_to_seconds(self.last_ticks),
+            position_s = crate::ticks::ticks_to_seconds(self.last_ticks),
             "stopping playback"
         );
         self.stopping = true;
@@ -363,9 +348,7 @@ impl Runtime {
         self.pending_start_ticks = None;
         self.prepared.clear();
         self.titles.clear();
-        self.mpv_tail = 0;
-        self.mpv_head = 0;
-        self.pending_prepend.clear();
+        self.window.clear();
         let live = if let Some(mpv) = self.mpv.as_mut() {
             mpv.time_pos().await.ok()
         } else {
@@ -373,15 +356,17 @@ impl Runtime {
         };
         // A teardown sample can fail or read 0 (window closed, IPC gone);
         // never let it clobber the position the progress ticks already saved.
-        self.last_ticks = media::coalesce_position_ticks(live, self.last_ticks);
-        if report && let Some(mut s) = self.snapshot(self.last_ticks) {
-            s.is_paused = true;
-            let _ = self.report_tx.send(Report::Stopped(s));
+        self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
+        if report {
+            self.send_stopped();
         }
         if let Some(mut mpv) = self.mpv.take() {
             let _ = mpv.quit_and_wait().await;
         }
         self.mpv_gen = self.mpv_gen.wrapping_add(1);
+        if let Some(events) = self.mpv_events.take() {
+            events.abort();
+        }
         self.current = None;
         self.item_id = None;
         self.external_subtitle_track_ids.clear();
@@ -447,7 +432,7 @@ fn stream_url_with_token(api: &Api, item_id: &str, prep: &PreparedPlay) -> Strin
     if prep.url.contains("ApiKey=") {
         prep.url.clone()
     } else {
-        media::direct_stream_url(
+        crate::jellyfin::url::direct_stream_url(
             &api.server,
             item_id,
             &prep.media_source_id,
@@ -457,22 +442,46 @@ fn stream_url_with_token(api: &Api, item_id: &str, prep: &PreparedPlay) -> Strin
     }
 }
 
+/// The URL to hand mpv, plus whether mpv is now carrying the Authorization
+/// header.
+///
+/// The header is a global mpv property, so it also covers playlist rows loaded
+/// later — which is how [`Runtime::playlist_stub_entries`] avoids putting the
+/// token in URLs mpv writes to its watch_later files.
+struct AppliedAuth {
+    url: String,
+    header_set: bool,
+}
+
 async fn apply_auth(
     api: &Api,
     mpv: &mut MpvSession,
     prep: &PreparedPlay,
     item_id: &str,
     force_url_token: bool,
-) -> String {
+) -> AppliedAuth {
     if !force_url_token && prep.uses_auth_header {
-        if let Err(e) = mpv.apply_auth_header(&api.mpv_auth_header_field()).await {
-            tracing::warn!("could not set mpv auth header ({e:#}); putting ApiKey on the URL");
-            return stream_url_with_token(api, item_id, prep);
+        match mpv.apply_auth_header(&api.mpv_auth_header_field()).await {
+            Ok(()) => {
+                return AppliedAuth {
+                    url: prep.url.clone(),
+                    header_set: true,
+                };
+            }
+            Err(e) => {
+                tracing::warn!("could not set mpv auth header ({e:#}); putting ApiKey on the URL");
+                return AppliedAuth {
+                    url: stream_url_with_token(api, item_id, prep),
+                    header_set: false,
+                };
+            }
         }
-        return prep.url.clone();
     }
     let _ = mpv.clear_auth_header().await;
-    stream_url_with_token(api, item_id, prep)
+    AppliedAuth {
+        url: stream_url_with_token(api, item_id, prep),
+        header_set: false,
+    }
 }
 
 /// Resume offsets only apply when positive; `None`/`0`/negative mean "start
