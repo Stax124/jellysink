@@ -142,11 +142,17 @@ impl Runtime {
         self.external_sid.clear();
         for (jf_index, url) in &prep.external_sub_urls {
             if let Err(e) = mpv.sub_add(url).await {
-                tracing::debug!("sub-add {url}: {e:#}");
+                tracing::warn!("sub-add failed for {url}: {e:#}");
                 continue;
             }
-            if let Ok(sid) = mpv.max_sub_sid().await {
-                self.external_sid.insert(*jf_index, sid);
+            match mpv.max_sub_sid().await {
+                Ok(sid) => {
+                    tracing::info!(jellyfin_index = *jf_index, mpv_sid = sid, url = %url, "loaded external subtitle track");
+                    self.external_sid.insert(*jf_index, sid);
+                }
+                Err(e) => {
+                    tracing::warn!("failed getting max_sub_sid after sub-add for {url}: {e:#}");
+                }
             }
         }
 
@@ -154,6 +160,10 @@ impl Runtime {
             let _ = mpv.set_aid(aid).await;
         }
         if let Some(sid) = prep.sid {
+            tracing::info!(
+                jellyfin_subtitle_index = sid,
+                "configuring initial subtitle stream"
+            );
             let _ = self.apply_subtitle(sid).await;
         }
         Ok(())
@@ -164,6 +174,7 @@ impl Runtime {
             return Ok(());
         };
         if jellyfin_index < 0 {
+            tracing::info!(jellyfin_index, "disabling subtitles in mpv (sid=no)");
             mpv.set_sid(None).await?;
             if let Some(prep) = self.current.as_mut() {
                 prep.sid = None;
@@ -171,11 +182,28 @@ impl Runtime {
             return Ok(());
         }
         if let Some(sid) = self.external_sid.get(&jellyfin_index).copied() {
+            tracing::info!(
+                jellyfin_index,
+                mpv_sid = sid,
+                "applied external subtitle stream"
+            );
             mpv.set_sid(Some(sid)).await?;
         } else if let Some(prep) = self.current.as_ref()
             && let Some(sid) = mpv_embedded_sid(&prep.maps, jellyfin_index)
         {
+            tracing::info!(
+                jellyfin_index,
+                mpv_sid = sid,
+                "applied embedded subtitle stream"
+            );
             mpv.set_sid(Some(sid)).await?;
+        } else {
+            tracing::warn!(
+                jellyfin_index,
+                external_map = ?self.external_sid,
+                embedded_map = ?self.current.as_ref().map(|p| &p.maps.subtitle_seq),
+                "requested subtitle stream index not found in external or embedded subtitle maps"
+            );
         }
         if let Some(prep) = self.current.as_mut() {
             prep.sid = Some(jellyfin_index);

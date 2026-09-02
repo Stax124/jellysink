@@ -255,6 +255,8 @@ impl Runtime {
                 tracing::info!(
                     n = item_ids.len(),
                     start_index,
+                    aid,
+                    sid,
                     ids = %item_ids.join(","),
                     "play now"
                 );

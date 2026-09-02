@@ -94,16 +94,19 @@ pub fn prepare_play(
         if uses_auth_header { None } else { Some(token) },
     );
 
-    let aid = aid.or_else(|| {
-        source
-            .get("DefaultAudioStreamIndex")
-            .and_then(Value::as_i64)
-    });
-    let sid = sid.or_else(|| {
-        source
-            .get("DefaultSubtitleStreamIndex")
-            .and_then(Value::as_i64)
-    });
+    let default_aid = source
+        .get("DefaultAudioStreamIndex")
+        .and_then(Value::as_i64);
+    let default_sid = source
+        .get("DefaultSubtitleStreamIndex")
+        .and_then(Value::as_i64);
+    let aid = aid.or(default_aid);
+    // `None` from Play means "use the server default". `-1` from Play is an
+    // explicit Off. The server also uses `-1` when SubtitleMode=Default and
+    // no stream is flagged default/forced/external — that is still a decision
+    // of Off, not "unspecified".
+    let play_sid = sid;
+    let sid = sid.or(default_sid);
 
     let mut external_sub_urls: Vec<(i64, String)> = maps
         .subtitle_url
@@ -111,6 +114,16 @@ pub fn prepare_play(
         .map(|(k, v)| (*k, v.clone()))
         .collect();
     external_sub_urls.sort_by_key(|(k, _)| *k);
+
+    tracing::debug!(
+        item = %item_id,
+        embedded_subs = maps.subtitle_seq.len(),
+        external_subs = external_sub_urls.len(),
+        play_sid = ?play_sid,
+        default_sid,
+        resolved_sid = ?sid,
+        "prepared subtitle maps"
+    );
 
     Ok(PreparedPlay {
         url,
@@ -230,7 +243,34 @@ pub fn map_streams(server: &str, source: &Value) -> StreamMaps {
         let Some(jf) = sub.get("Index").and_then(Value::as_i64) else {
             continue;
         };
-        match sub.get("DeliveryMethod").and_then(Value::as_str) {
+        let delivery = sub.get("DeliveryMethod").and_then(Value::as_str);
+        let codec = sub.get("Codec").and_then(Value::as_str);
+        let is_external = sub
+            .get("IsExternal")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let is_default = sub
+            .get("IsDefault")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let is_forced = sub
+            .get("IsForced")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let language = sub.get("Language").and_then(Value::as_str);
+        let title = sub.get("DisplayTitle").and_then(Value::as_str);
+        tracing::debug!(
+            jellyfin_index = jf,
+            delivery,
+            codec,
+            language,
+            is_default,
+            is_forced,
+            is_external,
+            title,
+            "subtitle stream"
+        );
+        match delivery {
             Some("Embed") => {
                 maps.subtitle_uid.insert(index, jf);
                 maps.subtitle_seq.insert(jf, index);
@@ -247,9 +287,20 @@ pub fn map_streams(server: &str, source: &Value) -> StreamMaps {
                         format!("{}{url}", server.trim_end_matches('/'))
                     };
                     maps.subtitle_url.insert(jf, abs);
+                } else {
+                    tracing::warn!(jellyfin_index = jf, "external subtitle has no DeliveryUrl");
                 }
             }
-            _ => {}
+            Some(other) => {
+                tracing::warn!(
+                    jellyfin_index = jf,
+                    method = other,
+                    "unmapped subtitle delivery method"
+                );
+            }
+            None => {
+                tracing::warn!(jellyfin_index = jf, "subtitle stream has no DeliveryMethod");
+            }
         }
         if !sub
             .get("IsExternal")
@@ -549,6 +600,53 @@ mod tests {
         assert_eq!(prep.aid, Some(1));
         assert_eq!(prep.sid, Some(2));
         assert_eq!(prep.title, "Jellyfin");
+    }
+
+    #[test]
+    fn prepare_play_keeps_server_default_of_off() {
+        // Jellyfin SubtitleMode=Default with no default/forced/external
+        // streams returns DefaultSubtitleStreamIndex=-1. That is Off, not
+        // "unspecified".
+        let info = json!({
+            "PlaySessionId": "sess",
+            "MediaSources": [{
+                "Id": "src",
+                "SupportsDirectPlay": true,
+                "SupportsDirectStream": true,
+                "DefaultAudioStreamIndex": 1,
+                "DefaultSubtitleStreamIndex": -1,
+                "MediaStreams": [
+                    {"Type": "Audio", "Index": 1, "IsExternal": false},
+                    {
+                        "Type": "Subtitle",
+                        "Index": 2,
+                        "DeliveryMethod": "Embed",
+                        "IsExternal": false,
+                        "IsDefault": false,
+                        "IsForced": false
+                    }
+                ]
+            }]
+        });
+        let prep = prepare_play("http://h:8096", "item", &info, None, None, None, "tok").unwrap();
+        assert_eq!(prep.sid, Some(-1));
+    }
+
+    #[test]
+    fn prepare_play_explicit_sid_wins_over_default_off() {
+        let info = json!({
+            "PlaySessionId": "sess",
+            "MediaSources": [{
+                "Id": "src",
+                "SupportsDirectPlay": true,
+                "SupportsDirectStream": true,
+                "DefaultSubtitleStreamIndex": -1,
+                "MediaStreams": []
+            }]
+        });
+        let prep =
+            prepare_play("http://h:8096", "item", &info, None, None, Some(2), "tok").unwrap();
+        assert_eq!(prep.sid, Some(2));
     }
 
     #[test]
