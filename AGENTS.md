@@ -18,6 +18,8 @@ cargo run -- run                            # the daemon (default subcommand)
 
 Global CLI flag: `--config DIR` (default `~/.config/jellysink`).
 
+Every build is a musl build. `.cargo/config.toml` sets `build.target = "x86_64-unknown-linux-musl"`, and `build.rs` panics on any non-musl target, so a glibc build cannot happen by accident — releases, `install.sh`, and the self-updater all ship static musl binaries, and a dynamically linked glibc build is not what any user runs. Artifacts therefore live under `target/x86_64-unknown-linux-musl/`, not `target/debug/`. Requires `rustup target add x86_64-unknown-linux-musl` plus a musl C compiler for jemalloc (`musl` on Arch, `musl-tools` on Debian). On an aarch64 host, `export CARGO_BUILD_TARGET=aarch64-unknown-linux-musl`. Don't add `--target x86_64-unknown-linux-gnu` to work around a build error — fix the error.
+
 Note: `mpv::tests::ipc_roundtrip_against_fake_socket` creates a Unix domain socket and fails with `PermissionDenied` in sandboxes that block socket creation. It passes on a normal machine — don't "fix" it for sandbox environments.
 
 Release tags are `X.Y.Z` with **no** `v` prefix and must match `Cargo.toml` `version`. GitHub Actions (`.github/workflows/`) runs fmt/clippy/test and musl release builds (x86_64 and aarch64) on push and PR. A matching tag re-runs fmt/clippy/test, rebuilds those binaries, and publishes the GitHub release — a tag on a commit that would fail CI does not ship.
