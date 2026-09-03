@@ -6,6 +6,9 @@ use jellysink::config::{Config, Paths};
 use jellysink::tracing::init_tracing;
 use std::path::PathBuf;
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[derive(Parser)]
 #[command(
     name = "jellysink",
@@ -53,6 +56,8 @@ enum ConfigCmd {
     /// Print one key, or the whole file
     Get { key: Option<String> },
     /// Set a key (mpv_path, mpv_args, log_level, autoplay, prepend_previous)
+    ///
+    /// The list is `config::Field`; a test pins it against this help text.
     Set {
         key: String,
         /// Values may start with `-` (e.g. `mpv_args --fullscreen`).

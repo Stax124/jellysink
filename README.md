@@ -74,21 +74,31 @@ Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink
 
 ### From source
 
+Builds are musl-only — the same static target the releases ship — so a glibc
+toolchain is rejected at build time. You need the musl target and a musl C
+compiler (`musl` on Arch, `musl-tools` on Debian/Ubuntu):
+
+```bash
+rustup target add x86_64-unknown-linux-musl   # or aarch64-unknown-linux-musl
+```
+
 ```bash
 git clone https://github.com/Stax124/jellysink.git
 cd jellysink
 cargo build --release
-install -Dm755 target/release/jellysink ~/.local/bin/jellysink
+install -Dm755 target/x86_64-unknown-linux-musl/release/jellysink ~/.local/bin/jellysink
 install -Dm644 systemd/jellysink.service ~/.config/systemd/user/jellysink.service
 ```
 
-Or, without cloning:
+On an aarch64 host, `export CARGO_BUILD_TARGET=aarch64-unknown-linux-musl` first; it
+overrides the repository default, and the output path changes to match.
+
+Or, without cloning — the repository's cargo config does not apply here, so name the
+target yourself:
 
 ```bash
-cargo install --git https://github.com/Stax124/jellysink
+cargo install --git https://github.com/Stax124/jellysink --target x86_64-unknown-linux-musl
 ```
-
-A locally built gnu binary still updates from the musl GitHub asset for the same architecture.
 
 ## Usage
 

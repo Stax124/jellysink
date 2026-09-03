@@ -13,12 +13,13 @@ playlist. Both are verified behaviours, not guesses — see
 There are three parallel notions of "what is playing next", and keeping them
 in sync is most of the complexity.
 
-| Structure      | Lives in        | Meaning                                                                     |
-| -------------- | --------------- | --------------------------------------------------------------------------- |
-| `Queue`        | `src/cast.rs`   | The authoritative ordered list of item ids, plus `index` (the current one). |
-| mpv's playlist | the mpv process | What the user actually sees in the playlist selector.                       |
-| `titles`       | `Runtime`       | Item id → display title, filled from the series listing.                    |
-| `prepared`     | `Runtime`       | Cache of item id → `PreparedPlay` for items that have actually started.     |
+| Structure        | Lives in                    | Meaning                                                                     |
+| ---------------- | --------------------------- | --------------------------------------------------------------------------- |
+| `Queue`          | `src/runtime/window.rs`     | The authoritative ordered list of item ids, plus `index` (the current one). |
+| `PlaylistWindow` | `src/runtime/window.rs`     | Owns the `Queue` **and** how much of it mpv holds. All the arithmetic below. |
+| mpv's playlist   | the mpv process             | What the user actually sees in the playlist selector.                       |
+| `titles`         | `Runtime`                   | Item id → display title, filled from the series listing.                    |
+| `prepared`       | `Runtime`                   | Cache of item id → `PreparedPlay` for items that have actually started.     |
 
 The queue is the source of truth. mpv's playlist is a *window* onto it.
 `titles` is what the selector shows. `prepared` is only populated when an
@@ -33,13 +34,19 @@ mpv's playlist is always a contiguous slice of the queue:
 mpv playlist == queue.items[origin .. origin + head + 1 + tail]
 ```
 
-- `origin` (`playlist_origin`) — queue index at mpv playlist position 0.
-- `head` (`mpv_head`) — entries already in mpv *before* the current item
-  (previous episodes spliced in).
-- `tail` (`mpv_tail`) — entries already in mpv *after* the current item.
+- `origin` — queue index at mpv playlist position 0.
+- `head` — entries already in mpv *before* the current item (previous episodes
+  spliced in).
+- `tail` — entries already in mpv *after* the current item.
 - The `+ 1` is the current item itself.
 
-The current item's mpv position is therefore `queue.index - origin`.
+The current item's mpv position is therefore `queue.index - origin`
+(`PlaylistWindow::expected_pos`).
+
+All four live inside `PlaylistWindow`, private to it, reachable only through
+`expected_pos`, `queue_index_at`, `forward_ids`, `note_appended`, `prepend`,
+`take_pending_prepend`, `reset_to_current` and `clear`. They used to be five
+loose fields on `Runtime` maintained by hand at six call sites.
 
 Two consequences that are easy to get wrong:
 
@@ -65,8 +72,8 @@ after it* — casting episode 6 of 20 sends 6..20 (15 items).
 
 ### 2. `start_current` (`src/runtime/playback.rs`)
 
-Resets the window (`tail = 0`, `head = 0`, `origin = queue.index`), clears the
-`prepared` and `titles` caches, then:
+Resets the window (`PlaylistWindow::reset_to_current`), clears the `prepared`
+and `titles` caches, then:
 
 1. **Prepare the current item** — `prepare_item` → `fetch_prepared`. This is
    the only *blocking* fetch; playback cannot start without it.
@@ -87,7 +94,7 @@ Fetches the **whole series** in one request and splits it at the current item:
 GET /Shows/{seriesId}/Episodes?userId=…&Limit=500
 ```
 
-`media::split_episode_ids` returns `(previous, remaining)`.
+`split_episode_ids` (`src/runtime/queue.rs`) returns `(previous, remaining)`.
 
 **Why the whole series and not a cursor.** `StartItemId` is implemented as
 `SkipWhile(i => i.Id != X)` — a forward-only cursor. It can never return
@@ -107,13 +114,13 @@ Sharing one gate meant the prepend never ran in the common case — casting
 episode 6 produced only 6..20. The gates also differ on `autoplay`: it governs
 continuing *forward*, not what the playlist selector can reach.
 
-**Idempotency.** `ids_missing_from` filters out ids already in the queue, so
+**Idempotency.** `ids_missing_from` (`src/runtime/queue.rs`) filters out ids already in the queue, so
 advancing e6 → e7 (which leaves e1..e6 already queued ahead of e7) adds
 nothing on re-expansion.
 
 **Titles.** The listing is fetched for any episode, even when both queue
 gates skip (Jellyfin already sent 6..20, prepend off, …).
-`media::episode_titles` walks `Items` and stores `display_title` for every
+`media::episode_titles` (`src/media/title.rs`) walks `Items` and stores `display_title` for every
 id. That is what the selector shows.
 
 ### 4. Preparing an item (`fetch_prepared`)
@@ -148,7 +155,14 @@ Each entry is a display title plus a DirectPlay stub:
 `MediaSourceId` is the item id. That is enough for a normal episode; stacked
 versions are resolved later by `PlaybackInfo` when the user actually plays
 that row. If a title is missing (PlayNext of a non-series item, listing
-failed), the selector shows the URL — the same as before M3U titles existed.
+failed), the selector shows the URL — but a **tokenless** one. The fallback
+used to be the playable URL, which put `ApiKey=` into mpv's OSD, the playlist
+selector, and the user's `watch_later` files.
+
+`ApiKey=` is on the row URL only when mpv is *not* carrying the `Authorization`
+header (`Runtime::mpv_auth_header_set`, set by `apply_auth`). The header is a
+global mpv property, so it covers rows loaded later too; leaving the token off
+keeps it out of anything mpv persists.
 
 ## Handing entries to mpv
 
@@ -159,10 +173,13 @@ Each direction is one M3U next to the IPC socket, loaded, then deleted:
 ```m3u
 #EXTM3U
 #EXTINF:-1,Show - s1e01 - Pilot
-http://server/Videos/{id}/stream?static=true&MediaSourceId={id}&ApiKey=…
+http://server/Videos/{id}/stream?static=true&MediaSourceId={id}
 #EXTINF:-1,Show - s1e02 - Name
-http://server/Videos/{id}/stream?static=true&MediaSourceId={id}&ApiKey=…
+http://server/Videos/{id}/stream?static=true&MediaSourceId={id}
 ```
+
+(`&ApiKey=…` is appended to each URL only when the `Authorization` header is
+not in play — see above.)
 
 This exists because `loadfile`'s `force-media-title` and the
 `playlist/N/title` property **do not populate unloaded entries** — without the
@@ -191,9 +208,10 @@ before the current file is loaded. But `maybe_expand_series` runs *before* the
 load (it needs the item metadata, and the load needs the prepared URL). The
 split is:
 
-- `prepend_previous_episodes` — queue bookkeeping only, runs during expansion.
+- `prepend_previous_episodes` → `PlaylistWindow::prepend` — queue bookkeeping
+  only, runs during expansion.
 - `fill_previous_into_mpv` — mpv insertion, runs after the load, from
-  `pending_prepend`.
+  `PlaylistWindow::take_pending_prepend`.
 
 An earlier version did both in one step guarded by `self.mpv.is_some()`, which
 silently never fired on first play because mpv had not spawned yet.
@@ -207,7 +225,7 @@ is what emits `end-file` so the runtime can adopt the new item. `always`
 pauses on the last frame of every file without unloading it, so `end-file`
 never fires and autoplay stalls.
 
-### `playlist_eof` (`src/cast.rs`)
+### `playlist_eof` (`src/runtime/window.rs`)
 
 Decides what to do at end-of-file. `expected_pos` is `queue.index - origin`.
 
@@ -280,8 +298,9 @@ Checked live against mpv 0.41.0 and the Jellyfin server source, not inferred:
 ## Tests
 
 The window arithmetic is the risky part and is covered in
-`src/runtime/queue.rs` by a `Window` test harness that simulates
-`start_current` + prepend without mpv:
+`src/runtime/window.rs`, **against `PlaylistWindow` itself**. The tests used to
+run against a `Window` struct in the test module that reimplemented the
+arithmetic, so they could pass while the real code drifted:
 
 - `prepend_keeps_the_window_contiguous_and_current_stable`
 - `prepend_then_fill_appends_after_the_current_item`
@@ -291,6 +310,7 @@ The window arithmetic is the risky part and is covered in
 - `expected_pos_follows_a_playlist_jump_not_the_head`
 - `eof_expected_pos_is_not_zero_when_previous_episodes_are_loaded`
 
-Plus unit tests for `split_episode_ids`, `episode_titles`, `ids_missing_from`,
+Plus unit tests for `playlist_stub_entry` (the token must never reach a row's
+display title), `split_episode_ids`, `episode_titles`, `ids_missing_from`,
 `prepend_skip_reason`, `Queue::insert_before_current`, `playlist_m3u`, and
 `loadlist_insert_at_args`.

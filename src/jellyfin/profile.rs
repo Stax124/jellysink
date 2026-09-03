@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-pub fn capabilities() -> Value {
+pub(crate) fn capabilities() -> Value {
     json!({
         "PlayableMediaTypes": ["Video"],
         "SupportsMediaControl": true,
@@ -26,7 +26,7 @@ pub fn capabilities() -> Value {
 /// Permissive DirectPlay profile. Empty container/codec means "any".
 /// TranscodingProfiles are present so the server is happy; we never play a
 /// TranscodingUrl.
-pub fn device_profile() -> Value {
+pub(crate) fn device_profile() -> Value {
     json!({
         "Name": "jellysink",
         "MaxStreamingBitrate": 1_200_000_000u64,

@@ -1,36 +1,28 @@
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Represents the current playing state of the media player
 #[derive(Debug, Clone, PartialEq)]
-pub struct PlayingState {
-    pub item_id: String,
-    pub media_source_id: String,
-    pub play_session_id: String,
-    pub position_ticks: i64,
-    pub is_paused: bool,
-    pub is_muted: bool,
-    pub volume: i64,
-    pub audio_stream_index: i64,
-    pub subtitle_stream_index: i64,
-    pub can_seek: bool,
-    pub queue: Vec<String>,
+pub(crate) struct PlayingState {
+    pub(crate) item_id: String,
+    pub(crate) media_source_id: String,
+    pub(crate) play_session_id: String,
+    pub(crate) position_ticks: i64,
+    pub(crate) is_paused: bool,
+    pub(crate) is_muted: bool,
+    pub(crate) volume: i64,
+    pub(crate) audio_stream_index: i64,
+    pub(crate) subtitle_stream_index: i64,
+    pub(crate) can_seek: bool,
+    /// The prebuilt `NowPlayingQueue` payload. Shared rather than rebuilt per
+    /// report — see `PlaylistWindow::now_playing`.
+    pub(crate) now_playing_queue: Arc<Vec<Value>>,
 }
 
 impl PlayingState {
     /// Converts the playing state to something that we can send back to Jellyfin
-    pub fn to_json(&self) -> Value {
-        let now_playing_queue: Vec<Value> = self
-            .queue
-            .iter()
-            .enumerate()
-            .map(|(i, id)| {
-                json!({
-                    "Id": id,
-                    "PlaylistItemId": format!("playlistItem{i}"),
-                })
-            })
-            .collect();
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "VolumeLevel": self.volume,
             "IsMuted": self.is_muted,
@@ -44,32 +36,37 @@ impl PlayingState {
             "MediaSourceId": self.media_source_id,
             "CanSeek": self.can_seek,
             "ItemId": self.item_id,
-            "NowPlayingQueue": now_playing_queue,
+            "NowPlayingQueue": *self.now_playing_queue,
         })
     }
 }
 
 /// Represents a type of report to be sent back to Jellyfin
 #[derive(Debug, Clone)]
-pub enum Report {
+pub(crate) enum Report {
     Start(PlayingState),
     Progress(PlayingState),
     Stopped(PlayingState),
 }
 
 /// Ordered, non-blocking session reports. Stopped then Start must never race.
-pub fn spawn_reporter<F, Fut>(mut send: F) -> mpsc::UnboundedSender<Report>
+///
+/// The handle is returned rather than detached so a session owns its reporter
+/// and can abort it on teardown.
+pub(crate) fn spawn_reporter<F, Fut>(
+    mut send: F,
+) -> (mpsc::UnboundedSender<Report>, tokio::task::JoinHandle<()>)
 where
     F: FnMut(Report) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = ()> + Send,
 {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         while let Some(report) = rx.recv().await {
             send(report).await;
         }
     });
-    tx
+    (tx, task)
 }
 
 #[cfg(test)]
@@ -89,7 +86,9 @@ mod tests {
             audio_stream_index: 1,
             subtitle_stream_index: -1,
             can_seek: true,
-            queue: vec!["i".into()],
+            now_playing_queue: Arc::new(vec![
+                json!({"Id": "i", "PlaylistItemId": "playlistItem0"}),
+            ]),
         };
         let v = state.to_json();
         assert_eq!(v["PlayMethod"], "DirectPlay");
@@ -101,7 +100,7 @@ mod tests {
     #[tokio::test]
     async fn reports_are_fifo() {
         let (seen_tx, mut seen_rx) = mpsc::unbounded_channel();
-        let tx = spawn_reporter(move |r| {
+        let (tx, _task) = spawn_reporter(move |r| {
             let seen_tx = seen_tx.clone();
             async move {
                 seen_tx
@@ -124,12 +123,22 @@ mod tests {
             audio_stream_index: -1,
             subtitle_stream_index: -1,
             can_seek: true,
-            queue: vec![],
+            now_playing_queue: Arc::new(vec![]),
         };
         tx.send(Report::Stopped(dummy.clone())).unwrap();
         tx.send(Report::Start(dummy)).unwrap();
         drop(tx);
         assert_eq!(seen_rx.recv().await, Some("stop"));
         assert_eq!(seen_rx.recv().await, Some("start"));
+    }
+
+    #[tokio::test]
+    async fn the_reporter_task_ends_when_the_sender_is_dropped() {
+        let (tx, task) = spawn_reporter(|_| async {});
+        drop(tx);
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("reporter should finish")
+            .expect("reporter should not panic");
     }
 }

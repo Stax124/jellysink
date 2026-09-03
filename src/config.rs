@@ -2,6 +2,7 @@ use crate::APP_NAME;
 use crate::usage_err;
 use color_eyre::eyre::WrapErr;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -9,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct Paths {
-    pub config_dir: PathBuf,
+    pub(crate) config_dir: PathBuf,
 }
 
 impl Paths {
@@ -25,83 +26,130 @@ impl Paths {
         Ok(Self { config_dir })
     }
 
-    pub fn ensure(&self) -> color_eyre::Result<()> {
+    /// Creates the config directory, mode 0700.
+    ///
+    /// This is the race-free half of keeping the access token private. cred.json
+    /// gets 0600 of its own, but `mpv.sock` is created by *mpv*, and anyone who
+    /// can open it can read the token back out of `http-header-fields`. We
+    /// cannot choose that socket's mode, so we make the directory around it
+    /// unreadable to anyone else instead. Applied on every run, so an existing
+    /// 0755 directory from an older version is tightened too.
+    pub(crate) fn ensure(&self) -> color_eyre::Result<()> {
         fs::create_dir_all(&self.config_dir)
             .wrap_err_with(|| format!("creating {}", self.config_dir.display()))?;
+        fs::set_permissions(&self.config_dir, fs::Permissions::from_mode(0o700))
+            .wrap_err_with(|| format!("restricting {}", self.config_dir.display()))?;
         Ok(())
     }
 
-    pub fn config_file(&self) -> PathBuf {
+    pub(crate) fn config_file(&self) -> PathBuf {
         self.config_dir.join("config.toml")
     }
 
-    pub fn cred_file(&self) -> PathBuf {
+    pub(crate) fn cred_file(&self) -> PathBuf {
         self.config_dir.join("cred.json")
     }
 
-    pub fn lock_file(&self) -> PathBuf {
+    pub(crate) fn lock_file(&self) -> PathBuf {
         self.config_dir.join("instance.lock")
     }
 
-    pub fn stop_socket(&self) -> PathBuf {
+    pub(crate) fn stop_socket(&self) -> PathBuf {
         self.config_dir.join("stop.sock")
     }
 
-    pub fn mpv_socket(&self) -> PathBuf {
+    pub(crate) fn mpv_socket(&self) -> PathBuf {
         self.config_dir.join("mpv.sock")
     }
 
-    pub fn mpv_args_file(&self) -> PathBuf {
+    pub(crate) fn mpv_args_file(&self) -> PathBuf {
         self.config_dir.join("mpv_args.conf")
     }
 }
 
+/// Every user-facing configuration key.
+///
+/// The list used to be spelled out in six places — the struct, four `default_*`
+/// functions, the `Default` impl, `get`, `set`, and the CLI help — with
+/// `mpv_args` handled entirely outside `Config` as a seventh special case, so
+/// `jellysink config get` with no key silently omitted it. Matching on this
+/// enum is exhaustive, so adding a key is a compile error until every arm is
+/// handled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Field {
+    MpvPath,
+    /// Lives in `mpv_args.conf`, not `config.toml`: a running daemon re-reads
+    /// it on every mpv spawn instead of holding a copy from startup.
+    MpvArgs,
+    LogLevel,
+    Autoplay,
+    PrependPrevious,
+}
+
+impl Field {
+    pub(crate) const ALL: &'static [Field] = &[
+        Field::MpvPath,
+        Field::MpvArgs,
+        Field::LogLevel,
+        Field::Autoplay,
+        Field::PrependPrevious,
+    ];
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Field::MpvPath => "mpv_path",
+            Field::MpvArgs => "mpv_args",
+            Field::LogLevel => "log_level",
+            Field::Autoplay => "autoplay",
+            Field::PrependPrevious => "prepend_previous",
+        }
+    }
+
+    pub(crate) fn parse(key: &str) -> color_eyre::Result<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|f| f.name() == key)
+            .ok_or_else(|| {
+                let known: Vec<&str> = Self::ALL.iter().map(|f| f.name()).collect();
+                usage_err(format!(
+                    "unknown config key {key:?} (valid: {})",
+                    known.join(", ")
+                ))
+            })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct Config {
-    #[serde(default = "default_mpv_path")]
-    pub mpv_path: String,
-    #[serde(default = "default_log_level")]
+    pub(crate) mpv_path: String,
     pub log_level: String,
-    #[serde(default = "default_autoplay")]
-    pub autoplay: bool,
-    #[serde(default = "default_prepend_previous")]
-    pub prepend_previous: bool,
-}
-
-fn default_mpv_path() -> String {
-    "mpv".into()
-}
-
-fn default_log_level() -> String {
-    "info".into()
-}
-
-fn default_autoplay() -> bool {
-    true
-}
-
-fn default_prepend_previous() -> bool {
-    true
+    pub(crate) autoplay: bool,
+    pub(crate) prepend_previous: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            mpv_path: default_mpv_path(),
-            log_level: default_log_level(),
-            autoplay: default_autoplay(),
-            prepend_previous: default_prepend_previous(),
+            mpv_path: "mpv".into(),
+            log_level: "info".into(),
+            autoplay: true,
+            prepend_previous: true,
         }
     }
 }
 
 impl Config {
+    /// Reads config.toml, or the defaults when there is none.
+    ///
+    /// Pure: this used to `save` on a missing file, so `jellysink config path`
+    /// created one as a side effect. [`Self::load_or_create`] is the version
+    /// that writes.
     pub fn load(paths: &Paths) -> color_eyre::Result<Self> {
         let path = paths.config_file();
         if !path.exists() {
-            let cfg = Self::default();
-            cfg.save(paths)?;
-            return Ok(cfg);
+            return Ok(Self::default());
         }
         let text =
             fs::read_to_string(&path).wrap_err_with(|| format!("reading {}", path.display()))?;
@@ -110,37 +158,56 @@ impl Config {
         Ok(cfg)
     }
 
-    pub fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
+    /// For the daemon, which is a reasonable moment to materialise a config
+    /// file the user can then edit by hand.
+    pub(crate) fn load_or_create(paths: &Paths) -> color_eyre::Result<Self> {
+        let cfg = Self::load(paths)?;
+        if !paths.config_file().exists() {
+            cfg.save(paths)?;
+        }
+        Ok(cfg)
+    }
+
+    pub(crate) fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
         paths.ensure()?;
         let text = toml::to_string_pretty(self).wrap_err("serializing config.toml")?;
         atomic_write(&paths.config_file(), text.as_bytes(), 0o644)?;
         Ok(())
     }
 
-    pub fn get(&self, key: Option<&str>) -> color_eyre::Result<String> {
-        match key {
-            None => Ok(toml::to_string_pretty(self)?),
-            Some("mpv_path") => Ok(self.mpv_path.clone()),
-            Some("log_level") => Ok(self.log_level.clone()),
-            Some("autoplay") => Ok(self.autoplay.to_string()),
-            Some("prepend_previous") => Ok(self.prepend_previous.to_string()),
-            Some(other) => Err(usage_err(format!("unknown config key {other:?}"))),
+    /// `None` for [`Field::MpvArgs`], which is not in config.toml — the caller
+    /// reads it from `mpv_args.conf` instead.
+    pub(crate) fn get(&self, field: Field) -> Option<String> {
+        match field {
+            Field::MpvArgs => None,
+            Field::MpvPath => Some(self.mpv_path.clone()),
+            Field::LogLevel => Some(self.log_level.clone()),
+            Field::Autoplay => Some(self.autoplay.to_string()),
+            Field::PrependPrevious => Some(self.prepend_previous.to_string()),
         }
     }
 
-    pub fn set(&mut self, key: &str, value: &str) -> color_eyre::Result<()> {
-        match key {
-            "mpv_path" => self.mpv_path = value.to_string(),
-            "log_level" => self.log_level = value.to_string(),
-            "autoplay" => {
-                self.autoplay = parse_bool(value)?;
+    pub(crate) fn to_toml(&self) -> color_eyre::Result<String> {
+        toml::to_string_pretty(self).wrap_err("serializing config.toml")
+    }
+
+    /// Returns `false` for [`Field::MpvArgs`], which the caller writes to its
+    /// own file.
+    pub(crate) fn set(&mut self, field: Field, value: &str) -> color_eyre::Result<bool> {
+        match field {
+            Field::MpvArgs => return Ok(false),
+            Field::MpvPath => self.mpv_path = value.to_string(),
+            // Validate now rather than failing at the next startup, which is
+            // where `parse_log_filter` would otherwise reject it.
+            Field::LogLevel => {
+                crate::tracing::validate_log_level(value)
+                    .map_err(|e| usage_err(format!("invalid log_level {value:?}: {e}")))?;
+                self.log_level = value.to_string();
             }
-            "prepend_previous" => {
-                self.prepend_previous = parse_bool(value)?;
-            }
-            other => return Err(usage_err(format!("unknown config key {other:?}"))),
+            Field::Autoplay => self.autoplay = parse_bool(value)?,
+            Field::PrependPrevious => self.prepend_previous = parse_bool(value)?,
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -151,10 +218,10 @@ impl Config {
 /// may itself contain whitespace (e.g. `--title=My Movie`), so splitting is
 /// by line, not by shell words.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct MpvArgs(pub Vec<String>);
+pub(crate) struct MpvArgs(pub Vec<String>);
 
 impl MpvArgs {
-    pub fn load(paths: &Paths) -> color_eyre::Result<Self> {
+    pub(crate) fn load(paths: &Paths) -> color_eyre::Result<Self> {
         let path = paths.mpv_args_file();
         if !path.exists() {
             return Ok(Self::default());
@@ -164,7 +231,7 @@ impl MpvArgs {
         Ok(Self(parse_mpv_args(&text)))
     }
 
-    pub fn save(paths: &Paths, value: &str) -> color_eyre::Result<()> {
+    pub(crate) fn save(paths: &Paths, value: &str) -> color_eyre::Result<()> {
         let args = parse_mpv_args(value);
         let mut text = String::new();
         for arg in &args {
@@ -176,7 +243,7 @@ impl MpvArgs {
         Ok(())
     }
 
-    pub fn get(paths: &Paths) -> color_eyre::Result<String> {
+    pub(crate) fn get(paths: &Paths) -> color_eyre::Result<String> {
         Ok(Self::load(paths)?.0.join(" "))
     }
 }
@@ -207,17 +274,31 @@ fn parse_bool(value: &str) -> color_eyre::Result<bool> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Credentials {
-    pub server: String,
-    pub username: String,
-    pub user_id: String,
-    pub access_token: String,
-    pub device_id: String,
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct Credentials {
+    pub(crate) server: String,
+    pub(crate) username: String,
+    pub(crate) user_id: String,
+    pub(crate) access_token: String,
+    pub(crate) device_id: String,
+}
+
+impl fmt::Debug for Credentials {
+    /// Hand-written so `access_token` cannot reach a log line or a color-eyre
+    /// capture. Serialization is unaffected — cred.json still holds the token.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials")
+            .field("server", &self.server)
+            .field("username", &self.username)
+            .field("user_id", &self.user_id)
+            .field("access_token", &"<redacted>")
+            .field("device_id", &self.device_id)
+            .finish()
+    }
 }
 
 impl Credentials {
-    pub fn load(paths: &Paths) -> color_eyre::Result<Option<Self>> {
+    pub(crate) fn load(paths: &Paths) -> color_eyre::Result<Option<Self>> {
         let path = paths.cred_file();
         if !path.exists() {
             return Ok(None);
@@ -229,14 +310,14 @@ impl Credentials {
         Ok(Some(creds))
     }
 
-    pub fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
+    pub(crate) fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
         paths.ensure()?;
         let text = serde_json::to_string_pretty(self).wrap_err("serializing cred.json")?;
         atomic_write(&paths.cred_file(), text.as_bytes(), 0o600)?;
         Ok(())
     }
 
-    pub fn remove(paths: &Paths) -> color_eyre::Result<()> {
+    pub(crate) fn remove(paths: &Paths) -> color_eyre::Result<()> {
         let path = paths.cred_file();
         if path.exists() {
             fs::remove_file(&path).wrap_err_with(|| format!("removing {}", path.display()))?;
@@ -262,7 +343,7 @@ fn atomic_write(path: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {
 
 /// Bare host → `http://host:8096`. Existing scheme/port/path are kept.
 /// Trailing slashes are stripped.
-pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
+pub(crate) fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
     let trimmed = input.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(usage_err("server URL is empty"));
@@ -334,7 +415,7 @@ fn explicit_port(input: &str) -> bool {
     hostport.contains(':')
 }
 
-pub fn device_name() -> String {
+pub(crate) fn device_name() -> String {
     let name = rustix::system::uname()
         .nodename()
         .to_string_lossy()
@@ -349,6 +430,38 @@ pub fn device_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ensure_makes_the_config_dir_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            config_dir: dir.path().join("jellysink"),
+        };
+        paths.ensure().unwrap();
+        let mode = fs::metadata(&paths.config_dir)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "mpv.sock lives here and leaks the token");
+    }
+
+    #[test]
+    fn ensure_tightens_a_directory_left_world_readable_by_an_older_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            config_dir: dir.path().join("jellysink"),
+        };
+        fs::create_dir_all(&paths.config_dir).unwrap();
+        fs::set_permissions(&paths.config_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        paths.ensure().unwrap();
+        let mode = fs::metadata(&paths.config_dir)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
     use tempfile::TempDir;
 
     #[test]
@@ -421,7 +534,7 @@ mod tests {
             config_dir: tmp.path().to_path_buf(),
         };
         let mut cfg = Config::default();
-        cfg.set("mpv_path", "/usr/bin/mpv").unwrap();
+        cfg.set(Field::MpvPath, "/usr/bin/mpv").unwrap();
         cfg.save(&paths).unwrap();
         let loaded = Config::load(&paths).unwrap();
         assert_eq!(loaded.mpv_path, "/usr/bin/mpv");
@@ -470,24 +583,82 @@ mod tests {
     }
 
     #[test]
-    fn unknown_config_key_errors() {
+    fn unknown_config_key_errors_and_names_the_valid_ones() {
+        let err = Field::parse("nope").unwrap_err();
+        assert!(
+            err.downcast_ref::<crate::UsageError>().is_some(),
+            "expected UsageError, got {err:?}"
+        );
+        let msg = err.to_string();
+        for field in Field::ALL {
+            assert!(msg.contains(field.name()), "{msg} should list {field:?}");
+        }
+    }
+
+    #[test]
+    fn every_field_parses_back_from_its_own_name() {
+        for field in Field::ALL {
+            assert_eq!(Field::parse(field.name()).unwrap(), *field);
+        }
+    }
+
+    /// `--help` spells the key list out; keep it honest.
+    #[test]
+    fn the_cli_help_lists_every_config_key() {
+        let main_rs = include_str!("main.rs");
+        for field in Field::ALL {
+            assert!(
+                main_rs.contains(field.name()),
+                "src/main.rs should mention {:?} in the `config set` help",
+                field.name()
+            );
+        }
+    }
+
+    #[test]
+    fn an_invalid_log_level_is_rejected_at_set_time() {
         let mut cfg = Config::default();
-        let err = cfg.set("nope", "x").unwrap_err();
+        // This used to be accepted and only fail at the next startup.
+        let err = cfg.set(Field::LogLevel, "banana").unwrap_err();
         assert!(
             err.downcast_ref::<crate::UsageError>().is_some(),
             "expected UsageError, got {err:?}"
         );
-        let err = cfg.get(Some("nope")).unwrap_err();
+        assert_eq!(cfg.log_level, "info", "the bad value must not be stored");
+        cfg.set(Field::LogLevel, "jellysink=debug,warn").unwrap();
+        assert_eq!(cfg.log_level, "jellysink=debug,warn");
+    }
+
+    #[test]
+    fn mpv_args_is_not_stored_in_config_toml() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.get(Field::MpvArgs), None);
         assert!(
-            err.downcast_ref::<crate::UsageError>().is_some(),
-            "expected UsageError, got {err:?}"
+            !cfg.set(Field::MpvArgs, "--fullscreen").unwrap(),
+            "the caller writes this to mpv_args.conf instead"
         );
+    }
+
+    #[test]
+    fn load_does_not_create_a_config_file() {
+        let tmp = TempDir::new().unwrap();
+        let paths = Paths {
+            config_dir: tmp.path().to_path_buf(),
+        };
+        let cfg = Config::load(&paths).unwrap();
+        assert_eq!(cfg, Config::default());
+        assert!(
+            !paths.config_file().exists(),
+            "`jellysink config path` should not write a config file"
+        );
+        Config::load_or_create(&paths).unwrap();
+        assert!(paths.config_file().exists());
     }
 
     #[test]
     fn invalid_autoplay_value_is_a_usage_error() {
         let mut cfg = Config::default();
-        let err = cfg.set("autoplay", "maybe").unwrap_err();
+        let err = cfg.set(Field::Autoplay, "maybe").unwrap_err();
         assert!(
             err.downcast_ref::<crate::UsageError>().is_some(),
             "expected UsageError, got {err:?}"
@@ -524,10 +695,24 @@ mod tests {
         assert!(loaded.autoplay);
 
         let mut cfg = loaded;
-        cfg.set("autoplay", "false").unwrap();
+        cfg.set(Field::Autoplay, "false").unwrap();
         cfg.save(&paths).unwrap();
         let loaded = Config::load(&paths).unwrap();
         assert!(!loaded.autoplay);
-        assert_eq!(loaded.get(Some("autoplay")).unwrap(), "false");
+        assert_eq!(loaded.get(Field::Autoplay).as_deref(), Some("false"));
+    }
+
+    #[test]
+    fn credentials_debug_never_prints_the_access_token() {
+        let creds = Credentials {
+            server: "http://s".into(),
+            username: "u".into(),
+            user_id: "uid".into(),
+            access_token: "sekrit".into(),
+            device_id: "d".into(),
+        };
+        let rendered = format!("{creds:?}");
+        assert!(!rendered.contains("sekrit"), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
     }
 }

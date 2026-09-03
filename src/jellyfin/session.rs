@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum WsIncoming {
+pub(crate) enum WsIncoming {
     Cast(CastEvent),
     KeepAlive,
     ForceKeepAlive { seconds: u64 },
@@ -19,7 +19,11 @@ struct RawMessage {
     data: Option<Value>,
 }
 
-pub fn websocket_url(server: &str, token: &str, device_id: &str) -> color_eyre::Result<String> {
+pub(crate) fn websocket_url(
+    server: &str,
+    token: &str,
+    device_id: &str,
+) -> color_eyre::Result<String> {
     let mut url = reqwest::Url::parse(server).wrap_err("server URL")?;
     let scheme = match url.scheme() {
         "https" => "wss",
@@ -40,7 +44,7 @@ pub fn websocket_url(server: &str, token: &str, device_id: &str) -> color_eyre::
     Ok(url.to_string())
 }
 
-pub fn parse_ws_message(text: &str) -> color_eyre::Result<WsIncoming> {
+pub(crate) fn parse_ws_message(text: &str) -> color_eyre::Result<WsIncoming> {
     let raw: RawMessage = serde_json::from_str(text).wrap_err("websocket JSON")?;
     Ok(match raw.message_type.as_str() {
         "KeepAlive" => WsIncoming::KeepAlive,

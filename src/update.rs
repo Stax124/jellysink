@@ -6,11 +6,11 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const REPO_OWNER: &str = "Stax124";
-pub const REPO_NAME: &str = "jellysink";
-pub const BIN_NAME: &str = "jellysink";
+pub(crate) const REPO_OWNER: &str = "Stax124";
+pub(crate) const REPO_NAME: &str = "jellysink";
+pub(crate) const BIN_NAME: &str = "jellysink";
 
-pub fn release_target() -> Option<&'static str> {
+pub(crate) fn release_target() -> Option<&'static str> {
     match std::env::consts::ARCH {
         "x86_64" => Some("x86_64-unknown-linux-musl"),
         "aarch64" => Some("aarch64-unknown-linux-musl"),
@@ -18,8 +18,8 @@ pub fn release_target() -> Option<&'static str> {
     }
 }
 
-pub struct UpdateOffer {
-    pub version: String,
+pub(crate) struct UpdateOffer {
+    pub(crate) version: String,
 }
 
 fn updater(show_output: bool) -> color_eyre::Result<github::AsyncUpdate> {
@@ -43,7 +43,7 @@ fn updater(show_output: bool) -> color_eyre::Result<github::AsyncUpdate> {
     builder.build_async().wrap_err("configuring GitHub updater")
 }
 
-pub async fn check() -> color_eyre::Result<Option<UpdateOffer>> {
+pub(crate) async fn check() -> color_eyre::Result<Option<UpdateOffer>> {
     match updater(false)?
         .is_update_available_async()
         .await
@@ -56,7 +56,7 @@ pub async fn check() -> color_eyre::Result<Option<UpdateOffer>> {
     }
 }
 
-pub async fn install(show_output: bool) -> color_eyre::Result<self_update::VersionStatus> {
+pub(crate) async fn install(show_output: bool) -> color_eyre::Result<self_update::VersionStatus> {
     updater(show_output)?
         .update_async()
         .await
@@ -68,7 +68,7 @@ const DELETED_SUFFIX: &str = " (deleted)";
 
 /// Directory-entry path to exec after `self_replace`. `current_exe()` at restart
 /// time is `$path (deleted)` and `execve` fails with ENOENT.
-pub fn restart_exe_path(current: &Path) -> PathBuf {
+pub(crate) fn restart_exe_path(current: &Path) -> PathBuf {
     match current.to_str() {
         Some(s) if s.ends_with(DELETED_SUFFIX) => {
             PathBuf::from(&s[..s.len() - DELETED_SUFFIX.len()])
@@ -84,7 +84,7 @@ fn restart_command(exe: &Path, args: impl IntoIterator<Item = impl AsRef<OsStr>>
 }
 
 /// Replace this process with `exe`. Returns only on failure.
-pub fn exec_updated(exe: &Path) -> std::io::Error {
+pub(crate) fn exec_updated(exe: &Path) -> std::io::Error {
     use std::os::unix::process::CommandExt;
     restart_command(exe, std::env::args_os().skip(1)).exec()
 }
