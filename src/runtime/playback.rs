@@ -1,6 +1,9 @@
 use super::Runtime;
 use crate::jellyfin::auth::Api;
-use crate::media::{PlayRequest, PreparedPlay, mpv_audio_track_id, mpv_embedded_subtitle_track_id};
+use crate::media::{
+    PlayRequest, PreparedPlay, SubtitlePreference, mpv_audio_track_id,
+    mpv_embedded_subtitle_track_id, remember_subtitle_preference,
+};
 use crate::mpv::MpvSession;
 use crate::report::{PlayingState, Report};
 use color_eyre::eyre::eyre;
@@ -55,7 +58,6 @@ impl Runtime {
             return Ok(());
         }
 
-        self.prepared.insert(item_id.clone(), prep.clone());
         self.current = Some(prep);
         self.item_id = Some(item_id);
         self.paused = false;
@@ -99,13 +101,12 @@ impl Runtime {
         self.send_stopped();
         self.window.adopt_index(queue_index);
         tracing::info!(item = %item_id, index = queue_index, "adopted mpv playlist jump");
-        if let Some(prep) = self.prepared.get(&item_id).cloned() {
-            self.current = Some(prep);
-        } else {
-            let (prep, _) = self.prepare_item(&item_id, &PlayRequest::default()).await?;
-            self.prepared.insert(item_id.clone(), prep.clone());
-            self.current = Some(prep);
-        }
+        // No cache branch here. `prepare_item` already returns the cached
+        // prepare for a plain request, and routing through it is what lets the
+        // remembered subtitle reach a playlist jump and mpv's own autoplay —
+        // which is the path a series actually takes between episodes.
+        let (prep, _) = self.prepare_item(&item_id, &PlayRequest::default()).await?;
+        self.current = Some(prep);
         self.item_id = Some(item_id);
         self.last_ticks = 0;
         self.external_subtitle_track_ids.clear();
@@ -165,6 +166,39 @@ impl Runtime {
             let _ = self.apply_subtitle(subtitle_stream_index).await;
         }
         Ok(())
+    }
+
+    /// Records the user's subtitle choice by identity, so the next episode can
+    /// get the same track even though its stream index will differ.
+    ///
+    /// A choice we cannot identify is *forgotten* rather than kept: an identity
+    /// that can never match again would leave the previous choice in place, and
+    /// silently re-applying a track the user has already moved away from is
+    /// worse than falling back to the server default.
+    pub(super) fn remember_subtitle(&self, jellyfin_index: i64) {
+        let candidates = self
+            .current
+            .as_ref()
+            .map_or(&[][..], |prep| prep.maps.subtitles.as_slice());
+        let preference = SubtitlePreference::from_selection(candidates, jellyfin_index);
+        match &preference {
+            Some(SubtitlePreference::Off) => {
+                tracing::info!("remembering subtitles off for the next episode");
+            }
+            Some(SubtitlePreference::Stream(id)) => tracing::info!(
+                jellyfin_index,
+                language = id.language.as_deref(),
+                title = id.title.as_deref(),
+                display_title = id.display_title.as_deref(),
+                "remembering subtitle track for the next episode"
+            ),
+            None => tracing::debug!(
+                jellyfin_index,
+                candidates = candidates.len(),
+                "subtitle choice carries no identity; forgetting the previous one"
+            ),
+        }
+        remember_subtitle_preference(&self.last_subtitle, preference);
     }
 
     pub(super) async fn apply_subtitle(&mut self, jellyfin_index: i64) -> color_eyre::Result<()> {

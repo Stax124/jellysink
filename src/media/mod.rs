@@ -1,11 +1,16 @@
 //! Turning a Jellyfin item into something mpv can play.
 
 pub(crate) mod streams;
+pub(crate) mod subtitle;
 pub(crate) mod title;
 
 pub(crate) use streams::{
     MediaSource, PlaybackInfo, StreamMaps, has_foreign_subtitle_host, map_streams,
     mpv_audio_track_id, mpv_embedded_subtitle_track_id,
+};
+pub(crate) use subtitle::{
+    SubtitleMemory, SubtitlePreference, remember_subtitle_preference,
+    remembered_subtitle_preference, resolve_subtitle_index,
 };
 pub(crate) use title::{display_title, episode_titles, item_type, series_id};
 
@@ -140,6 +145,7 @@ pub(crate) fn prepare_play(
         item = %item_id,
         embedded_subs = maps.subtitle_track_id_by_stream_index.len(),
         external_subs = external_sub_urls.len(),
+        selectable_subs = maps.subtitles.len(),
         play_subtitle_stream_index = ?play_subtitle_stream_index,
         default_subtitle_stream_index,
         resolved_subtitle_stream_index = ?subtitle_stream_index,
@@ -359,6 +365,48 @@ mod tests {
         )
         .unwrap();
         assert_eq!(prep.subtitle_stream_index, Some(2));
+    }
+
+    #[test]
+
+    fn prepare_play_records_the_subtitle_identities_for_later_matching() {
+        let info = json!({
+            "PlaySessionId": "sess",
+            "MediaSources": [{
+                "Id": "src",
+                "SupportsDirectPlay": true,
+                "DefaultSubtitleStreamIndex": 2,
+                "MediaStreams": [
+                    {
+                        "Type": "Subtitle", "Index": 2, "DeliveryMethod": "Embed",
+                        "Language": "eng", "Title": "Signs and Songs", "IsExternal": false
+                    },
+                    {
+                        "Type": "Subtitle", "Index": 3, "DeliveryMethod": "External",
+                        "DeliveryUrl": "/Videos/i/Subtitles/3/Stream.srt",
+                        "IsExternalUrl": false, "IsExternal": true,
+                        "Language": "eng", "Title": "Dialogue"
+                    }
+                ]
+            }]
+        });
+        let prep = prepare_play(
+            "http://h:8096",
+            "item",
+            &info,
+            &PlayRequest::default(),
+            "tok",
+        )
+        .unwrap();
+        assert_eq!(
+            prep.maps
+                .subtitles
+                .iter()
+                .map(|s| (s.index, s.title.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![(2, Some("Signs and Songs")), (3, Some("Dialogue"))],
+            "both an embedded and an external subtitle are selectable"
+        );
     }
 
     #[test]

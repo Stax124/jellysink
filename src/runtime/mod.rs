@@ -6,7 +6,7 @@ use crate::cast::CastEvent;
 use crate::config::{Config, Credentials, Paths};
 use crate::jellyfin::auth::{Api, is_auth_expired};
 use crate::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
-use crate::media::{PlayRequest, PreparedPlay, mpv_audio_track_id};
+use crate::media::{PlayRequest, PreparedPlay, SubtitleMemory, mpv_audio_track_id};
 use crate::mpv::EndFileReason;
 use crate::mpv::{MpvEvent, MpvSession};
 use crate::report::Report;
@@ -77,11 +77,15 @@ pub(crate) async fn run(
     shutdown: Signal,
 ) -> color_eyre::Result<()> {
     let mut backoff = BACKOFF_MIN;
+    // Owned out here, not by `Runtime`: `run_session` builds a fresh `Runtime`
+    // on every reconnect, and the subtitle the user picked should outlive a
+    // network blip. Memory only — nothing about it reaches disk.
+    let last_subtitle = SubtitleMemory::default();
     loop {
         let started = Instant::now();
         tokio::select! {
             _ = shutdown.fired() => return Ok(()),
-            result = run_session(&config, &creds, &paths, shutdown.clone()) => {
+            result = run_session(&config, &creds, &paths, shutdown.clone(), &last_subtitle) => {
                 match result {
                     Ok(()) => return Ok(()),
                     Err(e) => {
@@ -175,6 +179,7 @@ async fn run_session(
     creds: &Credentials,
     paths: &Paths,
     shutdown: Signal,
+    last_subtitle: &SubtitleMemory,
 ) -> color_eyre::Result<()> {
     let api = Api::from_credentials(creds)?;
     api.post_capabilities().await?;
@@ -192,7 +197,14 @@ async fn run_session(
     let (report_tx, report_task) = spawn_report_sink(Arc::new(api.clone()));
     // Aborted when this returns, however it returns.
     let _tasks = SessionTasks(vec![ws_task, report_task]);
-    let mut rt = Runtime::new(api, config.clone(), paths.clone(), mpv_tx, report_tx);
+    let mut rt = Runtime::new(
+        api,
+        config.clone(),
+        paths.clone(),
+        mpv_tx,
+        report_tx,
+        last_subtitle.clone(),
+    );
 
     let mut keepalive = tokio::time::interval(Duration::from_secs(30));
     let mut progress = tokio::time::interval(Duration::from_secs(1));
@@ -292,6 +304,11 @@ struct Runtime {
     last_ticks: i64,
     /// Jellyfin subtitle stream index → mpv subtitle track id for `sub-add`ed files.
     external_subtitle_track_ids: HashMap<i64, i64>,
+    /// The subtitle track the user last picked by hand, re-applied to the next
+    /// episode by identity rather than by index. Shared with `run`, so it
+    /// survives a reconnect; deliberately never cleared by `start_current`,
+    /// `adopt_playlist_pos` or `stop_playback`.
+    last_subtitle: SubtitleMemory,
     report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
     transitioning: bool,
     /// Whether mpv currently carries the Authorization header. When it does,
@@ -314,6 +331,7 @@ impl Runtime {
         paths: Paths,
         mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
         report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
+        last_subtitle: SubtitleMemory,
     ) -> Self {
         Self {
             api,
@@ -332,6 +350,7 @@ impl Runtime {
             stopping: false,
             last_ticks: 0,
             external_subtitle_track_ids: HashMap::new(),
+            last_subtitle,
             report_tx,
             transitioning: false,
             mpv_auth_header_set: false,
@@ -387,6 +406,7 @@ impl Runtime {
             CastEvent::SetAudio { stream_index } => self.set_audio(stream_index).await?,
             CastEvent::SetSubtitle { stream_index } => {
                 tracing::info!(stream_index, "set subtitle stream");
+                self.remember_subtitle(stream_index);
                 self.apply_subtitle(stream_index).await?;
                 self.send_progress();
             }

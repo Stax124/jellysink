@@ -12,6 +12,27 @@ pub(crate) struct StreamMaps {
     pub(crate) subtitle_track_id_by_stream_index: HashMap<i64, i64>,
     /// Jellyfin stream index → absolute DeliveryUrl
     pub(crate) subtitle_url: HashMap<i64, String>,
+    /// Every subtitle stream mpv can actually be pointed at, in listing order.
+    pub(crate) subtitles: Vec<SubtitleId>,
+}
+
+/// One subtitle stream, identified by what it *is* rather than where it sits.
+///
+/// Stream indexes are per-file: the next episode can order its streams
+/// differently, or come from a different provider, so "index 3" is not the same
+/// track twice. Releases that split one language into `Signs and Songs` and
+/// `Dialogue` also flag the wrong one as the server default often enough that
+/// the index the server hands back is not trustworthy either. See
+/// [`crate::media::subtitle`], which matches on this.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SubtitleId {
+    pub(crate) index: i64,
+    pub(crate) language: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) display_title: Option<String>,
+    pub(crate) codec: Option<String>,
+    pub(crate) is_forced: bool,
+    pub(crate) is_external: bool,
 }
 
 /// A `MediaStream`'s `Type`.
@@ -75,6 +96,10 @@ pub(crate) struct MediaStream {
     pub(crate) delivery_url: Option<String>,
     pub(crate) codec: Option<String>,
     pub(crate) language: Option<String>,
+    /// Jellyfin's raw `Title` — the muxer's track name ("Signs and Songs",
+    /// "Dialogue"). More stable across episodes and providers than
+    /// `DisplayTitle`, which bakes in the language and the codec.
+    pub(crate) title: Option<String>,
     pub(crate) display_title: Option<String>,
     pub(crate) path: Option<String>,
 }
@@ -153,13 +178,18 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
             is_default = sub.is_default,
             is_forced = sub.is_forced,
             is_external = sub.is_external,
-            title = sub.display_title.as_deref(),
+            title = sub.title.as_deref(),
+            display_title = sub.display_title.as_deref(),
             "subtitle stream"
         );
-        match sub.delivery() {
+        // The two warn arms are the streams we cannot point mpv at, so they
+        // also must not become a remembered choice: the user would pick one and
+        // every later episode would silently fall back to the server default.
+        let selectable = match sub.delivery() {
             DeliveryMethod::Embed => {
                 maps.subtitle_track_id_by_stream_index
                     .insert(jellyfin_index, subtitle_track_id);
+                true
             }
             DeliveryMethod::External => match sub.delivery_url.as_deref() {
                 Some(url) => {
@@ -169,12 +199,28 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
                         format!("{}{url}", server.trim_end_matches('/'))
                     };
                     maps.subtitle_url.insert(jellyfin_index, abs);
+                    true
                 }
-                None => tracing::warn!(jellyfin_index, "external subtitle has no DeliveryUrl"),
+                None => {
+                    tracing::warn!(jellyfin_index, "external subtitle has no DeliveryUrl");
+                    false
+                }
             },
             DeliveryMethod::Other => {
                 tracing::warn!(jellyfin_index, "unmapped subtitle delivery method");
+                false
             }
+        };
+        if selectable {
+            maps.subtitles.push(SubtitleId {
+                index: jellyfin_index,
+                language: sub.language.clone(),
+                title: sub.title.clone(),
+                display_title: sub.display_title.clone(),
+                codec: sub.codec.clone(),
+                is_forced: sub.is_forced,
+                is_external: sub.is_external,
+            });
         }
         // Unlike the audio loop above, this counter tracks what *mpv* sees, and
         // the Embed/External branch above tracks how *Jellyfin* delivers it.
@@ -322,6 +368,70 @@ mod tests {
         });
         let maps = map_streams("http://s", &media_source(source));
         assert_eq!(mpv_embedded_subtitle_track_id(&maps, 2), Some(2));
+    }
+
+    #[test]
+
+    fn a_subtitle_identity_carries_the_raw_track_title_not_only_the_display_title() {
+        let source = media_source(json!({
+            "MediaStreams": [{
+                "Type": "Subtitle", "Index": 2, "DeliveryMethod": "Embed",
+                "Language": "eng", "Title": "Dialogue",
+                "DisplayTitle": "English - Dialogue - SRT", "Codec": "subrip",
+                "IsForced": false, "IsExternal": false
+            }]
+        }));
+        let maps = map_streams("http://s", &source);
+        assert_eq!(
+            maps.subtitles,
+            vec![SubtitleId {
+                index: 2,
+                language: Some("eng".into()),
+                title: Some("Dialogue".into()),
+                display_title: Some("English - Dialogue - SRT".into()),
+                codec: Some("subrip".into()),
+                is_forced: false,
+                is_external: false,
+            }]
+        );
+    }
+
+    /// A stream we cannot point mpv at must not become a remembered choice —
+    /// the user would pick it once and every later episode would silently fall
+    /// back to the server default.
+    #[test]
+
+    fn an_unselectable_subtitle_is_not_offered_as_an_identity() {
+        let source = media_source(json!({
+            "MediaStreams": [
+                {"Type": "Subtitle", "Index": 1, "DeliveryMethod": "Hls", "Language": "eng"},
+                {"Type": "Subtitle", "Index": 2, "DeliveryMethod": "External", "Language": "eng"},
+                {"Type": "Subtitle", "Index": 3, "DeliveryMethod": "Embed", "Language": "eng"},
+            ]
+        }));
+        let maps = map_streams("http://s", &source);
+        assert_eq!(
+            maps.subtitles.iter().map(|s| s.index).collect::<Vec<_>>(),
+            vec![3],
+            "Hls has no mapping and the External entry has no DeliveryUrl"
+        );
+    }
+
+    #[test]
+
+    fn an_extracted_subtitle_is_still_a_selectable_identity() {
+        let source = media_source(json!({
+            "MediaStreams": [{
+                "Type": "Subtitle", "Index": 1, "DeliveryMethod": "External",
+                "DeliveryUrl": "/sub1.srt", "IsExternalUrl": false, "IsExternal": false,
+                "Language": "ces"
+            }]
+        }));
+        let maps = map_streams("http://s", &source);
+        assert_eq!(
+            maps.subtitles.iter().map(|s| s.index).collect::<Vec<_>>(),
+            vec![1]
+        );
     }
 
     #[test]
