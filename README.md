@@ -3,7 +3,7 @@
 
   <h1>jellysink</h1>
 
-  <p>Efficient MPV cast target for Jellyfin on Linux</p>
+  <p>Stream your favourite shows from Jellyfin into your local MPV Player</p>
 
   <p>
     <a href="https://github.com/Stax124/jellysink"><img src="https://img.shields.io/badge/GitHub-Stax124%2Fjellysink-181717?style=flat-square&logo=github" alt="GitHub"></a>
