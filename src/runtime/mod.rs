@@ -8,7 +8,7 @@ use crate::jellyfin::auth::{Api, is_auth_expired};
 use crate::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
 use crate::media::{PlayRequest, PreparedPlay, SubtitleMemory, mpv_audio_track_id};
 use crate::mpv::EndFileReason;
-use crate::mpv::{MpvEvent, MpvSession};
+use crate::mpv::{MpvEvent, MpvSession, SelectedTrack};
 use crate::report::Report;
 use crate::runtime::window::PlaylistWindow;
 use crate::runtime::window::{EndFileAction, end_file_action, ignore_stop_for_playlist};
@@ -309,6 +309,10 @@ struct Runtime {
     /// survives a reconnect; deliberately never cleared by `start_current`,
     /// `adopt_playlist_pos` or `stop_playback`.
     last_subtitle: SubtitleMemory,
+    /// mpv's subtitle selection as of the last time it was *ours* — the end of
+    /// `configure_streams`, or an `apply_subtitle`. A `sid` property change
+    /// reporting anything else is the user picking a track in the mpv window.
+    settled_subtitle_track: SelectedTrack,
     report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
     transitioning: bool,
     /// Whether mpv currently carries the Authorization header. When it does,
@@ -351,6 +355,7 @@ impl Runtime {
             last_ticks: 0,
             external_subtitle_track_ids: HashMap::new(),
             last_subtitle,
+            settled_subtitle_track: SelectedTrack::Unresolved,
             report_tx,
             transitioning: false,
             mpv_auth_header_set: false,
@@ -509,6 +514,7 @@ impl Runtime {
     async fn on_mpv_event(&mut self, ev: MpvEvent) {
         match ev {
             MpvEvent::FileLoaded => self.on_file_loaded().await,
+            MpvEvent::SubtitleTrackChanged => self.adopt_mpv_subtitle_track().await,
             MpvEvent::EndFile { reason } => self.on_end_file(reason).await,
             MpvEvent::Exited => {
                 if !self.stopping {

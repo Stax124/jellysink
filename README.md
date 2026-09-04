@@ -49,7 +49,7 @@ This project is not trying to be a full replacement for jellyfin-mpv-shim. It is
 - DirectPlay / DirectStream only — the original stream reaches mpv
 - Uses your installed mpv and your existing config; never sets `vo`, `hwdec`, `scale`, or `glsl-shaders`, and never passes `--no-config`
 - Series autoplay in aired order, across seasons, until the last episode or Stop
-- Remembers the subtitle track you pick and re-selects it on the next episode
+- Remembers the subtitle track you pick — in a Jellyfin client or in mpv itself — and re-selects it on the next episode
 - Remaining episodes are appended to mpv’s playlist (`<` / `>` or the OSC playlist)
 - Optional StatusNotifier tray icon (KDE, GNOME AppIndicator, Waybar, …)
 - Self-update from GitHub Releases (`jellysink update`, or **Install update** in the tray)
@@ -111,7 +111,7 @@ jellysink update         # install the latest GitHub release
 jellysink update --check # print whether a newer release exists
 ```
 
-Cast a movie or episode to **jellysink** from the Jellyfin web/Android/iOS app. mpv opens with your normal config. Pause, seek, volume, mute, fullscreen, audio, and subtitles work from the controlling app. A series episode continues into the next one (aired order, across seasons) until the last episode or Stop, carrying the subtitle track you last picked with it.
+Cast a movie or episode to **jellysink** from the Jellyfin web/Android/iOS app. mpv opens with your normal config. Pause, seek, volume, mute, fullscreen, audio, and subtitles work from the controlling app. A series episode continues into the next one (aired order, across seasons) until the last episode or Stop, carrying the subtitle track you last picked with it — picked in the controlling app, or with `j` in the mpv window.
 
 When you cast an episode, the episodes that aired before it are loaded into mpv's playlist too, so the playlist selector (and Previous) can reach the whole series rather than only what follows. Set `prepend_previous` to `false` to only look for next episodes.
 

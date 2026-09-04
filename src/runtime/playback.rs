@@ -1,10 +1,10 @@
 use super::Runtime;
 use crate::jellyfin::auth::Api;
 use crate::media::{
-    PlayRequest, PreparedPlay, SubtitlePreference, mpv_audio_track_id,
-    mpv_embedded_subtitle_track_id, remember_subtitle_preference,
+    PlayRequest, PreparedPlay, SubtitlePreference, jellyfin_embedded_subtitle_index,
+    mpv_audio_track_id, mpv_embedded_subtitle_track_id, remember_subtitle_preference,
 };
-use crate::mpv::MpvSession;
+use crate::mpv::{MpvSession, SelectedTrack};
 use crate::report::{PlayingState, Report};
 use color_eyre::eyre::eyre;
 use serde_json::json;
@@ -165,7 +165,108 @@ impl Runtime {
             );
             let _ = self.apply_subtitle(subtitle_stream_index).await;
         }
+        // Whatever mpv ended up on is the baseline for this file, so the
+        // property changes `sub-add` and our own `sid` writes just emitted are
+        // not mistaken for the user reaching for the track menu. Read rather
+        // than assumed: with no index to apply, the selection is mpv's own —
+        // its config's default track, or the last `sub-add`ed one.
+        self.settle_subtitle_track().await;
         Ok(())
+    }
+
+    /// Records mpv's current subtitle selection as *not* a user choice.
+    pub(super) async fn settle_subtitle_track(&mut self) {
+        let Some(mpv) = self.mpv.as_mut() else {
+            return;
+        };
+        match mpv.subtitle_track().await {
+            Ok(track) => self.settled_subtitle_track = track,
+            Err(e) => tracing::debug!("could not read mpv subtitle track: {e:#}"),
+        }
+    }
+
+    /// Adopts a subtitle track picked in the mpv window.
+    ///
+    /// A Jellyfin client is not the only way to change subtitles — `j` in mpv
+    /// is, and in practice it is the usual one. mpv reports it as a `sid`
+    /// property change; this maps that track id back to the Jellyfin stream
+    /// index the rest of the code speaks, so the choice is remembered for the
+    /// next episode ([`Runtime::remember_subtitle`]) and the Jellyfin UI stops
+    /// showing a track that is not playing.
+    ///
+    /// The event's own value is not used. Property changes travel on their own
+    /// channel and are handled well after they were emitted, so mpv's
+    /// auto-selection during a file load lands here *after*
+    /// [`Runtime::configure_streams`] has applied our choice over it. Comparing
+    /// mpv's live selection against the one we last settled on is what makes
+    /// those stale events no-ops.
+    pub(super) async fn adopt_mpv_subtitle_track(&mut self) {
+        // A file that is still loading reports the selection of neither the old
+        // file nor the configured new one.
+        if self.transitioning || self.stopping || self.current.is_none() {
+            return;
+        }
+        let Some(mpv) = self.mpv.as_mut() else {
+            return;
+        };
+        let selected = match mpv.subtitle_track().await {
+            Ok(track) => track,
+            Err(e) => {
+                tracing::debug!("could not read mpv subtitle track: {e:#}");
+                return;
+            }
+        };
+        if selected == self.settled_subtitle_track {
+            return;
+        }
+        let jellyfin_index = match selected {
+            // mpv between tracks, not a decision to report.
+            SelectedTrack::Unresolved => return,
+            SelectedTrack::Off => -1,
+            SelectedTrack::Id(subtitle_track_id) => {
+                match self.jellyfin_subtitle_index(subtitle_track_id) {
+                    Some(jellyfin_index) => jellyfin_index,
+                    None => {
+                        // A track mpv has and Jellyfin does not: a sidecar the
+                        // user loaded themselves, or an in-file track Jellyfin
+                        // only offers as an extracted sidecar. Nothing to
+                        // report, and nothing that could be re-found in the
+                        // next episode — but it is what is on screen, so it
+                        // becomes the baseline and stops re-firing.
+                        tracing::debug!(
+                            subtitle_track_id,
+                            "mpv selected a subtitle track with no Jellyfin stream index"
+                        );
+                        self.settled_subtitle_track = selected;
+                        return;
+                    }
+                }
+            }
+        };
+        tracing::info!(
+            jellyfin_index,
+            previous = self.current.as_ref().and_then(|p| p.subtitle_stream_index),
+            "subtitle track changed in mpv"
+        );
+        self.settled_subtitle_track = selected;
+        self.remember_subtitle(jellyfin_index);
+        if let Some(prep) = self.current.as_mut() {
+            prep.subtitle_stream_index = (jellyfin_index >= 0).then_some(jellyfin_index);
+        }
+        self.send_progress();
+    }
+
+    /// The Jellyfin stream index an mpv subtitle track id came from.
+    fn jellyfin_subtitle_index(&self, subtitle_track_id: i64) -> Option<i64> {
+        // `sub-add` appends, so an external track's id sits above the embedded
+        // numbering and the two cannot collide; the order here is arbitrary.
+        self.external_subtitle_track_ids
+            .iter()
+            .find(|(_, track_id)| **track_id == subtitle_track_id)
+            .map(|(jellyfin_index, _)| *jellyfin_index)
+            .or_else(|| {
+                jellyfin_embedded_subtitle_index(&self.current.as_ref()?.maps, subtitle_track_id)
+            })
     }
 
     /// Records the user's subtitle choice by identity, so the next episode can
@@ -208,6 +309,8 @@ impl Runtime {
         if jellyfin_index < 0 {
             tracing::info!(jellyfin_index, "disabling subtitles in mpv (sid=no)");
             mpv.set_subtitle_track_id(None).await?;
+            // Ours, so the property change it triggers is not a user pick.
+            self.settled_subtitle_track = SelectedTrack::Off;
             if let Some(prep) = self.current.as_mut() {
                 prep.subtitle_stream_index = None;
             }
@@ -224,6 +327,7 @@ impl Runtime {
                 "applied external subtitle stream"
             );
             mpv.set_subtitle_track_id(Some(subtitle_track_id)).await?;
+            self.settled_subtitle_track = SelectedTrack::Id(subtitle_track_id);
         } else if let Some(prep) = self.current.as_ref()
             && let Some(subtitle_track_id) =
                 mpv_embedded_subtitle_track_id(&prep.maps, jellyfin_index)
@@ -234,6 +338,7 @@ impl Runtime {
                 "applied embedded subtitle stream"
             );
             mpv.set_subtitle_track_id(Some(subtitle_track_id)).await?;
+            self.settled_subtitle_track = SelectedTrack::Id(subtitle_track_id);
         } else {
             tracing::warn!(
                 jellyfin_index,
@@ -338,6 +443,12 @@ impl Runtime {
         let (mut mpv, events) =
             MpvSession::spawn(&self.config.mpv_path, &mpv_args.0, self.paths.mpv_socket()).await?;
         mpv.set_keep_open().await?;
+        if let Err(e) = mpv.observe_subtitle_track().await {
+            tracing::warn!(
+                "cannot observe mpv's subtitle track ({e:#}); a track picked in the mpv \
+                 window will not be remembered or reported"
+            );
+        }
         tracing::info!("mpv spawned");
 
         let auth = apply_auth(&self.api, &mut mpv, prep, item_id, self.window.has_next()).await;
@@ -404,6 +515,7 @@ impl Runtime {
         self.current = None;
         self.item_id = None;
         self.external_subtitle_track_ids.clear();
+        self.settled_subtitle_track = SelectedTrack::Unresolved;
         self.paused = false;
         self.stopping = false;
     }

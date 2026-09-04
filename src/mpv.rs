@@ -23,6 +23,9 @@ pub(crate) enum IpcMessage {
         name: String,
         reason: Option<String>,
     },
+    /// An `observe_property` notification. The new value is deliberately
+    /// dropped — see [`MpvEvent::SubtitleTrackChanged`].
+    PropertyChange { property: String },
 }
 
 /// Encodes a command to be sent to mpv
@@ -86,6 +89,15 @@ pub(crate) const KEEP_OPEN: &str = "yes";
 pub(crate) fn parse_ipc_line(line: &str) -> color_eyre::Result<IpcMessage> {
     let v: Value = serde_json::from_str(line.trim()).wrap_err("mpv IPC JSON")?;
     if let Some(name) = v.get("event").and_then(Value::as_str) {
+        if name == "property-change" {
+            return Ok(IpcMessage::PropertyChange {
+                property: v
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            });
+        }
         let reason = v.get("reason").and_then(Value::as_str).map(str::to_string);
         return Ok(IpcMessage::Event {
             name: name.to_string(),
@@ -153,6 +165,45 @@ pub(crate) fn max_subtitle_track_id_from_track_list(list: &Value) -> i64 {
     max
 }
 
+/// The mpv property holding the selected subtitle track.
+pub(crate) const SUBTITLE_TRACK_PROPERTY: &str = "sid";
+
+/// The `observe_property` id for [`SUBTITLE_TRACK_PROPERTY`].
+///
+/// mpv wants an id per observer and echoes it back on every change; we match on
+/// the property name instead, so the only thing that matters is that ids of
+/// different observers differ.
+const SUBTITLE_TRACK_OBSERVER_ID: i64 = 1;
+
+/// What mpv answers for a track-id property such as `sid`.
+///
+/// It is not just a number: mpv reports an explicit `no` as `false` and a
+/// selection it has not made yet as `auto`. Collapsing those two into "no
+/// track" would read a file that is still loading as the user switching
+/// subtitles off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectedTrack {
+    /// This track is selected.
+    Id(i64),
+    /// Explicitly off.
+    Off,
+    /// `auto`: mpv has not picked a track yet. Never a decision.
+    Unresolved,
+}
+
+/// Reads a track-id property answer.
+pub(crate) fn selected_track_from_property(v: &Value) -> SelectedTrack {
+    match v {
+        Value::Bool(false) => SelectedTrack::Off,
+        Value::String(s) if s == "no" => SelectedTrack::Off,
+        // A number mpv cannot fit in an i64 is not a track id we could use.
+        Value::Number(n) => n
+            .as_i64()
+            .map_or(SelectedTrack::Unresolved, SelectedTrack::Id),
+        _ => SelectedTrack::Unresolved,
+    }
+}
+
 /// Why mpv ended a file.
 ///
 /// Parsed once here rather than carried up as a `String` and string-matched in
@@ -204,8 +255,20 @@ impl std::fmt::Display for EndFileReason {
 /// Represents an event received from mpv
 #[derive(Debug, Clone)]
 pub(crate) enum MpvEvent {
-    EndFile { reason: EndFileReason },
+    EndFile {
+        reason: EndFileReason,
+    },
     FileLoaded,
+    /// mpv's selected subtitle track changed — `j` in the mpv window, its track
+    /// menu, or mpv auto-selecting one as a file loads.
+    ///
+    /// Carries no track id on purpose. Property changes arrive on their own
+    /// channel and are handled a whole file load later than they were emitted,
+    /// so the value in the message is routinely stale: mpv's auto-selection
+    /// reaches the runtime *after* we have applied our own choice over it. The
+    /// runtime re-reads `sid` and compares it with the selection it last
+    /// settled on, which turns every stale event into a no-op.
+    SubtitleTrackChanged,
     Exited,
 }
 
@@ -505,6 +568,25 @@ impl MpvSession {
         }
     }
 
+    /// The selected subtitle track, as mpv currently has it.
+    pub(crate) async fn subtitle_track(&mut self) -> color_eyre::Result<SelectedTrack> {
+        Ok(selected_track_from_property(
+            &self.get_property(SUBTITLE_TRACK_PROPERTY).await?,
+        ))
+    }
+
+    /// Asks mpv to report every subtitle track change, so a track picked in the
+    /// mpv window — not in a Jellyfin client — is noticed too.
+    pub(crate) async fn observe_subtitle_track(&mut self) -> color_eyre::Result<()> {
+        self.command(vec![
+            json!("observe_property"),
+            json!(SUBTITLE_TRACK_OBSERVER_ID),
+            json!(SUBTITLE_TRACK_PROPERTY),
+        ])
+        .await?;
+        Ok(())
+    }
+
     pub(crate) async fn max_subtitle_track_id(&mut self) -> color_eyre::Result<i64> {
         let list = self.get_property("track-list").await?;
         Ok(max_subtitle_track_id_from_track_list(&list))
@@ -609,6 +691,24 @@ async fn wait_for_socket(path: &Path, max: Duration) -> color_eyre::Result<UnixS
     }
 }
 
+/// The runtime-level event an inbound mpv message means, if any.
+fn mpv_event_for(msg: &IpcMessage) -> Option<MpvEvent> {
+    match msg {
+        IpcMessage::Event { name, reason } => match name.as_str() {
+            "end-file" => Some(MpvEvent::EndFile {
+                reason: EndFileReason::parse(reason.as_deref()),
+            }),
+            "file-loaded" => Some(MpvEvent::FileLoaded),
+            _ => None,
+        },
+        IpcMessage::PropertyChange { property } => match property.as_str() {
+            SUBTITLE_TRACK_PROPERTY => Some(MpvEvent::SubtitleTrackChanged),
+            _ => None,
+        },
+        IpcMessage::Reply { .. } => None,
+    }
+}
+
 async fn ipc_loop(
     stream: UnixStream,
     mut cmd_rx: mpsc::UnboundedReceiver<IpcCmd>,
@@ -649,15 +749,8 @@ async fn ipc_loop(
                                     let _ = p.tx.send(r);
                                 }
                             }
-                            Ok(IpcMessage::Event { name, reason }) => {
-                                let ev = match name.as_str() {
-                                    "end-file" => Some(MpvEvent::EndFile {
-                                        reason: EndFileReason::parse(reason.as_deref()),
-                                    }),
-                                    "file-loaded" => Some(MpvEvent::FileLoaded),
-                                    _ => None,
-                                };
-                                if let Some(ev) = ev
+                            Ok(other) => {
+                                if let Some(ev) = mpv_event_for(&other)
                                     && ev_tx.send(ev).is_err()
                                 {
                                     break;
@@ -814,6 +907,76 @@ mod tests {
         assert_eq!(data, json!(true));
         let _ = cmd_tx.send(IpcCmd::Shutdown);
         let _ = server.await;
+    }
+
+    #[test]
+    fn a_property_change_parses_to_the_property_name() {
+        assert_eq!(
+            parse_ipc_line(r#"{"event":"property-change","id":1,"name":"sid","data":3}"#).unwrap(),
+            IpcMessage::PropertyChange {
+                property: "sid".into()
+            }
+        );
+    }
+
+    #[test]
+    fn only_the_observed_subtitle_property_becomes_an_event() {
+        assert!(matches!(
+            mpv_event_for(&IpcMessage::PropertyChange {
+                property: SUBTITLE_TRACK_PROPERTY.into()
+            }),
+            Some(MpvEvent::SubtitleTrackChanged)
+        ));
+        assert!(
+            mpv_event_for(&IpcMessage::PropertyChange {
+                property: "aid".into()
+            })
+            .is_none()
+        );
+    }
+
+    /// The whole point of [`SelectedTrack`]: `no` and `auto` are different
+    /// answers, and reading `auto` as "off" would record a file that is still
+    /// loading as the user switching subtitles off.
+    #[test]
+    fn a_track_property_tells_off_apart_from_not_yet_decided() {
+        assert_eq!(
+            selected_track_from_property(&json!(3)),
+            SelectedTrack::Id(3)
+        );
+        assert_eq!(
+            selected_track_from_property(&json!(false)),
+            SelectedTrack::Off
+        );
+        assert_eq!(
+            selected_track_from_property(&json!("no")),
+            SelectedTrack::Off
+        );
+        assert_eq!(
+            selected_track_from_property(&json!("auto")),
+            SelectedTrack::Unresolved
+        );
+        assert_eq!(
+            selected_track_from_property(&Value::Null),
+            SelectedTrack::Unresolved
+        );
+    }
+
+    #[test]
+    fn observe_property_sends_an_id_and_the_property_name() {
+        let line = encode_command(
+            7,
+            &[
+                json!("observe_property"),
+                json!(SUBTITLE_TRACK_OBSERVER_ID),
+                json!(SUBTITLE_TRACK_PROPERTY),
+            ],
+        );
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        let cmd = v["command"].as_array().unwrap();
+        assert_eq!(cmd[0], "observe_property");
+        assert_eq!(cmd[1], SUBTITLE_TRACK_OBSERVER_ID);
+        assert_eq!(cmd[2], "sid");
     }
 
     #[test]

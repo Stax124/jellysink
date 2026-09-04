@@ -5,8 +5,9 @@ pub(crate) mod subtitle;
 pub(crate) mod title;
 
 pub(crate) use streams::{
-    MediaSource, PlaybackInfo, StreamMaps, has_foreign_subtitle_host, map_streams,
-    mpv_audio_track_id, mpv_embedded_subtitle_track_id,
+    MediaSource, PlaybackInfo, StreamMaps, has_foreign_subtitle_host,
+    jellyfin_embedded_subtitle_index, map_streams, mpv_audio_track_id,
+    mpv_embedded_subtitle_track_id,
 };
 pub(crate) use subtitle::{
     SubtitleMemory, SubtitlePreference, remember_subtitle_preference,

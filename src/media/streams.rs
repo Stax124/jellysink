@@ -284,6 +284,23 @@ pub(crate) fn mpv_embedded_subtitle_track_id(
         .copied()
 }
 
+/// Resolve an embedded mpv subtitle track id (`sid`) back to its Jellyfin
+/// stream index — [`mpv_embedded_subtitle_track_id`] backwards, for a track the
+/// user picked in the mpv window rather than in a Jellyfin client.
+///
+/// A linear scan of a map that holds one entry per subtitle stream in the file;
+/// keeping a second `HashMap` in sync for a handful of entries read once per
+/// track change is not worth it.
+pub(crate) fn jellyfin_embedded_subtitle_index(
+    maps: &StreamMaps,
+    subtitle_track_id: i64,
+) -> Option<i64> {
+    maps.subtitle_track_id_by_stream_index
+        .iter()
+        .find(|(_, track_id)| **track_id == subtitle_track_id)
+        .map(|(jellyfin_index, _)| *jellyfin_index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,6 +336,23 @@ mod tests {
             maps.subtitle_url.get(&3).map(String::as_str),
             Some("http://h:8096/Videos/i/Subtitles/3/Stream.srt")
         );
+    }
+
+    #[test]
+
+    fn an_embedded_subtitle_track_id_maps_back_to_its_jellyfin_index() {
+        let source = json!({
+            "MediaStreams": [
+                {"Type": "Subtitle", "Index": 2, "DeliveryMethod": "Embed", "IsExternal": false},
+                {"Type": "Subtitle", "Index": 5, "DeliveryMethod": "Embed", "IsExternal": false},
+            ]
+        });
+        let maps = map_streams("http://s", &media_source(source));
+        assert_eq!(jellyfin_embedded_subtitle_index(&maps, 1), Some(2));
+        assert_eq!(jellyfin_embedded_subtitle_index(&maps, 2), Some(5));
+        // A `sub-add`ed external track; the runtime resolves those from its own
+        // map, and this one must not guess at an embedded stream.
+        assert_eq!(jellyfin_embedded_subtitle_index(&maps, 3), None);
     }
 
     #[test]
