@@ -238,6 +238,15 @@ pub async fn cmd_update(
 }
 
 async fn install_and_handoff(paths: &Paths, from_tray: bool) -> color_eyre::Result<()> {
+    println!("Checking for updates...");
+    let Some(offer) = crate::update::check().await? else {
+        println!("{APP_NAME} {VERSION} is up to date.");
+        return Ok(());
+    };
+    println!(
+        "Downloading {APP_NAME} v{} (running {VERSION})...",
+        offer.version
+    );
     let status = crate::update::install(true).await?;
     let updated = status.is_updated();
     if updated {

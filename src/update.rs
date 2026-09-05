@@ -22,7 +22,10 @@ pub(crate) struct UpdateOffer {
     pub(crate) version: String,
 }
 
-fn updater(show_output: bool) -> color_eyre::Result<github::AsyncUpdate> {
+/// `progress` only controls the download progress bar; `self_update`'s own commentary is always
+/// off. Its "New release is *NOT* compatible" line is semver-correct for every 0.x minor bump
+/// (and for any future major one) but reads as a warning, so jellysink prints its own messages.
+fn updater(progress: bool) -> color_eyre::Result<github::AsyncUpdate> {
     let target = release_target().ok_or_else(|| {
         eyre!(
             "no GitHub release binary for arch {}",
@@ -37,8 +40,8 @@ fn updater(show_output: bool) -> color_eyre::Result<github::AsyncUpdate> {
         .target(target)
         .current_version(env!("CARGO_PKG_VERSION"))
         .no_confirm(true)
-        .show_output(show_output)
-        .show_download_progress(show_output)
+        .show_output(false)
+        .show_download_progress(progress)
         .check_install_path_writable(true);
     builder.build_async().wrap_err("configuring GitHub updater")
 }
@@ -56,8 +59,8 @@ pub(crate) async fn check() -> color_eyre::Result<Option<UpdateOffer>> {
     }
 }
 
-pub(crate) async fn install(show_output: bool) -> color_eyre::Result<self_update::VersionStatus> {
-    updater(show_output)?
+pub(crate) async fn install(progress: bool) -> color_eyre::Result<self_update::VersionStatus> {
+    updater(progress)?
         .update_async()
         .await
         .wrap_err("installing update from GitHub releases")
