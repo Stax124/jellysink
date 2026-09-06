@@ -1,6 +1,6 @@
 use super::Runtime;
 use crate::jellyfin::auth::Api;
-use crate::media::{self, PlayRequest, PreparedPlay, remembered_subtitle_preference};
+use crate::media::{self, PlayRequest, PreparedPlay, remembered_track};
 use crate::runtime::window::{PlaylistEof, playlist_eof};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -324,7 +324,7 @@ impl Runtime {
     }
 
     /// The one place a [`PreparedPlay`] is produced, so it is also the one
-    /// place the remembered subtitle is applied. Both `start_current` and
+    /// place the remembered tracks are applied. Both `start_current` and
     /// `adopt_playlist_pos` come through here.
     pub(super) async fn prepare_item(
         &mut self,
@@ -334,7 +334,7 @@ impl Runtime {
         if req.is_plain()
             && let Some(prep) = self.prepared.get(item_id).cloned()
         {
-            return Ok((self.with_remembered_subtitle(prep, req), None));
+            return Ok((self.with_remembered_tracks(prep, req), None));
         }
 
         let (prep, item) = fetch_prepared(&self.api, item_id, req).await?;
@@ -346,16 +346,22 @@ impl Runtime {
         // later fallback would mean "whatever the preference was the first time
         // this episode played" instead of "what the server said".
         self.prepared.insert(item_id.to_string(), prep.clone());
-        Ok((self.with_remembered_subtitle(prep, req), item))
+        Ok((self.with_remembered_tracks(prep, req), item))
     }
 
-    /// Re-points a freshly prepared item at the subtitle the user last chose.
-    fn with_remembered_subtitle(&self, mut prep: PreparedPlay, req: &PlayRequest) -> PreparedPlay {
+    /// Re-points a freshly prepared item at the tracks the user last chose.
+    fn with_remembered_tracks(&self, mut prep: PreparedPlay, req: &PlayRequest) -> PreparedPlay {
         prep.subtitle_stream_index = media::resolve_subtitle_index(
             req.subtitle_stream_index,
-            remembered_subtitle_preference(&self.last_subtitle).as_ref(),
+            remembered_track(&self.last_subtitle).as_ref(),
             &prep.maps.subtitles,
             prep.subtitle_stream_index,
+        );
+        prep.audio_stream_index = media::resolve_audio_index(
+            req.audio_stream_index,
+            remembered_track(&self.last_audio).as_ref(),
+            &prep.maps.audios,
+            prep.audio_stream_index,
         );
         prep
     }

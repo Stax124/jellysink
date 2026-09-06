@@ -6,7 +6,7 @@ use crate::cast::CastEvent;
 use crate::config::{Config, Credentials, Paths};
 use crate::jellyfin::auth::{Api, is_auth_expired};
 use crate::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
-use crate::media::{PlayRequest, PreparedPlay, SubtitleMemory, mpv_audio_track_id};
+use crate::media::{AudioMemory, PlayRequest, PreparedPlay, SubtitleMemory};
 use crate::mpv::EndFileReason;
 use crate::mpv::{MpvEvent, MpvSession, SelectedTrack};
 use crate::report::Report;
@@ -78,14 +78,22 @@ pub(crate) async fn run(
 ) -> color_eyre::Result<()> {
     let mut backoff = BACKOFF_MIN;
     // Owned out here, not by `Runtime`: `run_session` builds a fresh `Runtime`
-    // on every reconnect, and the subtitle the user picked should outlive a
-    // network blip. Memory only — nothing about it reaches disk.
+    // on every reconnect, and the tracks the user picked should outlive a
+    // network blip. Memory only — nothing about them reaches disk.
     let last_subtitle = SubtitleMemory::default();
+    let last_audio = AudioMemory::default();
     loop {
         let started = Instant::now();
         tokio::select! {
             _ = shutdown.fired() => return Ok(()),
-            result = run_session(&config, &creds, &paths, shutdown.clone(), &last_subtitle) => {
+            result = run_session(
+                &config,
+                &creds,
+                &paths,
+                shutdown.clone(),
+                &last_subtitle,
+                &last_audio,
+            ) => {
                 match result {
                     Ok(()) => return Ok(()),
                     Err(e) => {
@@ -180,6 +188,7 @@ async fn run_session(
     paths: &Paths,
     shutdown: Signal,
     last_subtitle: &SubtitleMemory,
+    last_audio: &AudioMemory,
 ) -> color_eyre::Result<()> {
     let api = Api::from_credentials(creds)?;
     api.post_capabilities().await?;
@@ -204,6 +213,7 @@ async fn run_session(
         mpv_tx,
         report_tx,
         last_subtitle.clone(),
+        last_audio.clone(),
     );
 
     let mut keepalive = tokio::time::interval(Duration::from_secs(30));
@@ -313,6 +323,12 @@ struct Runtime {
     /// `configure_streams`, or an `apply_subtitle`. A `sid` property change
     /// reporting anything else is the user picking a track in the mpv window.
     settled_subtitle_track: SelectedTrack,
+    /// The audio track the user last picked by hand, re-applied to the next
+    /// episode by identity rather than by index. Shared and never cleared, for
+    /// the same reasons as `last_subtitle`.
+    last_audio: AudioMemory,
+    /// `settled_subtitle_track` for `aid`.
+    settled_audio_track: SelectedTrack,
     report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
     transitioning: bool,
     /// Whether mpv currently carries the Authorization header. When it does,
@@ -336,6 +352,7 @@ impl Runtime {
         mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
         report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
         last_subtitle: SubtitleMemory,
+        last_audio: AudioMemory,
     ) -> Self {
         Self {
             api,
@@ -356,6 +373,8 @@ impl Runtime {
             external_subtitle_track_ids: HashMap::new(),
             last_subtitle,
             settled_subtitle_track: SelectedTrack::Unresolved,
+            last_audio,
+            settled_audio_track: SelectedTrack::Unresolved,
             report_tx,
             transitioning: false,
             mpv_auth_header_set: false,
@@ -497,16 +516,8 @@ impl Runtime {
 
     async fn set_audio(&mut self, stream_index: i64) -> color_eyre::Result<()> {
         tracing::info!(stream_index, "set audio stream");
-        let audio_track_id = self
-            .current
-            .as_ref()
-            .and_then(|p| mpv_audio_track_id(&p.maps, stream_index));
-        if let (Some(mpv), Some(audio_track_id)) = (self.mpv.as_mut(), audio_track_id) {
-            mpv.set_audio_track_id(audio_track_id).await?;
-        }
-        if let Some(prep) = self.current.as_mut() {
-            prep.audio_stream_index = Some(stream_index);
-        }
+        self.remember_audio(stream_index);
+        self.apply_audio(stream_index).await?;
         self.send_progress();
         Ok(())
     }
@@ -515,6 +526,7 @@ impl Runtime {
         match ev {
             MpvEvent::FileLoaded => self.on_file_loaded().await,
             MpvEvent::SubtitleTrackChanged => self.adopt_mpv_subtitle_track().await,
+            MpvEvent::AudioTrackChanged => self.adopt_mpv_audio_track().await,
             MpvEvent::EndFile { reason } => self.on_end_file(reason).await,
             MpvEvent::Exited => {
                 if !self.stopping {

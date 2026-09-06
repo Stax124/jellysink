@@ -1,5 +1,6 @@
 //! The `PlaybackInfo` wire models, and mapping Jellyfin stream indexes to the
 //! track ids mpv uses.
+use super::track::TrackId;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -14,26 +15,23 @@ pub(crate) struct StreamMaps {
     pub(crate) subtitle_url: HashMap<i64, String>,
     /// Every subtitle stream mpv can actually be pointed at, in listing order.
     pub(crate) subtitles: Vec<SubtitleId>,
+    /// Every audio stream mpv can actually be pointed at, in listing order.
+    pub(crate) audios: Vec<AudioId>,
 }
 
 /// One subtitle stream, identified by what it *is* rather than where it sits.
+/// See [`TrackId`] and [`crate::media::subtitle`], which matches on this.
 ///
-/// Stream indexes are per-file: the next episode can order its streams
-/// differently, or come from a different provider, so "index 3" is not the same
-/// track twice. Releases that split one language into `Signs and Songs` and
-/// `Dialogue` also flag the wrong one as the server default often enough that
-/// the index the server hands back is not trustworthy either. See
-/// [`crate::media::subtitle`], which matches on this.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct SubtitleId {
-    pub(crate) index: i64,
-    pub(crate) language: Option<String>,
-    pub(crate) title: Option<String>,
-    pub(crate) display_title: Option<String>,
-    pub(crate) codec: Option<String>,
-    pub(crate) is_forced: bool,
-    pub(crate) is_external: bool,
-}
+/// An alias, not a distinct type: it and [`AudioId`] name the same struct, and
+/// only the two named `Runtime` fields keep the two memories apart.
+pub(crate) type SubtitleId = TrackId;
+
+/// One audio stream, identified the same way. See [`SubtitleId`].
+///
+/// Only streams mpv has a track for become an `AudioId`; an external audio
+/// stream is never loaded, so it can never be selected and must never become a
+/// remembered choice.
+pub(crate) type AudioId = TrackId;
 
 /// A `MediaStream`'s `Type`.
 ///
@@ -157,8 +155,27 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
             );
             continue;
         }
+        tracing::debug!(
+            jellyfin_index,
+            mpv_audio_track_id = audio_track_id,
+            codec = stream.codec.as_deref(),
+            language = stream.language.as_deref(),
+            is_default = stream.is_default,
+            title = stream.title.as_deref(),
+            display_title = stream.display_title.as_deref(),
+            "audio stream"
+        );
         maps.audio_track_id_by_stream_index
             .insert(jellyfin_index, audio_track_id);
+        maps.audios.push(AudioId {
+            index: jellyfin_index,
+            language: stream.language.clone(),
+            title: stream.title.clone(),
+            display_title: stream.display_title.clone(),
+            codec: stream.codec.clone(),
+            is_forced: stream.is_forced,
+            is_external: stream.is_external,
+        });
         audio_track_id += 1;
     }
 
@@ -301,6 +318,20 @@ pub(crate) fn jellyfin_embedded_subtitle_index(
         .map(|(jellyfin_index, _)| *jellyfin_index)
 }
 
+/// Resolve an mpv audio track id (`aid`) back to its Jellyfin stream index —
+/// [`mpv_audio_track_id`] backwards, for a track the user picked in the mpv
+/// window rather than in a Jellyfin client.
+///
+/// A linear scan of a map that holds one entry per embedded audio stream in the
+/// file; keeping a second `HashMap` in sync for a handful of entries read once
+/// per track change is not worth it.
+pub(crate) fn jellyfin_embedded_audio_index(maps: &StreamMaps, audio_track_id: i64) -> Option<i64> {
+    maps.audio_track_id_by_stream_index
+        .iter()
+        .find(|(_, track_id)| **track_id == audio_track_id)
+        .map(|(jellyfin_index, _)| *jellyfin_index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +433,65 @@ mod tests {
         });
         let maps = map_streams("http://s", &media_source(source));
         assert_eq!(mpv_embedded_subtitle_track_id(&maps, 2), Some(2));
+    }
+
+    #[test]
+
+    fn an_audio_track_id_maps_back_to_its_jellyfin_index() {
+        let source = json!({
+            "MediaStreams": [
+                {"Type": "Audio", "Index": 1, "IsExternal": false},
+                {"Type": "Audio", "Index": 4, "IsExternal": false},
+            ]
+        });
+        let maps = map_streams("http://s", &media_source(source));
+        assert_eq!(jellyfin_embedded_audio_index(&maps, 1), Some(1));
+        assert_eq!(jellyfin_embedded_audio_index(&maps, 2), Some(4));
+        // mpv numbers audio tracks from 1, so there is no third one here.
+        assert_eq!(jellyfin_embedded_audio_index(&maps, 3), None);
+    }
+
+    #[test]
+
+    fn an_audio_identity_carries_the_raw_track_title_not_only_the_display_title() {
+        let source = media_source(json!({
+            "MediaStreams": [{
+                "Type": "Audio", "Index": 1, "IsExternal": false,
+                "Language": "jpn", "Title": "Original",
+                "DisplayTitle": "Japanese - FLAC - 5.1", "Codec": "flac"
+            }]
+        }));
+        let maps = map_streams("http://s", &source);
+        assert_eq!(
+            maps.audios,
+            vec![AudioId {
+                index: 1,
+                language: Some("jpn".into()),
+                title: Some("Original".into()),
+                display_title: Some("Japanese - FLAC - 5.1".into()),
+                codec: Some("flac".into()),
+                is_forced: false,
+                is_external: false,
+            }]
+        );
+    }
+
+    /// mpv never loads an external audio stream, so it can never be selected —
+    /// and a choice that can never be applied must not become a remembered one.
+    #[test]
+
+    fn an_external_audio_stream_is_not_offered_as_an_identity() {
+        let source = media_source(json!({
+            "MediaStreams": [
+                {"Type": "Audio", "Index": 1, "IsExternal": true, "Language": "eng"},
+                {"Type": "Audio", "Index": 2, "IsExternal": false, "Language": "jpn"},
+            ]
+        }));
+        let maps = map_streams("http://s", &source);
+        assert_eq!(
+            maps.audios.iter().map(|a| a.index).collect::<Vec<_>>(),
+            vec![2]
+        );
     }
 
     #[test]
