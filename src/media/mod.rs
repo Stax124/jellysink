@@ -1,19 +1,20 @@
 //! Turning a Jellyfin item into something mpv can play.
 
+pub(crate) mod audio;
 pub(crate) mod streams;
 pub(crate) mod subtitle;
 pub(crate) mod title;
+pub(crate) mod track;
 
+pub(crate) use audio::{AudioMemory, AudioPreference, resolve_audio_index};
 pub(crate) use streams::{
     MediaSource, PlaybackInfo, StreamMaps, has_foreign_subtitle_host,
-    jellyfin_embedded_subtitle_index, map_streams, mpv_audio_track_id,
-    mpv_embedded_subtitle_track_id,
+    jellyfin_embedded_audio_index, jellyfin_embedded_subtitle_index, map_streams,
+    mpv_audio_track_id, mpv_embedded_subtitle_track_id,
 };
-pub(crate) use subtitle::{
-    SubtitleMemory, SubtitlePreference, remember_subtitle_preference,
-    remembered_subtitle_preference, resolve_subtitle_index,
-};
+pub(crate) use subtitle::{SubtitleMemory, SubtitlePreference, resolve_subtitle_index};
 pub(crate) use title::{display_title, episode_titles, item_type, series_id};
+pub(crate) use track::{remember_track, remembered_track};
 
 use crate::jellyfin::url::{direct_stream_url, redact_api_key};
 use color_eyre::eyre::{WrapErr, eyre};

@@ -168,12 +168,19 @@ pub(crate) fn max_subtitle_track_id_from_track_list(list: &Value) -> i64 {
 /// The mpv property holding the selected subtitle track.
 pub(crate) const SUBTITLE_TRACK_PROPERTY: &str = "sid";
 
+/// The mpv property holding the selected audio track.
+pub(crate) const AUDIO_TRACK_PROPERTY: &str = "aid";
+
 /// The `observe_property` id for [`SUBTITLE_TRACK_PROPERTY`].
 ///
 /// mpv wants an id per observer and echoes it back on every change; we match on
 /// the property name instead, so the only thing that matters is that ids of
 /// different observers differ.
 const SUBTITLE_TRACK_OBSERVER_ID: i64 = 1;
+
+/// The `observe_property` id for [`AUDIO_TRACK_PROPERTY`]. See above: it only
+/// has to differ from [`SUBTITLE_TRACK_OBSERVER_ID`].
+const AUDIO_TRACK_OBSERVER_ID: i64 = 2;
 
 /// What mpv answers for a track-id property such as `sid`.
 ///
@@ -269,6 +276,12 @@ pub(crate) enum MpvEvent {
     /// runtime re-reads `sid` and compares it with the selection it last
     /// settled on, which turns every stale event into a no-op.
     SubtitleTrackChanged,
+    /// mpv's selected audio track changed — `#` in the mpv window, its track
+    /// menu, or mpv auto-selecting one as a file loads.
+    ///
+    /// Carries no track id, for the same reason
+    /// [`MpvEvent::SubtitleTrackChanged`] does not.
+    AudioTrackChanged,
     Exited,
 }
 
@@ -551,11 +564,35 @@ impl MpvSession {
         self.set_property("mute", json!(mute)).await
     }
 
+    /// `None` (or a negative id) is an explicit `aid=no`, which is where mpv's
+    /// `cycle audio` lands after the last track.
     pub(crate) async fn set_audio_track_id(
         &mut self,
-        audio_track_id: i64,
+        audio_track_id: Option<i64>,
     ) -> color_eyre::Result<()> {
-        self.set_property("aid", json!(audio_track_id)).await
+        match audio_track_id {
+            Some(id) if id >= 0 => self.set_property(AUDIO_TRACK_PROPERTY, json!(id)).await,
+            _ => self.set_property(AUDIO_TRACK_PROPERTY, json!("no")).await,
+        }
+    }
+
+    /// The selected audio track, as mpv currently has it.
+    pub(crate) async fn audio_track(&mut self) -> color_eyre::Result<SelectedTrack> {
+        Ok(selected_track_from_property(
+            &self.get_property(AUDIO_TRACK_PROPERTY).await?,
+        ))
+    }
+
+    /// Asks mpv to report every audio track change, so a track picked in the
+    /// mpv window — not in a Jellyfin client — is noticed too.
+    pub(crate) async fn observe_audio_track(&mut self) -> color_eyre::Result<()> {
+        self.command(vec![
+            json!("observe_property"),
+            json!(AUDIO_TRACK_OBSERVER_ID),
+            json!(AUDIO_TRACK_PROPERTY),
+        ])
+        .await?;
+        Ok(())
     }
 
     pub(crate) async fn set_subtitle_track_id(
@@ -703,6 +740,7 @@ fn mpv_event_for(msg: &IpcMessage) -> Option<MpvEvent> {
         },
         IpcMessage::PropertyChange { property } => match property.as_str() {
             SUBTITLE_TRACK_PROPERTY => Some(MpvEvent::SubtitleTrackChanged),
+            AUDIO_TRACK_PROPERTY => Some(MpvEvent::AudioTrackChanged),
             _ => None,
         },
         IpcMessage::Reply { .. } => None,
@@ -920,16 +958,24 @@ mod tests {
     }
 
     #[test]
-    fn only_the_observed_subtitle_property_becomes_an_event() {
+    fn only_the_observed_track_properties_become_events() {
         assert!(matches!(
             mpv_event_for(&IpcMessage::PropertyChange {
                 property: SUBTITLE_TRACK_PROPERTY.into()
             }),
             Some(MpvEvent::SubtitleTrackChanged)
         ));
+        assert!(matches!(
+            mpv_event_for(&IpcMessage::PropertyChange {
+                property: AUDIO_TRACK_PROPERTY.into()
+            }),
+            Some(MpvEvent::AudioTrackChanged)
+        ));
+        // Polled every second rather than observed; a change event for it would
+        // be a property we never asked about.
         assert!(
             mpv_event_for(&IpcMessage::PropertyChange {
-                property: "aid".into()
+                property: "volume".into()
             })
             .is_none()
         );
@@ -964,19 +1010,20 @@ mod tests {
 
     #[test]
     fn observe_property_sends_an_id_and_the_property_name() {
-        let line = encode_command(
-            7,
-            &[
-                json!("observe_property"),
-                json!(SUBTITLE_TRACK_OBSERVER_ID),
-                json!(SUBTITLE_TRACK_PROPERTY),
-            ],
-        );
-        let v: Value = serde_json::from_str(line.trim()).unwrap();
-        let cmd = v["command"].as_array().unwrap();
-        assert_eq!(cmd[0], "observe_property");
-        assert_eq!(cmd[1], SUBTITLE_TRACK_OBSERVER_ID);
-        assert_eq!(cmd[2], "sid");
+        for (id, property) in [
+            (SUBTITLE_TRACK_OBSERVER_ID, SUBTITLE_TRACK_PROPERTY),
+            (AUDIO_TRACK_OBSERVER_ID, AUDIO_TRACK_PROPERTY),
+        ] {
+            let line = encode_command(7, &[json!("observe_property"), json!(id), json!(property)]);
+            let v: Value = serde_json::from_str(line.trim()).unwrap();
+            let cmd = v["command"].as_array().unwrap();
+            assert_eq!(cmd[0], "observe_property");
+            assert_eq!(cmd[1], id);
+            assert_eq!(cmd[2], property);
+        }
+        // mpv echoes the id back on every change, so two observers must not
+        // share one.
+        assert_ne!(SUBTITLE_TRACK_OBSERVER_ID, AUDIO_TRACK_OBSERVER_ID);
     }
 
     #[test]
