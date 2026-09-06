@@ -62,5 +62,11 @@ Also in the tree (not a Rust module): `systemd/jellysink.service` — user unit 
 - Async: tokio; I/O is async except small config file reads.
 - Logging: `tracing` macros, never `println!` in daemon code (CLI output uses `println!`).
 - Config/credential files are written atomically (tmp file + rename); cred.json is mode 0600. The config directory itself is 0700 — `mpv.sock` lives there, it is created by mpv (so we cannot pick its mode), and `http-header-fields` on it hands out the access token.
-- Tests live in `#[cfg(test)] mod tests` at the bottom of the file they test; `tempfile::TempDir` for anything touching the filesystem.
+- Tests live in a sibling file next to the one they test: `streams.rs` → `streams_test.rs`, `mod.rs` → `mod_test.rs`. The file under test ends with the three-line declaration
+  ```rust
+  #[cfg(test)]
+  #[path = "streams_test.rs"]
+  mod tests;
+  ```
+  `#[path]` rather than a plain sibling `mod` in the parent `mod.rs`, because this keeps `tests` a *child* module and most test modules read their parent's private items (`config::parse_mpv_args`, `PlaylistWindow`'s private `queue` field, …). Test paths are unchanged by this (`media::streams::tests::…`), so `cargo test <filter>` works as before. `tempfile::TempDir` for anything touching the filesystem.
 - Keep the DirectPlay/no-transcode and user-mpv-config guarantees (see README "What it will not do") — they are the product's core promises.

@@ -799,16 +799,5 @@ pub(super) fn resume_seek_ticks(start_ticks: Option<i64>) -> Option<i64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::resume_seek_ticks;
-
-    #[test]
-    fn resume_seek_ticks_applies_only_positive_offsets() {
-        assert_eq!(resume_seek_ticks(None), None);
-        assert_eq!(resume_seek_ticks(Some(0)), None);
-        assert_eq!(resume_seek_ticks(Some(-1)), None);
-        assert_eq!(resume_seek_ticks(Some(1)), Some(1));
-        // Halfway through a 20-minute episode.
-        assert_eq!(resume_seek_ticks(Some(600_000_000)), Some(600_000_000));
-    }
-}
+#[path = "playback_test.rs"]
+mod tests;
