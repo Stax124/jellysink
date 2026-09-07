@@ -2,14 +2,11 @@
 //! matching in [`crate::media::track`].
 
 use super::streams::SubtitleId;
-use super::track::{TrackKind, TrackMemory, TrackPreference, resolve_track_index};
+use super::track::{TrackKind, TrackPreference, resolve_track_index};
 
 /// The subtitle track the user last chose by hand. [`TrackPreference::Off`] is
 /// an explicit `sid=no`, since `sub-add` selects whatever it just added.
 pub(crate) type SubtitlePreference = TrackPreference;
-
-/// The one slot holding the [`SubtitlePreference`]. See [`TrackMemory`].
-pub(crate) type SubtitleMemory = TrackMemory;
 
 /// The Jellyfin subtitle stream index to play; see [`resolve_track_index`].
 pub(crate) fn resolve_subtitle_index(

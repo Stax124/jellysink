@@ -1,4 +1,4 @@
-use super::Runtime;
+use super::state::Runtime;
 use crate::jellyfin::auth::Api;
 use crate::media::{self, PlayRequest, PreparedPlay};
 use crate::runtime::window::{PlaylistEof, playlist_eof};
@@ -333,13 +333,13 @@ impl Runtime {
     fn with_remembered_tracks(&self, mut prep: PreparedPlay, req: &PlayRequest) -> PreparedPlay {
         prep.subtitle_stream_index = media::resolve_subtitle_index(
             req.subtitle_stream_index,
-            self.last_subtitle.as_ref(),
+            self.subtitle.remembered.as_ref(),
             &prep.maps.subtitles,
             prep.subtitle_stream_index,
         );
         prep.audio_stream_index = media::resolve_audio_index(
             req.audio_stream_index,
-            self.last_audio.as_ref(),
+            self.audio.remembered.as_ref(),
             &prep.maps.audios,
             prep.audio_stream_index,
         );

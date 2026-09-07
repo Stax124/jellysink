@@ -1,6 +1,5 @@
 use serde_json::{Value, json};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PlayingState {
@@ -43,24 +42,6 @@ pub(crate) enum Report {
     Start(PlayingState),
     Progress(PlayingState),
     Stopped(PlayingState),
-}
-
-/// Ordered, non-blocking session reports: a Stopped must never overtake the
-/// Start before it. The handle is returned so a session can abort it.
-pub(crate) fn spawn_reporter<F, Fut>(
-    mut send: F,
-) -> (mpsc::UnboundedSender<Report>, tokio::task::JoinHandle<()>)
-where
-    F: FnMut(Report) -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = ()> + Send,
-{
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let task = tokio::spawn(async move {
-        while let Some(report) = rx.recv().await {
-            send(report).await;
-        }
-    });
-    (tx, task)
 }
 
 #[cfg(test)]

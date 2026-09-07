@@ -162,13 +162,15 @@ const AUDIO_TRACK_OBSERVER_ID: i64 = 2;
 
 /// What mpv answers for a track-id property such as `sid`. `false` (off) and
 /// `auto` (not picked yet) must stay apart: a loading file is not a decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum SelectedTrack {
     /// This track is selected.
     Id(i64),
     /// Explicitly off.
     Off,
-    /// `auto`: mpv has not picked a track yet. Never a decision.
+    /// `auto`: mpv has not picked a track yet. Never a decision, and so the
+    /// state every file starts and ends in.
+    #[default]
     Unresolved,
 }
 

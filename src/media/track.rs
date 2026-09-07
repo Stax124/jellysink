@@ -34,7 +34,8 @@ pub(crate) enum TrackKind {
 }
 
 impl TrackKind {
-    fn as_str(self) -> &'static str {
+    /// The `kind` field on every log line the two sides share.
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Audio => "audio",
             Self::Subtitle => "subtitle",
@@ -51,11 +52,6 @@ pub(crate) enum TrackPreference {
     /// This track was chosen. Match its equivalent, never its index.
     Stream(TrackId),
 }
-
-/// The one slot holding a [`TrackPreference`]; `None` is "nothing remembered".
-/// One slot per kind, and since both are this same type, only the two named
-/// `Runtime` fields keep them apart.
-pub(crate) type TrackMemory = Option<TrackPreference>;
 
 impl TrackPreference {
     /// What the user just picked, or `None` when it cannot be identified — an
