@@ -56,7 +56,7 @@ This project is not trying to be a full replacement for jellyfin-mpv-shim. It is
 
 ## Installation
 
-Linux (x86_64 or aarch64). Requires [`mpv`](https://mpv.io/).
+Linux (x86_64 or aarch64). Requires [`mpv`](https://mpv.io/) **0.38 or newer** — queueing episodes ahead of the one playing uses `loadlist insert-at`, which older players reject.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Stax124/jellysink/main/install.sh | sh

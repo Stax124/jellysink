@@ -197,6 +197,11 @@ file is written mode `0600` and removed immediately after the load.
 `insert-at` and the index must be **separate arguments**; `"insert-at0"` as a
 single token is `invalid parameter`.
 
+`insert-at` arrived in **mpv 0.38**; an older player answers `invalid
+parameter` for the flag itself, so 0.38 is jellysink's minimum. The two
+integration tests that exercise it are gated on that version
+(`require_mpv!(0, 38)`) rather than failing on a distro-pinned box.
+
 Inserting at or below the current position does **not** interrupt playback —
 mpv shifts `playlist-pos` by the number inserted and keeps playing the same
 file. This is what makes prepending viable at all.

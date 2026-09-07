@@ -51,7 +51,7 @@ jobs:
 
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -63,6 +63,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools mpv
+          mpv --version | head -1
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: test

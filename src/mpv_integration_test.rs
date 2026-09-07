@@ -15,6 +15,10 @@ use tokio::net::TcpListener;
 /// does not fail the suite.
 const SETTLE: Duration = Duration::from_secs(5);
 
+/// `require_mpv!()` fails when no player is installed. `require_mpv!(0, 38)`
+/// additionally *skips* the test on an older mpv, so a distro that pins an
+/// mpv predating a command we use stays green instead of failing on syntax
+/// the player never understood.
 macro_rules! require_mpv {
     () => {
         assert!(
@@ -22,6 +26,20 @@ macro_rules! require_mpv {
             "mpv is not on PATH; these tests drive a real player -- install mpv"
         );
     };
+    ($major:literal, $minor:literal) => {{
+        require_mpv!();
+        // An unparseable version runs the test: better a loud failure than a
+        // silent skip if mpv ever changes how it prints itself.
+        if let Some(version) = mpv_version()
+            && version < ($major, $minor)
+        {
+            eprintln!(
+                "skipping: mpv {}.{} is older than the {}.{} this test needs",
+                version.0, version.1, $major, $minor
+            );
+            return;
+        }
+    }};
 }
 
 /// Polls until `$cond` holds, or fails the test naming what never happened.
@@ -55,6 +73,18 @@ fn mpv_is_installed() -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok()
+}
+
+/// `(major, minor)` from mpv's first line, `mpv v0.41.0 Copyright ...`.
+fn mpv_version() -> Option<(u32, u32)> {
+    let output = std::process::Command::new("mpv")
+        .arg("--version")
+        .output()
+        .ok()?;
+    let banner = String::from_utf8_lossy(&output.stdout);
+    let version = banner.split_whitespace().nth(1)?.strip_prefix('v')?;
+    let mut parts = version.split('.');
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
 }
 
 fn fixture(name: &str) -> String {
@@ -393,7 +423,8 @@ async fn an_appended_playlist_keeps_its_extinf_titles_and_order() {
 
 #[tokio::test]
 async fn inserting_into_a_playlist_leaves_the_playing_entry_alone() {
-    require_mpv!();
+    // `loadlist ... insert-at` is mpv 0.38 and newer.
+    require_mpv!(0, 38);
     let mut mpv = TestMpv::start().await;
     let file = fixture("sample.mkv");
     mpv.start_current("First").await;
@@ -420,7 +451,8 @@ async fn inserting_into_a_playlist_leaves_the_playing_entry_alone() {
 
 #[tokio::test]
 async fn inserting_before_the_current_entry_shifts_the_position() {
-    require_mpv!();
+    // `loadlist ... insert-at` is mpv 0.38 and newer.
+    require_mpv!(0, 38);
     let mut mpv = TestMpv::start().await;
     let file = fixture("sample.mkv");
     mpv.start_current("A").await;
