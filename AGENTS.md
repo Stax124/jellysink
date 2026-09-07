@@ -20,7 +20,9 @@ Global CLI flag: `--config DIR` (default `~/.config/jellysink`).
 
 Every build is a musl build. `.cargo/config.toml` sets `build.target = "x86_64-unknown-linux-musl"`, and `build.rs` panics on any non-musl target, so a glibc build cannot happen by accident — releases, `install.sh`, and the self-updater all ship static musl binaries, and a dynamically linked glibc build is not what any user runs. Artifacts therefore live under `target/x86_64-unknown-linux-musl/`, not `target/debug/`. Requires `rustup target add x86_64-unknown-linux-musl` plus a musl C compiler for jemalloc (`musl` on Arch, `musl-tools` on Debian). On an aarch64 host, `export CARGO_BUILD_TARGET=aarch64-unknown-linux-musl`. Don't add `--target x86_64-unknown-linux-gnu` to work around a build error — fix the error.
 
-Note: `mpv::tests::ipc_roundtrip_against_fake_socket` creates a Unix domain socket and fails with `PermissionDenied` in sandboxes that block socket creation. It passes on a normal machine — don't "fix" it for sandbox environments.
+`cargo test` includes `src/mpv_integration_test.rs`, which spawns a real mpv (headless: `--no-config --vo=null --ao=null`) and drives it over its real IPC socket, so **mpv must be installed to run the suite** — without it those tests fail rather than skip, because a green run has to mean they ran. CI's test job installs it.
+
+Note: `mpv::tests::ipc_roundtrip_against_fake_socket` and everything in `mpv::integration_tests` create Unix domain sockets and fail with `PermissionDenied` in sandboxes that block socket creation. They pass on a normal machine — don't "fix" them for sandbox environments.
 
 Release tags are `X.Y.Z` with **no** `v` prefix and must match `Cargo.toml` `version`. GitHub Actions (`.github/workflows/`) runs fmt/clippy/test and musl release builds (x86_64 and aarch64) on push and PR. A matching tag re-runs fmt/clippy/test, rebuilds those binaries, and publishes the GitHub release — a tag on a commit that would fail CI does not ship.
 
@@ -62,6 +64,11 @@ Also in the tree (not a Rust module): `systemd/jellysink.service` — user unit 
 - Async: tokio; I/O is async except small config file reads.
 - Logging: `tracing` macros, never `println!` in daemon code (CLI output uses `println!`).
 - Config/credential files are written atomically (tmp file + rename); cred.json is mode 0600. The config directory itself is 0700 — `mpv.sock` lives there, it is created by mpv (so we cannot pick its mode), and `http-header-fields` on it hands out the access token.
+- Comments: **the default is none.** Write one only where a competent Rust reader would still be guessing — a non-obvious constraint, an invariant, the reason the obvious approach was rejected. Simple code gets no comment at all; "say why" is not a licence to justify something self-evident, and a doc comment is not owed to every item.
+- Never say a thing twice. If an assert message, error string, function name or test name already carries it, the comment gets deleted, not reworded. Never narrate what the next line does.
+- One or two lines is the ceiling, not a target. Anything that needs a paragraph belongs in `specs/` or the commit message.
+- Names spell things out: `audio_stream_id`, not `aid`; `subtitle_index`, not `sidx`. Abbreviate only where the short form *is* the domain term (mpv's own `sid`/`aid` properties, `ipc`, `url`), and keep the full name the moment the value crosses into our own code.
+- Every test needs a reason to exist. Don't assert that a constant still holds its value or that an enum still has its variants — the compiler already says that, and such a test only breaks when someone edits it. Test behaviour in a realistic scenario instead: feed a real payload through the parser, drive the state machine to the edge case, check what the code *does* with the constant.
 - Tests live in a sibling file next to the one they test: `streams.rs` → `streams_test.rs`, `mod.rs` → `mod_test.rs`. The file under test ends with the three-line declaration
   ```rust
   #[cfg(test)]
@@ -69,4 +76,5 @@ Also in the tree (not a Rust module): `systemd/jellysink.service` — user unit 
   mod tests;
   ```
   `#[path]` rather than a plain sibling `mod` in the parent `mod.rs`, because this keeps `tests` a *child* module and most test modules read their parent's private items (`config::parse_mpv_args`, `PlaylistWindow`'s private `queue` field, …). Test paths are unchanged by this (`media::streams::tests::…`), so `cargo test <filter>` works as before. `tempfile::TempDir` for anything touching the filesystem.
+- `src/mpv_integration_test.rs` (`mpv::integration_tests`) is the exception that answers for mpv rather than for us: it drives a real player, and is where mpv behaviour we depend on but cannot fake belongs — `#EXTINF` titles surviving a `loadlist`, `insert-at` not moving the playing entry, `sid`/`aid` observers firing, and which `end-file` reason each way of ending a file produces. It plays `tests/fixtures/sample.mkv` (3 s, two audio and two subtitle tracks, 31 KB, regenerate with `tests/fixtures/make-fixtures.sh`). Add a case here when a bug turns out to be mpv doing something other than what we assumed.
 - Keep the DirectPlay/no-transcode and user-mpv-config guarantees (see README "What it will not do") — they are the product's core promises.
