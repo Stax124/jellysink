@@ -4,7 +4,6 @@ use super::track::TrackId;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-/// Maps mpv audio and subtitle track ids to Jellyfin stream indexes and vice versa.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct StreamMaps {
     /// Jellyfin stream index → mpv audio track id (`aid`)
@@ -19,12 +18,11 @@ pub(crate) struct StreamMaps {
     pub(crate) audios: Vec<AudioId>,
 }
 
-/// One subtitle stream, identified by what it *is* rather than where it sits.
 /// An alias, not a distinct type — see [`TrackId`].
 pub(crate) type SubtitleId = TrackId;
 
-/// One audio stream, identified the same way as [`SubtitleId`]. Only streams
-/// mpv has a track for: an external audio stream is never loaded.
+/// Like [`SubtitleId`], but only streams mpv has a track for: an external
+/// audio stream is never loaded.
 pub(crate) type AudioId = TrackId;
 
 /// A `MediaStream`'s `Type`. Parsed rather than derived, so a value Jellyfin
@@ -53,7 +51,6 @@ pub(crate) enum DeliveryMethod {
     Embed,
     /// A separate URL to `sub-add`.
     External,
-    /// Anything else, or absent.
     Other,
 }
 
@@ -260,14 +257,12 @@ pub(crate) fn has_foreign_subtitle_host(server: &str, source: &MediaSource) -> b
     })
 }
 
-/// Resolve a Jellyfin audio stream index to an mpv audio track id, if mapped.
 pub(crate) fn mpv_audio_track_id(maps: &StreamMaps, jellyfin_index: i64) -> Option<i64> {
     maps.audio_track_id_by_stream_index
         .get(&jellyfin_index)
         .copied()
 }
 
-/// Resolve a Jellyfin subtitle stream index to an embedded mpv subtitle track id.
 pub(crate) fn mpv_embedded_subtitle_track_id(
     maps: &StreamMaps,
     jellyfin_index: i64,

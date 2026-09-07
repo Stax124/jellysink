@@ -51,7 +51,6 @@ pub(crate) async fn run(
     let api = Api::from_credentials(&creds)?;
     let (mpv_tx, mut mpv_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, MpvEvent)>();
     let (report_tx, report_task) = spawn_report_sink(api.clone());
-    // Aborted when `run` returns, however it returns.
     let _report_task = AbortOnDrop(report_task);
     let mut rt = Runtime::new(api, config, paths, mpv_tx, report_tx);
     loop {
@@ -82,9 +81,8 @@ pub(crate) async fn run(
     Ok(())
 }
 
-/// Connects the remote-control WebSocket and pumps every parsed message into
-/// one channel. The reader ends with the socket, which the main loop sees as
-/// the channel closing.
+/// The reader ends with the socket, which the main loop sees as the channel
+/// closing.
 fn spawn_ws_reader<S>(
     mut ws_read: S,
 ) -> (
@@ -159,7 +157,6 @@ async fn run_session(
     let (mut ws_write, ws_read) = ws.split();
 
     let (mut ws_rx, ws_task) = spawn_ws_reader(ws_read);
-    // Aborted when this returns, however it returns.
     let _ws_task = AbortOnDrop(ws_task);
 
     rt.reannounce().await;

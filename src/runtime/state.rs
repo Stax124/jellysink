@@ -10,9 +10,8 @@ use crate::mpv::{EndFileReason, MpvEvent, MpvSession, SelectedTrack};
 use crate::report::Report;
 use std::collections::HashMap;
 
-/// Everything the runtime tracks about one kind of stream. Audio and subtitles
-/// are handled by the same [`TrackKind`]-parameterised code, so they are two
-/// values of one type rather than four separate fields.
+/// Audio and subtitles go through the same [`TrackKind`]-parameterised code,
+/// so they are two values of one type rather than four separate fields.
 #[derive(Debug, Default)]
 pub(super) struct TrackState {
     /// mpv's selection as of the last time it was *ours* — the end of
@@ -30,9 +29,7 @@ pub(super) struct TrackState {
 /// Where PlayNext / PlayLast put their items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Enqueue {
-    /// Immediately after the current item.
     Next,
-    /// At the end of the queue.
     Last,
 }
 
@@ -40,7 +37,6 @@ pub(super) struct Runtime {
     pub(super) api: Api,
     pub(super) config: Config,
     pub(super) paths: Paths,
-    /// The queue plus the window of it mpv currently holds.
     pub(super) window: PlaylistWindow,
     pub(super) mpv: Option<MpvSession>,
     pub(super) mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
@@ -238,7 +234,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// A track the remote picked: remember it, apply it, and report it back.
     async fn set_track(&mut self, kind: TrackKind, stream_index: i64) -> color_eyre::Result<()> {
         tracing::info!(kind = kind.as_str(), stream_index, "set stream");
         self.remember_track(kind, stream_index);
@@ -261,8 +256,8 @@ impl Runtime {
         }
     }
 
-    /// A new file is playing: adopt whatever mpv actually loaded (the user may
-    /// have jumped in the selector), apply track choices, then resume-seek.
+    /// Adopts whatever mpv actually loaded, since the user may have jumped in
+    /// the playlist selector rather than us asking for this file.
     async fn on_file_loaded(&mut self) {
         self.transitioning = false;
         if let Err(e) = self.adopt_playlist_pos().await {

@@ -47,7 +47,6 @@ impl fmt::Debug for PreparedPlay {
 pub(crate) struct PlayRequest {
     /// Resume offset, in Jellyfin ticks.
     pub(crate) start_ticks: Option<i64>,
-    /// Jellyfin audio stream index the remote chose.
     pub(crate) audio_stream_index: Option<i64>,
     /// Jellyfin subtitle stream index. `Some(-1)` is an explicit "off";
     /// `None` means "whatever the server defaults to".

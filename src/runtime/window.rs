@@ -66,8 +66,6 @@ impl PlaylistWindow {
         self.queue.index.saturating_sub(self.origin)
     }
 
-    /// The queue index mpv playlist position `playlist_pos` refers to, if it is
-    /// inside the queue.
     pub(super) fn queue_index_at(&self, playlist_pos: usize) -> Option<usize> {
         queue_index_at(self.origin, playlist_pos, self.queue.items.len())
     }
@@ -80,13 +78,12 @@ impl PlaylistWindow {
             .unwrap_or(&[])
     }
 
-    /// Records that `n` entries were appended to the end of mpv's playlist.
     pub(super) fn note_appended(&mut self, n: usize) {
         self.tail += n;
     }
 
     /// Splices previous episodes into the queue ahead of the current item and
-    /// holds them for [`Self::take_pending_prepend`]. Returns how many.
+    /// holds them for [`Self::take_pending_prepend`].
     pub(super) fn prepend(&mut self, previous: Vec<String>) -> usize {
         let n = self.queue.insert_before_current(previous.clone());
         self.rebuild_now_playing();
@@ -96,7 +93,6 @@ impl PlaylistWindow {
         n
     }
 
-    // --- Queue delegation ---------------------------------------------------
     // `Queue`'s fields stay private: `index` and `origin`/`head`/`tail` are one
     // invariant.
 
@@ -147,7 +143,6 @@ impl PlaylistWindow {
         self.rebuild_now_playing();
     }
 
-    /// The `NowPlayingQueue` Jellyfin's now-playing view renders.
     pub(super) fn now_playing_queue(&self) -> Arc<Vec<Value>> {
         Arc::clone(&self.now_playing)
     }
@@ -171,12 +166,10 @@ impl PlaylistWindow {
         self.queue.index = index;
     }
 
-    /// Takes the episodes waiting to be spliced into mpv, leaving none.
     pub(super) fn take_pending_prepend(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_prepend)
     }
 
-    /// The window invariant spelled out, for the tests to assert against.
     #[cfg(test)]
     fn mpv_playlist(&self) -> &[String] {
         let end = (self.origin + self.head + 1 + self.tail).min(self.queue.items.len());
@@ -212,9 +205,8 @@ impl Queue {
         self.items.extend(ids);
     }
 
-    /// Splices `ids` in immediately before the current item, keeping `index`
-    /// on the same item. Returns how many were inserted. At `index`, not 0, so
-    /// they land inside mpv's window rather than in a hole before `origin`.
+    /// Keeps `index` on the same item. Splices at `index`, not 0, so the
+    /// entries land inside mpv's window rather than in a hole before `origin`.
     pub(super) fn insert_before_current(&mut self, ids: Vec<String>) -> usize {
         let n = ids.len();
         let at = self.index;

@@ -34,7 +34,6 @@ pub(crate) enum TrackKind {
 }
 
 impl TrackKind {
-    /// The `kind` field on every log line the two sides share.
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Audio => "audio",
@@ -49,7 +48,6 @@ pub(crate) enum TrackPreference {
     /// Switched off. Resolves to an explicit `-1`, not "unspecified": for
     /// subtitles, `sub-add` selects what it adds, so unset shows the last one.
     Off,
-    /// This track was chosen. Match its equivalent, never its index.
     Stream(TrackId),
 }
 
@@ -100,7 +98,6 @@ fn same(a: Option<&str>, b: Option<&str>) -> bool {
     matches!((a, b), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b))
 }
 
-/// Whether a stream has anything that could identify it in another item.
 fn is_identifiable(id: &TrackId) -> bool {
     named(&id.language).is_some()
         || named(&id.title).is_some()
@@ -152,7 +149,6 @@ fn score(wanted: &TrackId, candidate: &TrackId) -> Option<u32> {
     Some(total)
 }
 
-/// The candidate that best matches `wanted`, or `None` when nothing qualifies.
 pub(crate) fn best_match<'a>(wanted: &TrackId, candidates: &'a [TrackId]) -> Option<&'a TrackId> {
     candidates
         .iter()

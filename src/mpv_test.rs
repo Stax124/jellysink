@@ -342,7 +342,6 @@ fn an_unknown_or_missing_reason_becomes_other() {
     );
 }
 
-/// Log lines should keep reading like mpv's own.
 #[test]
 fn display_round_trips_mpv_spelling() {
     for name in ["eof", "redirect", "stop", "quit", "error"] {

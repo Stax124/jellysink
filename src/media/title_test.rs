@@ -13,21 +13,18 @@ fn episode_title_includes_series_and_numbers() {
 }
 
 #[test]
-
 fn movie_title_includes_year() {
     let item = json!({"Type": "Movie", "Name": "Heat", "ProductionYear": 1995});
     assert_eq!(display_title(&item), "Heat (1995)");
 }
 
 #[test]
-
 fn plain_name_when_metadata_is_thin() {
     let item = json!({"Name": "Home Video"});
     assert_eq!(display_title(&item), "Home Video");
 }
 
 #[test]
-
 fn episode_titles_use_display_title() {
     let v = json!({
         "Items": [
@@ -55,7 +52,6 @@ fn episode_titles_use_display_title() {
 }
 
 #[test]
-
 fn episode_titles_empty_on_malformed_payload() {
     assert!(episode_titles(&json!({})).is_empty());
     assert!(episode_titles(&json!({"Items": "nope"})).is_empty());

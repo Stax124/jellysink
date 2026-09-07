@@ -230,7 +230,6 @@ async fn volume_and_mute_round_trip_and_clamp_at_the_ends() {
     assert_eq!(mpv.session.add_volume(15).await.unwrap(), 55);
     assert_eq!(mpv.session.volume().await.unwrap(), 55);
 
-    // Past either end the clamp holds, and mpv agrees with what we returned.
     assert_eq!(mpv.session.add_volume(-500).await.unwrap(), 0);
     assert_eq!(mpv.session.volume().await.unwrap(), 0);
     assert_eq!(mpv.session.add_volume(500).await.unwrap(), 100);
@@ -415,7 +414,6 @@ async fn inserting_into_a_playlist_leaves_the_playing_entry_alone() {
         playlist_titles(&mut mpv.session).await,
         ["First", "Second", "Third"].map(|title| Some(title.to_owned()))
     );
-    // Splicing behind the current entry must not move playback off it.
     assert_eq!(mpv.session.playlist_pos().await.unwrap(), 0);
     mpv.expect_no_event(Duration::from_millis(300)).await;
 }

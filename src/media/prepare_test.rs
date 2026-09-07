@@ -19,7 +19,6 @@ fn source_direct(id: &str, bitrate: u64) -> Value {
 }
 
 #[test]
-
 fn transcode_only_is_an_error() {
     let info = json!({
         "PlaySessionId": "ps",
@@ -44,7 +43,6 @@ fn transcode_only_is_an_error() {
 }
 
 #[test]
-
 fn prefers_direct_play_then_bitrate() {
     let sources = vec![
         json!({"Id": "low", "SupportsDirectPlay": true, "Bitrate": 1000}),
@@ -57,7 +55,6 @@ fn prefers_direct_play_then_bitrate() {
 }
 
 #[test]
-
 fn preferred_source_wins() {
     let sources = vec![source_direct("a", 1), source_direct("b", 9)];
     let sources = media_sources(sources);
@@ -66,7 +63,6 @@ fn preferred_source_wins() {
 }
 
 #[test]
-
 fn prepare_play_happy_path() {
     let info = json!({
         "PlaySessionId": "sess",
@@ -99,7 +95,6 @@ fn prepare_play_happy_path() {
 }
 
 #[test]
-
 fn prepare_play_keeps_server_default_of_off() {
     // Jellyfin SubtitleMode=Default with no default/forced/external
     // streams returns DefaultSubtitleStreamIndex=-1. That is Off, not
@@ -137,7 +132,6 @@ fn prepare_play_keeps_server_default_of_off() {
 }
 
 #[test]
-
 fn prepare_play_explicit_subtitle_stream_index_wins_over_default_off() {
     let info = json!({
         "PlaySessionId": "sess",
@@ -164,7 +158,6 @@ fn prepare_play_explicit_subtitle_stream_index_wins_over_default_off() {
 }
 
 #[test]
-
 fn prepare_play_records_the_subtitle_identities_for_later_matching() {
     let info = json!({
         "PlaySessionId": "sess",
@@ -206,7 +199,6 @@ fn prepare_play_records_the_subtitle_identities_for_later_matching() {
 }
 
 #[test]
-
 fn prepared_play_debug_never_prints_the_token() {
     let prep = PreparedPlay {
         url: "http://s/Videos/i/stream?static=true&ApiKey=sekrit".into(),
@@ -226,7 +218,6 @@ fn prepared_play_debug_never_prints_the_token() {
 }
 
 #[test]
-
 fn a_default_play_request_is_plain_so_a_cached_prepare_can_be_reused() {
     assert!(PlayRequest::default().is_plain());
     assert!(
@@ -240,7 +231,6 @@ fn a_default_play_request_is_plain_so_a_cached_prepare_can_be_reused() {
 }
 
 #[test]
-
 fn any_explicit_choice_makes_a_play_request_non_plain() {
     for req in [
         PlayRequest {

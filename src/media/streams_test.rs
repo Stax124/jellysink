@@ -8,7 +8,6 @@ fn media_source(v: Value) -> MediaSource {
 }
 
 #[test]
-
 fn maps_embedded_and_external_subs() {
     let source = json!({
         "MediaStreams": [
@@ -34,7 +33,6 @@ fn maps_embedded_and_external_subs() {
 }
 
 #[test]
-
 fn an_embedded_subtitle_track_id_maps_back_to_its_jellyfin_index() {
     let source = json!({
         "MediaStreams": [
@@ -51,7 +49,6 @@ fn an_embedded_subtitle_track_id_maps_back_to_its_jellyfin_index() {
 }
 
 #[test]
-
 fn an_external_audio_stream_does_not_steal_the_next_embedded_track_id() {
     let source = json!({
         "MediaStreams": [
@@ -67,7 +64,6 @@ fn an_external_audio_stream_does_not_steal_the_next_embedded_track_id() {
 }
 
 #[test]
-
 fn embedded_audio_tracks_are_numbered_from_one_in_order() {
     let source = json!({
         "MediaStreams": [
@@ -81,10 +77,9 @@ fn embedded_audio_tracks_are_numbered_from_one_in_order() {
     assert_eq!(mpv_audio_track_id(&maps, 3), Some(2));
 }
 
-/// An in-file subtitle that Jellyfin delivers as a sidecar still occupies an    /// mpv track, so the subtitle counter must keep counting it.
-
+/// An in-file subtitle that Jellyfin delivers as a sidecar still occupies an
+/// mpv track, so the subtitle counter must keep counting it.
 #[test]
-
 fn an_extracted_subtitle_still_advances_the_mpv_subtitle_numbering() {
     let source = json!({
         "MediaStreams": [
@@ -100,7 +95,6 @@ fn an_extracted_subtitle_still_advances_the_mpv_subtitle_numbering() {
 }
 
 #[test]
-
 fn an_audio_track_id_maps_back_to_its_jellyfin_index() {
     let source = json!({
         "MediaStreams": [
@@ -116,7 +110,6 @@ fn an_audio_track_id_maps_back_to_its_jellyfin_index() {
 }
 
 #[test]
-
 fn an_audio_identity_carries_the_raw_track_title_not_only_the_display_title() {
     let source = media_source(json!({
         "MediaStreams": [{
@@ -143,7 +136,6 @@ fn an_audio_identity_carries_the_raw_track_title_not_only_the_display_title() {
 /// mpv never loads an external audio stream, so it can never be selected —
 /// and a choice that can never be applied must not become a remembered one.
 #[test]
-
 fn an_external_audio_stream_is_not_offered_as_an_identity() {
     let source = media_source(json!({
         "MediaStreams": [
@@ -159,7 +151,6 @@ fn an_external_audio_stream_is_not_offered_as_an_identity() {
 }
 
 #[test]
-
 fn a_subtitle_identity_carries_the_raw_track_title_not_only_the_display_title() {
     let source = media_source(json!({
         "MediaStreams": [{
@@ -188,7 +179,6 @@ fn a_subtitle_identity_carries_the_raw_track_title_not_only_the_display_title() 
 /// the user would pick it once and every later episode would silently fall
 /// back to the server default.
 #[test]
-
 fn an_unselectable_subtitle_is_not_offered_as_an_identity() {
     let source = media_source(json!({
         "MediaStreams": [
@@ -206,7 +196,6 @@ fn an_unselectable_subtitle_is_not_offered_as_an_identity() {
 }
 
 #[test]
-
 fn an_extracted_subtitle_is_still_a_selectable_identity() {
     let source = media_source(json!({
         "MediaStreams": [{
@@ -223,7 +212,6 @@ fn an_extracted_subtitle_is_still_a_selectable_identity() {
 }
 
 #[test]
-
 fn an_unknown_delivery_method_does_not_fail_the_whole_response() {
     // Jellyfin adds values between versions; a strict enum would refuse the
     // entire PlaybackInfo over one unrecognised subtitle.
@@ -239,7 +227,6 @@ fn an_unknown_delivery_method_does_not_fail_the_whole_response() {
 }
 
 #[test]
-
 fn an_unknown_stream_type_is_neither_audio_nor_subtitle() {
     let source = media_source(json!({
         "MediaStreams": [{"Type": "Video", "Index": 0}]
@@ -251,7 +238,6 @@ fn an_unknown_stream_type_is_neither_audio_nor_subtitle() {
 }
 
 #[test]
-
 fn missing_fields_default_rather_than_failing() {
     let source = media_source(json!({}));
     assert!(!source.supports_direct_play);
@@ -260,7 +246,6 @@ fn missing_fields_default_rather_than_failing() {
 }
 
 #[test]
-
 fn a_subtitle_on_the_jellyfin_host_is_not_foreign() {
     let source = media_source(json!({
         "MediaStreams": [
@@ -270,10 +255,9 @@ fn a_subtitle_on_the_jellyfin_host_is_not_foreign() {
     assert!(!has_foreign_subtitle_host("http://h:8096", &source));
 }
 
-/// mpv sends `http-header-fields` to every request it makes, so a subtitle    /// on a third-party host would receive the Authorization header.
-
+/// mpv sends `http-header-fields` to every request it makes, so a subtitle on
+/// a third-party host would receive the Authorization header.
 #[test]
-
 fn a_subtitle_on_another_host_is_foreign() {
     for path in [
         "http://elsewhere/1.srt",
@@ -291,7 +275,6 @@ fn a_subtitle_on_another_host_is_foreign() {
 }
 
 #[test]
-
 fn a_local_subtitle_path_is_not_a_foreign_host() {
     let source = media_source(json!({
         "MediaStreams": [{"Type": "Subtitle", "Index": 1, "Path": "/media/show/1.srt"}],

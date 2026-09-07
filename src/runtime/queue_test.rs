@@ -2,7 +2,6 @@ use super::*;
 use serde_json::json;
 
 #[test]
-
 fn a_stub_row_with_a_known_title_never_carries_the_token_in_the_title() {
     let (title, url) = playlist_stub_entry("http://s", "e1", Some("Show - s1e01"), Some("tok"));
     assert_eq!(title, "Show - s1e01");
@@ -24,7 +23,6 @@ fn a_stub_row_without_a_title_falls_back_to_a_tokenless_url() {
 }
 
 #[test]
-
 fn no_token_goes_on_the_url_when_mpv_carries_the_auth_header() {
     let (_, url) = playlist_stub_entry("http://s", "e1", Some("t"), None);
     assert!(!url.contains("ApiKey"), "{url}");
@@ -37,7 +35,6 @@ fn episodes_json(ids: &[&str]) -> Value {
 }
 
 #[test]
-
 fn split_episodes_returns_previous_and_remaining() {
     let v = episodes_json(&["e1", "e2", "e3", "e4"]);
     let (previous, remaining) = split_episode_ids(&v, "e3");
@@ -46,7 +43,6 @@ fn split_episodes_returns_previous_and_remaining() {
 }
 
 #[test]
-
 fn split_episodes_at_the_first_has_no_previous() {
     let v = episodes_json(&["e1", "e2"]);
     let (previous, remaining) = split_episode_ids(&v, "e1");
@@ -55,7 +51,6 @@ fn split_episodes_at_the_first_has_no_previous() {
 }
 
 #[test]
-
 fn split_episodes_at_the_last_has_no_remaining() {
     let v = episodes_json(&["e1", "e2"]);
     let (previous, remaining) = split_episode_ids(&v, "e2");
@@ -64,14 +59,12 @@ fn split_episodes_at_the_last_has_no_remaining() {
 }
 
 #[test]
-
 fn split_episodes_empty_when_current_is_missing() {
     let v = episodes_json(&["e1", "e2"]);
     assert_eq!(split_episode_ids(&v, "special"), (vec![], vec![]));
 }
 
 #[test]
-
 fn split_episodes_empty_on_malformed_payload() {
     assert_eq!(split_episode_ids(&json!({}), "e1"), (vec![], vec![]));
     assert_eq!(
@@ -81,7 +74,6 @@ fn split_episodes_empty_on_malformed_payload() {
 }
 
 #[test]
-
 fn prepend_runs_when_the_queue_already_has_a_next_item() {
     // The bug: Jellyfin sends 6..20, so has_next is true and the forward
     // gate bails. Prepending must not share that gate.
@@ -96,7 +88,6 @@ fn prepend_runs_when_the_queue_already_has_a_next_item() {
 }
 
 #[test]
-
 fn prepend_ignores_autoplay() {
     // autoplay governs continuing forward, not what the selector reaches.
     assert_eq!(
@@ -106,7 +97,6 @@ fn prepend_ignores_autoplay() {
 }
 
 #[test]
-
 fn prepend_respects_its_own_toggle() {
     assert_eq!(
         prepend_skip_reason(Some("Episode"), Some("series-1"), false),
@@ -115,7 +105,6 @@ fn prepend_respects_its_own_toggle() {
 }
 
 #[test]
-
 fn prepend_skips_non_episodes_and_seriesless_items() {
     assert_eq!(
         prepend_skip_reason(Some("Movie"), Some("series-1"), true),
@@ -128,7 +117,6 @@ fn prepend_skips_non_episodes_and_seriesless_items() {
 }
 
 #[test]
-
 fn ids_missing_from_drops_what_the_queue_already_has() {
     let previous = ["e1".to_string(), "e2".to_string(), "e3".to_string()];
     let queue = ["e1".to_string(), "e2".to_string(), "e4".to_string()];
@@ -136,7 +124,6 @@ fn ids_missing_from_drops_what_the_queue_already_has() {
 }
 
 #[test]
-
 fn ids_missing_from_is_empty_when_all_present() {
     let previous = ["e1".to_string(), "e2".to_string()];
     let queue = ["e1".to_string(), "e2".to_string(), "e3".to_string()];
@@ -144,7 +131,6 @@ fn ids_missing_from_is_empty_when_all_present() {
 }
 
 #[test]
-
 fn ids_missing_from_keeps_order() {
     let previous = ["e3".to_string(), "e1".to_string(), "e2".to_string()];
     assert_eq!(
@@ -154,7 +140,6 @@ fn ids_missing_from_keeps_order() {
 }
 
 #[test]
-
 fn expand_series_only_for_a_lonely_episode() {
     assert_eq!(
         series_expand_skip_reason(Some("Episode"), Some("series-1"), false, true),

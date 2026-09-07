@@ -1,8 +1,6 @@
 //! Building — and redacting — Jellyfin URLs.
 use super::encode_query_value;
 
-/// Replaces the value of an `ApiKey=` query parameter with a placeholder.
-///
 /// Stream URLs carry the access token whenever the Authorization header is not
 /// in play, and those URLs end up in `Debug` output and color-eyre captures.
 pub(crate) fn redact_api_key(url: &str) -> String {

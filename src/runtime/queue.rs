@@ -5,10 +5,8 @@ use crate::runtime::window::{PlaylistEof, playlist_eof};
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// Which end of mpv's playlist a batch of stub rows goes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fill {
-    /// After everything mpv already holds.
     Append,
     /// At position 0. Does not interrupt playback; mpv shifts `playlist-pos`.
     Prepend,
@@ -93,14 +91,12 @@ impl Runtime {
                     "eof; mpv will play next (waiting for file-loaded)"
                 );
             }
-            // The queue has the next item but mpv does not.
             PlaylistEof::NextNotInMpv => self.advance_in_queue().await,
             // Neither has anything left — which is exactly when the series may.
             PlaylistEof::Stop => self.expand_then_advance_or_stop().await,
         }
     }
 
-    /// Hands the advance to mpv, which already holds the next entry.
     async fn advance_in_mpv(&mut self) {
         self.transitioning = true;
         let advanced = match self.mpv.as_mut() {
@@ -121,7 +117,6 @@ impl Runtime {
         }
     }
 
-    /// Starts the next queued item, falling back to a series expand.
     async fn advance_in_queue(&mut self) {
         if self.window.advance().is_some() {
             tracing::info!(item = self.window.current(), "advancing to queued next");
@@ -131,8 +126,6 @@ impl Runtime {
         self.expand_then_advance_or_stop().await;
     }
 
-    /// Last resort: ask the server for more of the series, and stop if there is
-    /// genuinely nothing after this.
     async fn expand_then_advance_or_stop(&mut self) {
         tracing::info!("queue exhausted; trying series expand");
         self.try_expand_from_playing_item().await;
@@ -154,9 +147,8 @@ impl Runtime {
         }
     }
 
-    /// mpv's `(playlist-pos, playlist-count)`, or `None` when no mpv is
-    /// running. `playlist_eof` decides autoplay from these, so failure is an
-    /// error rather than a fabricated `(0, 0)`.
+    /// `None` when no mpv is running. `playlist_eof` decides autoplay from
+    /// these, so a failed read is an error rather than a fabricated `(0, 0)`.
     pub(super) async fn playlist_state(&mut self) -> color_eyre::Result<Option<(usize, usize)>> {
         let Some(mpv) = self.mpv.as_mut() else {
             return Ok(None);
@@ -329,7 +321,6 @@ impl Runtime {
         Ok((self.with_remembered_tracks(prep, req), item))
     }
 
-    /// Re-points a freshly prepared item at the tracks the user last chose.
     fn with_remembered_tracks(&self, mut prep: PreparedPlay, req: &PlayRequest) -> PreparedPlay {
         prep.subtitle_stream_index = media::resolve_subtitle_index(
             req.subtitle_stream_index,
@@ -399,7 +390,6 @@ impl Runtime {
         tracing::debug!(n, ?fill, tail = self.window.tail(), "filled mpv playlist");
     }
 
-    /// `(title, stub url)` for each id.
     fn playlist_stub_entries(&self, ids: &[String]) -> Vec<(String, String)> {
         let token = (!self.mpv_auth_header_set).then_some(self.api.token.as_str());
         ids.iter()
@@ -430,9 +420,6 @@ fn playlist_stub_entry(
         .unwrap_or_else(|| crate::jellyfin::url::direct_stream_url(server, id, id, None, None));
     (title, url)
 }
-
-// --- Queue policy -----------------------------------------------------------
-// What goes *in* the queue.
 
 /// `(previous, remaining)` around `current_id`. Empty on both sides when the
 /// listing does not contain it — fail closed on specials / library churn.
@@ -473,8 +460,7 @@ pub(super) fn prepend_skip_reason(
     None
 }
 
-/// The subset of `ids` not already in `queue`, which is what keeps a re-run of
-/// the prepend from queueing the same episodes twice.
+/// Keeps a re-run of the prepend from queueing the same episodes twice.
 pub(super) fn ids_missing_from(ids: &[String], queue: &[String]) -> Vec<String> {
     let present: HashSet<&str> = queue.iter().map(String::as_str).collect();
     ids.iter()

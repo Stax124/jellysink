@@ -45,7 +45,6 @@ fn prepend_keeps_the_window_contiguous_and_current_stable() {
 fn prepend_then_fill_appends_after_the_current_item() {
     let mut w = start(&["e8", "e9", "e10"], 0);
     prepend(&mut w, &["e6", "e7"]);
-    // Two forward entries land in mpv.
     w.note_appended(2);
 
     assert_eq!(current(&w), "e8");
@@ -168,7 +167,6 @@ fn eof_expected_pos_is_not_zero_when_previous_episodes_are_loaded() {
 fn queue_index_at_maps_an_mpv_position_back_and_rejects_one_past_the_end() {
     let mut w = start(&["e6", "e7", "e8"], 0);
     prepend(&mut w, &["e4", "e5"]);
-    // mpv position 0 is e4, which is queue index 0.
     assert_eq!(w.queue_index_at(0), Some(0));
     assert_eq!(w.queue_index_at(2), Some(2));
     assert_eq!(w.queue_index_at(5), None, "past the end of the queue");
@@ -205,7 +203,6 @@ fn pending_prepend_is_handed_over_exactly_once() {
     );
 }
 
-/// Test helper: split a listing of ids at `current`.
 fn split_at(ids: &[&str], current: &str) -> (Vec<String>, Vec<String>) {
     let v = json!({
         "Items": ids.iter().map(|id| json!({"Id": id})).collect::<Vec<_>>()

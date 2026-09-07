@@ -8,7 +8,6 @@ use super::track::{TrackKind, TrackPreference, resolve_track_index};
 /// an explicit `sid=no`, since `sub-add` selects whatever it just added.
 pub(crate) type SubtitlePreference = TrackPreference;
 
-/// The Jellyfin subtitle stream index to play; see [`resolve_track_index`].
 pub(crate) fn resolve_subtitle_index(
     requested: Option<i64>,
     preference: Option<&SubtitlePreference>,

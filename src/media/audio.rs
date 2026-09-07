@@ -12,7 +12,6 @@ use super::track::{TrackKind, TrackPreference, resolve_track_index};
 /// reachable: `cycle audio` (`#`) passes through "no audio".
 pub(crate) type AudioPreference = TrackPreference;
 
-/// The Jellyfin audio stream index to play; see [`resolve_track_index`].
 pub(crate) fn resolve_audio_index(
     requested: Option<i64>,
     preference: Option<&AudioPreference>,
