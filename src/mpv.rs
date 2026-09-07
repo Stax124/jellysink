@@ -23,12 +23,10 @@ pub(crate) enum IpcMessage {
         name: String,
         reason: Option<String>,
     },
-    /// An `observe_property` notification. The new value is deliberately
-    /// dropped — see [`MpvEvent::SubtitleTrackChanged`].
+    /// The new value is dropped — see [`MpvEvent::SubtitleTrackChanged`].
     PropertyChange { property: String },
 }
 
-/// Encodes a command to be sent to mpv
 pub(crate) fn encode_command(request_id: i64, args: &[Value]) -> String {
     let v = json!({
         "command": args,
@@ -37,10 +35,8 @@ pub(crate) fn encode_command(request_id: i64, args: &[Value]) -> String {
     format!("{v}\n")
 }
 
-/// M3U with one `#EXTINF` entry per `(title, url)`.
-///
-/// `loadfile` `force-media-title` and `playlist/N/title` do not populate
-/// unloaded entries — this is what gives the selector its titles.
+/// M3U with one `#EXTINF` entry per `(title, url)`. The only way to give
+/// unloaded playlist entries a title.
 pub(crate) fn playlist_m3u<I, T, U>(entries: I) -> String
 where
     I: IntoIterator<Item = (T, U)>,
@@ -59,17 +55,12 @@ where
     body
 }
 
-/// Args for `loadlist` `append` command to add a file to the playlist
 pub(crate) fn loadlist_append_args(path: &str) -> [Value; 3] {
     [json!("loadlist"), json!(path), json!("append")]
 }
 
-/// Args for `loadlist` `insert-at` to splice entries in at `index`.
-///
-/// `insert-at` and the index are separate arguments; `"insert-at0"` as a single
-/// token is `invalid parameter`. Inserting at or below the current position
-/// does not interrupt playback — mpv shifts `playlist-pos` by the number
-/// inserted and keeps playing the same file.
+/// `insert-at` and the index must stay separate arguments; `"insert-at0"` is
+/// `invalid parameter`.
 pub(crate) fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
     [
         json!("loadlist"),
@@ -79,13 +70,10 @@ pub(crate) fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
     ]
 }
 
-/// `yes` pauses only on the last playlist entry and auto-plays the rest,
-/// which is also what emits `end-file` so we can adopt the new item.
-/// `always` pauses on the last frame of every file without unloading it,
-/// so we never see `end-file` and autoplay stalls.
+/// `yes` auto-plays the rest of the playlist and emits the `end-file` autoplay
+/// keys off; `always` unloads nothing and never emits it.
 pub(crate) const KEEP_OPEN: &str = "yes";
 
-/// Parses an IPC line from mpv into an [`IpcMessage`]
 pub(crate) fn parse_ipc_line(line: &str) -> color_eyre::Result<IpcMessage> {
     let v: Value = serde_json::from_str(line.trim()).wrap_err("mpv IPC JSON")?;
     if let Some(name) = v.get("event").and_then(Value::as_str) {
@@ -121,14 +109,8 @@ pub(crate) fn parse_ipc_line(line: &str) -> color_eyre::Result<IpcMessage> {
     })
 }
 
-/// Converts a JSON value to a `f64` representing seconds
-/// Coerce an mpv property answer, or say what we actually got.
-///
-/// These used to fall back to a plausible value (`playlist-pos` → 0, `volume`
-/// → 100), so callers made autoplay and reporting decisions from a number mpv
-/// never gave us and a transient IPC hiccup played the wrong episode. An
-/// mpv-level failure already comes back as `Err` from `command`; this covers a
-/// success carrying the wrong JSON type.
+/// Coerce an mpv property answer, or say what we actually got. No plausible
+/// fallback value: callers make autoplay decisions from these numbers.
 fn as_i64_property(name: &str, v: &Value) -> color_eyre::Result<i64> {
     v.as_i64()
         .ok_or_else(|| eyre!("mpv property {name:?} was not an integer: {v}"))
@@ -171,23 +153,15 @@ pub(crate) const SUBTITLE_TRACK_PROPERTY: &str = "sid";
 /// The mpv property holding the selected audio track.
 pub(crate) const AUDIO_TRACK_PROPERTY: &str = "aid";
 
-/// The `observe_property` id for [`SUBTITLE_TRACK_PROPERTY`].
-///
-/// mpv wants an id per observer and echoes it back on every change; we match on
-/// the property name instead, so the only thing that matters is that ids of
-/// different observers differ.
+/// `observe_property` id for [`SUBTITLE_TRACK_PROPERTY`]. We match on the
+/// property name, so only being distinct from other observers matters.
 const SUBTITLE_TRACK_OBSERVER_ID: i64 = 1;
 
-/// The `observe_property` id for [`AUDIO_TRACK_PROPERTY`]. See above: it only
-/// has to differ from [`SUBTITLE_TRACK_OBSERVER_ID`].
+/// See [`SUBTITLE_TRACK_OBSERVER_ID`]; only has to differ from it.
 const AUDIO_TRACK_OBSERVER_ID: i64 = 2;
 
-/// What mpv answers for a track-id property such as `sid`.
-///
-/// It is not just a number: mpv reports an explicit `no` as `false` and a
-/// selection it has not made yet as `auto`. Collapsing those two into "no
-/// track" would read a file that is still loading as the user switching
-/// subtitles off.
+/// What mpv answers for a track-id property such as `sid`. `false` (off) and
+/// `auto` (not picked yet) must stay apart: a loading file is not a decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SelectedTrack {
     /// This track is selected.
@@ -198,7 +172,6 @@ pub(crate) enum SelectedTrack {
     Unresolved,
 }
 
-/// Reads a track-id property answer.
 pub(crate) fn selected_track_from_property(v: &Value) -> SelectedTrack {
     match v {
         Value::Bool(false) => SelectedTrack::Off,
@@ -211,11 +184,8 @@ pub(crate) fn selected_track_from_property(v: &Value) -> SelectedTrack {
     }
 }
 
-/// Why mpv ended a file.
-///
-/// Parsed once here rather than carried up as a `String` and string-matched in
-/// three separate places, so `end_file_action` can match exhaustively and a
-/// typo cannot silently fall into the ignore arm.
+/// Why mpv ended a file. An enum rather than a `String` so `end_file_action`
+/// can match exhaustively.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EndFileReason {
     /// Played through to the end.
@@ -259,7 +229,6 @@ impl std::fmt::Display for EndFileReason {
     }
 }
 
-/// Represents an event received from mpv
 #[derive(Debug, Clone)]
 pub(crate) enum MpvEvent {
     EndFile {
@@ -269,12 +238,8 @@ pub(crate) enum MpvEvent {
     /// mpv's selected subtitle track changed — `j` in the mpv window, its track
     /// menu, or mpv auto-selecting one as a file loads.
     ///
-    /// Carries no track id on purpose. Property changes arrive on their own
-    /// channel and are handled a whole file load later than they were emitted,
-    /// so the value in the message is routinely stale: mpv's auto-selection
-    /// reaches the runtime *after* we have applied our own choice over it. The
-    /// runtime re-reads `sid` and compares it with the selection it last
-    /// settled on, which turns every stale event into a no-op.
+    /// Carries no track id on purpose: these are handled a whole file load
+    /// after they are emitted, so the runtime re-reads `sid` instead.
     SubtitleTrackChanged,
     /// mpv's selected audio track changed — `#` in the mpv window, its track
     /// menu, or mpv auto-selecting one as a file loads.
@@ -289,19 +254,14 @@ struct Pending {
     tx: oneshot::Sender<Result<Value, String>>,
 }
 
-/// Drops pending requests whose caller has gone away — timed out (`command`
-/// gives up after 10 s) or had its future cancelled by a `select!`.
-///
-/// mpv never replies to a command it did not process, so those entries were
-/// never removed: `pending` grew for the life of the session, leaking a
-/// `oneshot::Sender` per abandoned request.
+/// Drops pending requests whose caller has gone away (timed out or cancelled).
+/// mpv never replies to those, so they would leak a `oneshot::Sender` each.
 fn evict_abandoned(pending: &mut HashMap<i64, Pending>) -> usize {
     let before = pending.len();
     pending.retain(|_, p| !p.tx.is_closed());
     before - pending.len()
 }
 
-/// Represents a session with an mpv process
 pub(crate) struct MpvSession {
     child: Child,
     cmd_tx: mpsc::UnboundedSender<IpcCmd>,
@@ -309,7 +269,6 @@ pub(crate) struct MpvSession {
     next_id: i64,
 }
 
-/// Represents a command to be sent to the mpv process
 enum IpcCmd {
     Request {
         line: String,
@@ -320,7 +279,6 @@ enum IpcCmd {
 }
 
 impl MpvSession {
-    /// Spawns a new mpv session with the given path and arguments
     pub(crate) async fn spawn(
         mpv_path: &str,
         extra_args: &[String],
@@ -350,9 +308,8 @@ impl MpvSession {
         let stream = wait_for_socket(&socket, Duration::from_secs(8))
             .await
             .wrap_err("waiting for mpv IPC socket")?;
-        // Belt and braces on top of the 0700 config directory: mpv creates this
-        // socket under the ambient umask, and `http-header-fields` on it carries
-        // the Jellyfin access token.
+        // mpv creates the socket under the ambient umask, and its
+        // `http-header-fields` carries the Jellyfin access token.
         if let Err(e) =
             tokio::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).await
         {
@@ -380,7 +337,6 @@ impl MpvSession {
         id
     }
 
-    /// Sends a command to the mpv process and returns the response
     async fn command(&mut self, args: Vec<Value>) -> color_eyre::Result<Value> {
         let id = self.next_request_id();
         let line = encode_command(id, &args);
@@ -419,10 +375,8 @@ impl MpvSession {
         url: &str,
         title: Option<&str>,
     ) -> color_eyre::Result<()> {
-        // Do not pass options as loadfile's 4th argument. Since mpv 0.38 that
-        // slot is an insert *index* (integer); a map there is "invalid parameter"
-        // and the file never loads. Set force-media-title as a property instead,
-        // which is what jellyfin-mpv-shim does.
+        // Since mpv 0.38 loadfile's 4th argument is an insert index, not an
+        // options map, so force-media-title has to go through a property.
         if let Some(title) = title {
             let _ = self.set_property("force-media-title", json!(title)).await;
         }
@@ -445,7 +399,7 @@ impl MpvSession {
     }
 
     /// Splices every entry in at `index` in one `loadlist`. Playback is
-    /// unaffected; mpv shifts `playlist-pos` by the number inserted.
+    /// unaffected; mpv shifts `playlist-pos`.
     pub(crate) async fn loadlist_insert_at(
         &mut self,
         entries: &[(&str, &str)],
@@ -459,8 +413,8 @@ impl MpvSession {
             .await
     }
 
-    /// Writes an M3U next to the IPC socket, loads it, then removes it.
-    /// A temp file is what gives each entry its title before it is opened.
+    /// Writes an M3U next to the IPC socket, loads it, then removes it. The
+    /// file is what carries each entry's title.
     async fn loadlist(
         &mut self,
         path: &Path,
@@ -564,8 +518,8 @@ impl MpvSession {
         self.set_property("mute", json!(mute)).await
     }
 
-    /// `None` (or a negative id) is an explicit `aid=no`, which is where mpv's
-    /// `cycle audio` lands after the last track.
+    /// `None` or a negative id means `aid=no`, where `cycle audio` lands after
+    /// the last track.
     pub(crate) async fn set_audio_track_id(
         &mut self,
         audio_track_id: Option<i64>,
@@ -576,15 +530,13 @@ impl MpvSession {
         }
     }
 
-    /// The selected audio track, as mpv currently has it.
     pub(crate) async fn audio_track(&mut self) -> color_eyre::Result<SelectedTrack> {
         Ok(selected_track_from_property(
             &self.get_property(AUDIO_TRACK_PROPERTY).await?,
         ))
     }
 
-    /// Asks mpv to report every audio track change, so a track picked in the
-    /// mpv window — not in a Jellyfin client — is noticed too.
+    /// So a track picked in the mpv window, not a Jellyfin client, is noticed.
     pub(crate) async fn observe_audio_track(&mut self) -> color_eyre::Result<()> {
         self.command(vec![
             json!("observe_property"),
@@ -605,15 +557,13 @@ impl MpvSession {
         }
     }
 
-    /// The selected subtitle track, as mpv currently has it.
     pub(crate) async fn subtitle_track(&mut self) -> color_eyre::Result<SelectedTrack> {
         Ok(selected_track_from_property(
             &self.get_property(SUBTITLE_TRACK_PROPERTY).await?,
         ))
     }
 
-    /// Asks mpv to report every subtitle track change, so a track picked in the
-    /// mpv window — not in a Jellyfin client — is noticed too.
+    /// So a track picked in the mpv window, not a Jellyfin client, is noticed.
     pub(crate) async fn observe_subtitle_track(&mut self) -> color_eyre::Result<()> {
         self.command(vec![
             json!("observe_property"),
@@ -686,13 +636,8 @@ impl Drop for MpvSession {
     }
 }
 
-/// Writes a file only the current user can read, creating it with the mode
-/// rather than chmodding after.
-///
-/// The M3U body carries `ApiKey=` whenever the Authorization header is not in
-/// play. `fs::write` + `set_permissions` left it at `0644 & ~umask` in between,
-/// so the token was briefly world-readable. Unlinking first means a stale file
-/// left by a crash cannot donate its old, looser mode.
+/// Creates the file 0600 rather than chmodding after: the M3U body can carry
+/// `ApiKey=`, so it must never exist world-readable, not even briefly.
 async fn write_private(path: &Path, body: &str) -> color_eyre::Result<()> {
     let _ = tokio::fs::remove_file(path).await;
     let mut f = tokio::fs::OpenOptions::new()
@@ -705,8 +650,7 @@ async fn write_private(path: &Path, body: &str) -> color_eyre::Result<()> {
     f.write_all(body.as_bytes())
         .await
         .wrap_err_with(|| format!("writing {}", path.display()))?;
-    // tokio's File does not flush on drop, and mpv reads this path back
-    // immediately — without this it loads an empty playlist.
+    // tokio's File does not flush on drop, and mpv reads the path back at once.
     f.flush()
         .await
         .wrap_err_with(|| format!("flushing {}", path.display()))?;

@@ -56,17 +56,14 @@ impl Runtime {
             Ok(Some(state)) => state,
             Ok(None) => (0, 0),
             Err(e) => {
-                // Guessing puts the wrong episode on screen. mpv failing to
-                // answer means it is gone or wedged, so report a stop instead
-                // of autoplaying blind.
+                // An unreadable playlist state means mpv is gone or wedged;
+                // guessing would put the wrong episode on screen.
                 tracing::error!("cannot read mpv playlist state: {e:#}; stopping");
                 self.stop_playback(true).await;
                 return;
             }
         };
         // The current item's mpv position is its offset from the window start.
-        // This stays correct after a prepend (index and head both shift) and
-        // after `adopt_playlist_pos` moves the index on a playlist jump.
         let expected_pos = self.window.expected_pos();
         tracing::info!(
             playlist_pos,
@@ -117,9 +114,8 @@ impl Runtime {
             None => Ok(()),
         };
         if let Err(e) = advanced {
-            // Nothing will emit file-loaded now, so the flag would stay set and
-            // end_file_action would Ignore every later end-file: autoplay dead
-            // until the daemon restarts.
+            // Nothing will emit file-loaded now, and a stuck flag makes
+            // end_file_action ignore every later end-file.
             self.transitioning = false;
             tracing::error!("playlist-next failed: {e:#}");
         }
@@ -140,8 +136,6 @@ impl Runtime {
     async fn expand_then_advance_or_stop(&mut self) {
         tracing::info!("queue exhausted; trying series expand");
         self.try_expand_from_playing_item().await;
-        // `advance` already returns None when there is no next item, so it is
-        // the whole condition.
         if self.window.advance().is_some() {
             tracing::info!(
                 item = self.window.current(),
@@ -160,10 +154,9 @@ impl Runtime {
         }
     }
 
-    /// mpv's `(playlist-pos, playlist-count)`, or `None` when no mpv is running.
-    ///
-    /// An IPC failure is an error rather than a fabricated `(0, 0)`:
-    /// `playlist_eof` decides autoplay from these two numbers.
+    /// mpv's `(playlist-pos, playlist-count)`, or `None` when no mpv is
+    /// running. `playlist_eof` decides autoplay from these, so failure is an
+    /// error rather than a fabricated `(0, 0)`.
     pub(super) async fn playlist_state(&mut self) -> color_eyre::Result<Option<(usize, usize)>> {
         let Some(mpv) = self.mpv.as_mut() else {
             return Ok(None);
@@ -202,10 +195,8 @@ impl Runtime {
             "considering series expand"
         );
 
-        // The two directions have different gates. Forward expansion must not
-        // run when the queue already has a next item (it would duplicate it),
-        // but prepending must run *precisely* then: Jellyfin sending 6..20 is
-        // exactly when we also want 1..5.
+        // The two directions gate differently: a queue that already has a next
+        // item blocks the forward append but is exactly when we want a prepend.
         let forward_reason = series_expand_skip_reason(
             item_type,
             series,
@@ -214,9 +205,8 @@ impl Runtime {
         );
         let prepend_reason = prepend_skip_reason(item_type, series, self.config.prepend_previous);
 
-        // Fetch the listing whenever this is an episode: titles for the
-        // playlist selector come from it, even when neither direction will
-        // change the queue.
+        // Fetched for any episode: the playlist selector's titles come from it
+        // even when neither direction changes the queue.
         let (Some(series), Some("Episode")) = (series, item_type) else {
             tracing::info!(
                 forward = forward_reason,
@@ -245,9 +235,8 @@ impl Runtime {
         }
     }
 
-    /// Splits the listing at the current episode, or `None` when the current
-    /// episode is not in it — specials, library churn, or a series longer than
-    /// the 500-episode cap. Expansion fails closed there rather than guessing.
+    /// Splits the listing at the current episode, or `None` when it is not in
+    /// there (specials, library churn, over the 500-episode cap) — fail closed.
     fn split_listing(
         &self,
         listing: &Value,
@@ -298,8 +287,7 @@ impl Runtime {
     }
 
     fn prepend_missing(&mut self, previous: Vec<String>) {
-        // Advancing e6 -> e7 leaves e1..e6 already queued ahead of e7, so only
-        // splice in what is genuinely missing.
+        // Advancing e6 -> e7 leaves e1..e6 already queued ahead of e7.
         let missing = ids_missing_from(&previous, self.window.items());
         if missing.is_empty() {
             tracing::debug!("previous episodes already in queue");
@@ -308,24 +296,17 @@ impl Runtime {
         }
     }
 
-    /// Splices the episodes that aired before the current one into the queue
-    /// so the playlist selector can reach them.
-    ///
-    /// Only touches the queue; [`Self::fill_previous_into_mpv`] does the mpv
-    /// side. The split matters because `start_current` expands the series
-    /// *before* it loads the file, and `loadfile ... replace` wipes mpv's
-    /// playlist — so anything inserted before the load would be lost.
+    /// Splices already-aired episodes into the queue so the playlist selector
+    /// can reach them. Queue only — [`Self::fill_previous_into_mpv`] does the
+    /// mpv side later, because `loadfile ... replace` would wipe it.
     fn prepend_previous_episodes(&mut self, previous: Vec<String>) {
-        // Callers pass only ids missing from the queue, so this is idempotent
-        // even when it runs again after advancing to the next episode.
         let n = self.window.prepend(previous);
         tracing::info!(n, head = self.window.head(), "prepended previous episodes");
         self.log_queue("after-prepend-previous");
     }
 
-    /// The one place a [`PreparedPlay`] is produced, so it is also the one
-    /// place the remembered tracks are applied. Both `start_current` and
-    /// `adopt_playlist_pos` come through here.
+    /// The one place a [`PreparedPlay`] is produced, so also the one place the
+    /// remembered tracks are applied.
     pub(super) async fn prepare_item(
         &mut self,
         item_id: &str,
@@ -342,9 +323,8 @@ impl Runtime {
             self.titles
                 .insert(item_id.to_string(), media::display_title(v));
         }
-        // Cache the *server's* answer, not the overridden one. Otherwise a
-        // later fallback would mean "whatever the preference was the first time
-        // this episode played" instead of "what the server said".
+        // The server's answer, not the overridden one: a later fallback must
+        // mean "what the server said", not an earlier play's preference.
         self.prepared.insert(item_id.to_string(), prep.clone());
         Ok((self.with_remembered_tracks(prep, req), item))
     }
@@ -366,15 +346,11 @@ impl Runtime {
         prep
     }
 
-    /// Appends queue entries past the current mpv window. Titles come from
-    /// the series listing; `PlaybackInfo` waits until the item actually plays.
     /// Splices the pending previous episodes into mpv's playlist. Called once
-    /// the current file is loaded, since `loadfile ... replace` would otherwise
-    /// wipe them. Titles come from the series listing; there is no per-item
-    /// `PlaybackInfo` here.
+    /// the current file is loaded, since `loadfile ... replace` would wipe them.
     pub(super) async fn fill_previous_into_mpv(&mut self) {
         let ids = self.window.take_pending_prepend();
-        // Inserting the whole block at 0 lands it in aired order at the front.
+        // The whole block at 0 lands in aired order at the front.
         self.load_stub_rows(ids, Fill::Prepend).await;
     }
 
@@ -416,8 +392,7 @@ impl Runtime {
             tracing::warn!(?fill, "playlist fill loadlist: {e:#}");
             return;
         }
-        // Only an append extends the window's tail; a prepend already grew
-        // `head` when the ids were spliced into the queue.
+        // A prepend already grew `head` when the ids entered the queue.
         if fill == Fill::Append {
             self.window.note_appended(n);
         }
@@ -425,13 +400,6 @@ impl Runtime {
     }
 
     /// `(title, stub url)` for each id.
-    ///
-    /// Two things here are deliberate. The token goes on the URL only when mpv
-    /// is *not* carrying the Authorization header, because mpv persists
-    /// playlist entries to its watch_later files. And a missing title falls
-    /// back to the URL *without* the token — the fallback used to be the
-    /// playable URL, so an episode the series listing had no title for put the
-    /// access token straight into mpv's OSD and playlist selector.
     fn playlist_stub_entries(&self, ids: &[String]) -> Vec<(String, String)> {
         let token = (!self.mpv_auth_header_set).then_some(self.api.token.as_str());
         ids.iter()
@@ -447,13 +415,9 @@ impl Runtime {
     }
 }
 
-/// `(title, url)` for one playlist row.
-///
-/// `token` is `Some` only when mpv is not carrying the Authorization header;
-/// mpv persists playlist entries to its watch_later files, so the token stays
-/// off the URL whenever the header already covers it. The title never carries
-/// the token: the fallback used to be the playable URL, so an episode the
-/// series listing had no title for put the token straight into mpv's OSD.
+/// `(title, url)` for one playlist row. `token` is `Some` only when the
+/// Authorization header is not covering mpv, since mpv persists playlist
+/// entries to watch_later files; the title fallback never carries it at all.
 fn playlist_stub_entry(
     server: &str,
     id: &str,
@@ -468,13 +432,10 @@ fn playlist_stub_entry(
 }
 
 // --- Queue policy -----------------------------------------------------------
-// These decide what goes *in* the queue. They lived in media.rs, but their only
-// caller is this file and they are not about media.
+// What goes *in* the queue.
 
-/// Splits a full series listing into the ids before and after `current_id`.
-///
-/// Returns `(previous, remaining)`. Empty on both sides when `current_id` is
-/// not in the listing — fail closed on specials / library churn.
+/// `(previous, remaining)` around `current_id`. Empty on both sides when the
+/// listing does not contain it — fail closed on specials / library churn.
 pub(super) fn split_episode_ids(episodes: &Value, current_id: &str) -> (Vec<String>, Vec<String>) {
     let Some(items) = episodes.get("Items").and_then(Value::as_array) else {
         return (Vec::new(), Vec::new());
@@ -492,12 +453,9 @@ pub(super) fn split_episode_ids(episodes: &Value, current_id: &str) -> (Vec<Stri
     }
 }
 
-/// Whether this item could have previous episodes worth prepending.
-///
-/// Deliberately ignores `has_next`, unlike [`series_expand_skip_reason`]:
-/// Jellyfin sending 6..20 is exactly when we also want 1..5. Also ignores
-/// `autoplay`, which governs continuing *forward*, not what the playlist
-/// selector can reach.
+/// Whether this item could have previous episodes worth prepending. Ignores
+/// `has_next` and `autoplay`, unlike [`series_expand_skip_reason`]: both are
+/// about continuing forward, not what the playlist selector can reach.
 pub(super) fn prepend_skip_reason(
     item_type: Option<&str>,
     series_id: Option<&str>,
@@ -515,10 +473,8 @@ pub(super) fn prepend_skip_reason(
     None
 }
 
-/// The subset of `ids` not already present in `queue`.
-///
-/// Keeps prepending idempotent: advancing e6 -> e7 leaves e1..e6 already in
-/// the queue ahead of e7, so re-running the expand must not add them twice.
+/// The subset of `ids` not already in `queue`, which is what keeps a re-run of
+/// the prepend from queueing the same episodes twice.
 pub(super) fn ids_missing_from(ids: &[String], queue: &[String]) -> Vec<String> {
     let present: HashSet<&str> = queue.iter().map(String::as_str).collect();
     ids.iter()

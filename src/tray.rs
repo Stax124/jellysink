@@ -22,7 +22,6 @@ impl CastTray {
     }
 }
 
-/// Load the icon from a potentially bundled ICO file
 fn load_jellyfin_icons() -> Vec<ksni::Icon> {
     let dir = ico::IconDir::read(Cursor::new(JELLYFIN_ICO))
         .expect("bundled assets/logo.ico must be a valid ICO");
@@ -45,8 +44,7 @@ fn load_jellyfin_icons() -> Vec<ksni::Icon> {
         .collect()
 }
 
-/// ksni's `icon_pixmap` returns an owned `Vec`, so the clone here is required
-/// by the trait; the `OnceLock` at least keeps the ICO decode to once.
+/// The clone is the trait's; the `OnceLock` keeps the ICO decode to once.
 fn jellyfin_icons() -> Vec<ksni::Icon> {
     static ICONS: OnceLock<Vec<ksni::Icon>> = OnceLock::new();
     ICONS.get_or_init(load_jellyfin_icons).clone()
@@ -97,7 +95,7 @@ fn with_update_badge(mut icon: ksni::Icon) -> ksni::Icon {
 }
 
 impl ksni::Tray for CastTray {
-    // Left clicking the icon should open the menu as right clicking does, rather than doing nothing.
+    // Left click should open the menu, as right click does.
     const MENU_ON_ACTIVATE: bool = true;
 
     fn id(&self) -> String {
@@ -158,8 +156,7 @@ impl ksni::Tray for CastTray {
 }
 
 /// Start the StatusNotifierItem. Fail-open: a missing tray host is a warning.
-/// The returned handle must be kept alive for the tray to stay up and to
-/// push a pending update into the menu.
+/// The handle must be kept alive for the tray to stay up.
 pub(crate) async fn start(shutdown: Signal) -> Option<Tray> {
     use ksni::TrayMethods;
     let apply = Signal::new();

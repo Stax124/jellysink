@@ -57,9 +57,8 @@ pub(crate) async fn listen_stop(
     let _ = std::fs::remove_file(&sock);
     let listener =
         UnixListener::bind(&sock).wrap_err_with(|| format!("binding {}", sock.display()))?;
-    // A bound socket cannot be given a mode up front, so there is a window at
-    // the ambient umask here. `Paths::ensure` makes the directory 0700, which is
-    // what actually keeps this private; the chmod is defence in depth.
+    // A bound socket cannot be given a mode up front; the 0700 directory from
+    // `Paths::ensure` is what actually keeps it private.
     if let Ok(meta) = std::fs::metadata(&sock) {
         let mut perms = meta.permissions();
         perms.set_mode(0o600);
@@ -103,25 +102,19 @@ pub(crate) async fn listen_stop(
     Ok(())
 }
 
-/// Whether another jellysink currently holds the instance lock.
-///
-/// This used to be `stop_socket().exists()`, which is not a liveness signal: a
-/// SIGKILL leaves the socket file behind, so `is_running` stayed true forever
-/// and `jellysink update` then chose the stop path and failed with "connecting
-/// to the running instance". The kernel releases a flock when the holder dies,
-/// so the lock is authoritative.
+/// Whether another jellysink currently holds the instance lock. The lock, not
+/// the socket file, which a SIGKILL leaves behind — the kernel releases a flock
+/// when its holder dies.
 pub(crate) fn is_running(paths: &Paths) -> bool {
-    // Deliberately not `create(true)`: no lock file means jellysink has never
-    // run here, and probing should not leave one behind.
+    // Not `create(true)`: probing should not leave a lock file behind.
     let Ok(file) = File::open(paths.lock_file()) else {
         return false;
     };
     match flock(&file, FlockOperation::NonBlockingLockExclusive) {
-        // We took it, so nobody else holds it. Dropping `file` releases it.
+        // We took it, so nobody else holds it; dropping `file` releases it.
         Ok(()) => false,
         Err(e) if e == rustix::io::Errno::WOULDBLOCK => true,
-        // Can't tell. Say no, so the caller does not try to stop a daemon that
-        // may not be there.
+        // Can't tell; do not send the caller off to stop a maybe-daemon.
         Err(e) => {
             tracing::debug!("probing instance.lock: {e}");
             false

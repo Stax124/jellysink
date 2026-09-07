@@ -16,11 +16,8 @@ use crate::signal::Signal;
 use color_eyre::eyre::{WrapErr, eyre};
 use futures_util::{SinkExt, StreamExt};
 
-/// Background tasks tied to the lifetime of whatever owns this.
-///
-/// Dropping it aborts them. Without it, a reconnect spawned a fresh WebSocket
-/// reader and left the previous one running: against a half-open TCP
-/// connection it never returns, so it leaked for the life of the process.
+/// Background tasks tied to the lifetime of whatever owns this; dropping it
+/// aborts them, so a reconnect cannot leave the old reader running.
 struct AbortOnDrop(Vec<tokio::task::JoinHandle<()>>);
 
 impl Drop for AbortOnDrop {
@@ -54,12 +51,9 @@ const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// A session that stayed up at least this long is treated as having worked.
 const SESSION_HEALTHY_AFTER: Duration = Duration::from_secs(60);
 
-/// How long to wait before the next reconnect attempt.
-///
-/// Without the healthy-session reset, `backoff` only ever grew: a few failures
-/// at startup pinned it at [`BACKOFF_MAX`] for the rest of the process, so a
-/// session that ran for hours and then dropped waited a full minute to come
-/// back.
+/// How long to wait before the next reconnect attempt. The healthy-session
+/// reset is what stops a bad startup pinning the backoff at [`BACKOFF_MAX`]
+/// for the rest of the process.
 fn reconnect_delay(current: Duration, session_lasted: Duration, auth_expired: bool) -> Duration {
     if auth_expired {
         BACKOFF_MAX
@@ -72,12 +66,9 @@ fn reconnect_delay(current: Duration, session_lasted: Duration, auth_expired: bo
 
 /// The daemon loop: one long-lived player, a WebSocket that comes and goes.
 ///
-/// `Runtime` is built once here and reused by every session, so a dropped
-/// WebSocket is not visible to the user — mpv keeps playing, the queue, the
-/// volume and the remembered tracks all stay put, and the next session picks
-/// up exactly where the last one left off. Only the socket, its reader and the
-/// keepalive are per-session; the mpv channel and the report sink are not, so
-/// neither an mpv event nor a queued report is lost to a reconnect.
+/// `Runtime` is built once and reused by every session, so a dropped WebSocket
+/// is invisible to the user. Only the socket, its reader and the keepalive are
+/// per-session — not the mpv channel or the report sink.
 pub(crate) async fn run(
     config: Config,
     creds: Credentials,
@@ -106,27 +97,21 @@ pub(crate) async fn run(
                 backoff = reconnect_delay(backoff, started.elapsed(), auth_expired);
             }
         }
-        // Playback is deliberately left alone across the gap: nothing here
-        // touches `rt`. Progress goes unreported until the next session (the
-        // server is usually unreachable anyway), and mpv events raised while
-        // we wait stay queued on `mpv_rx` for it to handle — the `mpv_gen` tag
-        // is what keeps stale ones out.
+        // Nothing here touches `rt`: playback rides out the gap, and mpv events
+        // raised meanwhile stay queued on `mpv_rx` for the next session.
         tokio::select! {
             _ = shutdown.fired() => break,
             _ = sleep(backoff) => {}
         }
         backoff = (backoff * 2).min(BACKOFF_MAX);
     }
-    // Not in a `select!` arm above: `run_session` holds `&mut rt`, so the
-    // borrow checker will not let one of its arms touch `rt`.
+    // Not in a `select!` arm above: `run_session` holds `&mut rt`.
     rt.stop_playback(true).await;
     Ok(())
 }
 
-/// Connects the remote-control WebSocket and pumps it into two channels.
-///
-/// The reader lives as long as the socket; a close or error ends it, which the
-/// main loop sees as `ev_rx` closing.
+/// Connects the remote-control WebSocket and pumps it into two channels. The
+/// reader ends with the socket, which the main loop sees as `ev_rx` closing.
 fn spawn_ws_reader<S>(
     mut ws_read: S,
 ) -> (
@@ -172,7 +157,7 @@ fn spawn_report_sink(
     tokio::task::JoinHandle<()>,
 ) {
     crate::report::spawn_reporter(move |report| {
-        // Arc: this clone happens once per report, and Api holds six Strings.
+        // Arc rather than a clone per report; Api holds six Strings.
         let api = Arc::clone(&api);
         async move {
             let r = match &report {
@@ -188,10 +173,8 @@ fn spawn_report_sink(
 }
 
 /// One WebSocket session against the given, already-running [`Runtime`].
-///
-/// Returns `Ok(())` only for shutdown; any other end is an `Err` the caller
-/// backs off and reconnects from. Errors deliberately leave `rt` — and so mpv,
-/// the queue and the reported state — untouched.
+/// `Ok(())` only for shutdown; every other end is an `Err` the caller
+/// reconnects from, leaving `rt` untouched.
 async fn run_session(
     rt: &mut Runtime,
     mpv_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(u64, MpvEvent)>,
@@ -236,12 +219,9 @@ async fn run_session(
                         keepalive
                             .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                     }
-                    // Both senders live in the WebSocket reader, so this closing
-                    // means the reader is gone — the same condition `ev_rx`
-                    // reports. Returning matters: a closed receiver is ready
-                    // immediately and forever, so an empty body here left the
-                    // arm permanently hot and spun the loop until `select!`
-                    // happened to pick `ev_rx`.
+                    // The reader owns both senders, so this means it is gone.
+                    // Must return: a closed receiver is ready forever, and an
+                    // empty body here spins the loop.
                     None => return Err(eyre!("websocket closed")),
                 }
             }
@@ -265,9 +245,7 @@ async fn run_session(
                     }
                     // From a previous mpv session; see `mpv_gen`.
                     Some(_) => {}
-                    // `rt` owns the matching sender for as long as `run`
-                    // runs, so this cannot fire. Kept as a safety net rather
-                    // than a panic, since the alternative in a daemon is worse.
+                    // Unreachable while `run` runs; a daemon should not panic.
                     None => return Err(eyre!("mpv event channel closed")),
                 }
             }
@@ -283,8 +261,7 @@ struct Runtime {
     window: PlaylistWindow,
     mpv: Option<MpvSession>,
     mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
-    /// Discriminates events from a previous mpv session that are still sitting
-    /// on the shared channel. See `spawn_and_load`.
+    /// Discriminates events still queued from a previous mpv session.
     mpv_gen: u64,
     /// The task forwarding the current mpv session's events. Owned so a respawn
     /// or a stop does not leave it running.
@@ -299,31 +276,25 @@ struct Runtime {
     /// Jellyfin subtitle stream index → mpv subtitle track id for `sub-add`ed files.
     external_subtitle_track_ids: HashMap<i64, i64>,
     /// The subtitle track the user last picked by hand, re-applied to the next
-    /// episode by identity rather than by index. Deliberately never cleared by
-    /// `start_current`, `adopt_playlist_pos` or `stop_playback`.
+    /// episode by identity rather than index. Never cleared.
     last_subtitle: SubtitleMemory,
-    /// mpv's subtitle selection as of the last time it was *ours* — the end of
-    /// `configure_streams`, or an `apply_subtitle`. A `sid` property change
-    /// reporting anything else is the user picking a track in the mpv window.
+    /// mpv's subtitle selection as of the last time it was *ours*. A `sid`
+    /// property change reporting anything else is the user's own pick.
     settled_subtitle_track: SelectedTrack,
-    /// The audio track the user last picked by hand, re-applied to the next
-    /// episode by identity rather than by index. Never cleared, for the same
-    /// reasons as `last_subtitle`.
+    /// `last_subtitle` for audio.
     last_audio: AudioMemory,
     /// `settled_subtitle_track` for `aid`.
     settled_audio_track: SelectedTrack,
     report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
     transitioning: bool,
-    /// Whether mpv currently carries the Authorization header. When it does,
-    /// playlist stubs leave the token off their URLs — mpv persists playlist
-    /// entries to its watch_later files.
+    /// When true, playlist stubs leave the token off their URLs — mpv persists
+    /// playlist entries to its watch_later files.
     mpv_auth_header_set: bool,
     pending_start_ticks: Option<i64>,
 
     prepared: HashMap<String, PreparedPlay>,
-    /// Item id → display title from the series listing (and the current item).
-    /// Playlist fill uses this; `PlaybackInfo` is fetched only when an item
-    /// actually starts.
+    /// Item id → display title, for the playlist fill; `PlaybackInfo` is
+    /// fetched only once an item actually starts.
     titles: HashMap<String, String>,
 }
 
@@ -437,9 +408,8 @@ impl Runtime {
             Enqueue::Next => {
                 self.window.insert_next(item_ids);
                 self.log_queue("play-next-insert");
-                // Splicing into the middle of an mpv playlist that already
-                // holds later entries would need an insert-at, not an append;
-                // the queue is still correct, mpv just does not show it yet.
+                // An mpv playlist holding later entries would need an
+                // insert-at; the queue is right, mpv just does not show it yet.
                 if self.window.tail() != 0 {
                     tracing::debug!(
                         tail = self.window.tail(),
@@ -469,12 +439,11 @@ impl Runtime {
         Ok(())
     }
 
-    /// Steps back within mpv's playlist when it has previous entries — which,
-    /// with prepending on, is nearly always — and only otherwise restarts at
-    /// the queue's previous item.
+    /// Steps back within mpv's playlist when it has previous entries, and only
+    /// otherwise restarts at the queue's previous item.
     async fn play_previous(&mut self) -> color_eyre::Result<()> {
-        // Propagates on an IPC failure; `handle`'s caller logs it. Falling back
-        // to 0 would restart the current item instead of stepping back.
+        // Propagated rather than defaulted to 0, which would restart the
+        // current item instead of stepping back.
         let playlist_pos = self.playlist_state().await?.map_or(0, |(pos, _)| pos);
         if playlist_pos == 0 {
             self.window.previous();
@@ -487,8 +456,8 @@ impl Runtime {
             None => Ok(()),
         };
         if let Err(e) = stepped {
-            // See play_next_or_stop: a stuck `transitioning` makes
-            // end_file_action Ignore every subsequent end-file.
+            // A stuck `transitioning` makes end_file_action ignore every
+            // subsequent end-file.
             self.transitioning = false;
             tracing::error!("playlist-prev failed: {e:#}");
         }
@@ -518,8 +487,7 @@ impl Runtime {
     }
 
     /// A new file is playing: adopt whatever mpv actually loaded (the user may
-    /// have jumped in the playlist selector), apply track choices, and seek to
-    /// a pending resume offset.
+    /// have jumped in the selector), apply track choices, then resume-seek.
     async fn on_file_loaded(&mut self) {
         self.transitioning = false;
         if let Err(e) = self.adopt_playlist_pos().await {
@@ -560,10 +528,9 @@ impl Runtime {
     }
 
     /// `playlist-next` and an OSC jump both end the old file with `stop`, which
-    /// is not a user Stop. Distinguish them by whether mpv still has a playlist.
+    /// is not a user Stop; a remaining playlist is what tells them apart.
     async fn stop_unless_playlist_moved(&mut self, reason: EndFileReason) {
-        // Already on the stop path: a failed read means mpv has nothing more to
-        // hand us, so fall through to stopping.
+        // A failed read means mpv has nothing left to hand us: fall through.
         let playlist_count = match self.playlist_state().await {
             Ok(state) => state.map_or(0, |(_, count)| count),
             Err(e) => {

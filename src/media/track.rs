@@ -1,35 +1,19 @@
 //! Remembering the track the user picked, and finding it again in the next
 //! episode.
 //!
-//! Jellyfin stream indexes are per-file, so remembering the index is useless:
-//! the next episode can order its streams differently, or come from a different
-//! provider. And the server's `DefaultAudioStreamIndex` /
-//! `DefaultSubtitleStreamIndex` is what we are working around in the first
-//! place — it points at the wrong track for mislabeled releases, and for
-//! releases that split one language into `Signs and Songs` and `Dialogue` it
-//! regularly picks the wrong half.
+//! A choice is remembered as an *identity* ([`TrackId`]) and re-matched against
+//! what the next item offers, because stream indexes are per-file and the
+//! server's defaults are exactly what the user is overriding. In memory only,
+//! most recent selection only.
 //!
-//! So a choice is remembered as an *identity* ([`TrackId`]) and re-matched
-//! against whatever the next item actually offers. Nothing here reaches disk:
-//! the preference lives in memory for as long as the daemon runs and holds only
-//! the most recent selection.
-//!
-//! Audio and subtitles differ only in which mpv property carries the selection
-//! and in how the log lines read, so both go through this one matcher; see
-//! [`crate::media::audio`] and [`crate::media::subtitle`] for the two sides.
+//! Audio and subtitles share this matcher; [`crate::media::audio`] and
+//! [`crate::media::subtitle`] are the two thin sides of it.
 
-/// One selectable stream, identified by what it *is* rather than where it sits.
-///
-/// Stream indexes are per-file: the next episode can order its streams
-/// differently, or come from a different provider, so "index 3" is not the same
-/// track twice. Releases that split one language into `Signs and Songs` and
-/// `Dialogue` also flag the wrong one as the server default often enough that
-/// the index the server hands back is not trustworthy either.
+/// One selectable stream, identified by what it *is* rather than where it sits,
+/// since "index 3" is not the same track twice.
 ///
 /// `is_forced` and `is_external` are subtitle notions; for audio they are
-/// always `false` (an external audio stream has no mpv track and never becomes
-/// an identity), so their weights add the same constant to every audio
-/// candidate and cannot change a ranking.
+/// always `false`, so they cannot change a ranking.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TrackId {
     pub(crate) index: i64,
@@ -61,38 +45,25 @@ impl TrackKind {
 /// The track the user last chose by hand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TrackPreference {
-    /// The track was switched off. Resolves to `-1`, an explicit `no` rather
-    /// than "unspecified" — for subtitles it has to, because `sub-add` selects
-    /// the track it adds, so leaving the index unset shows the last external
-    /// subtitle instead of none.
+    /// Switched off. Resolves to an explicit `-1`, not "unspecified": for
+    /// subtitles, `sub-add` selects what it adds, so unset shows the last one.
     Off,
     /// This track was chosen. Match its equivalent, never its index.
     Stream(TrackId),
 }
 
 /// The one slot holding a [`TrackPreference`]; `None` is "nothing remembered".
-///
-/// A plain field on `Runtime`, which outlives every websocket session — this
-/// used to be an `Arc<Mutex<_>>` shared with `runtime::run`, back when a
-/// reconnect built a fresh `Runtime` and a plain field would have dropped the
-/// user's choice on any network blip.
-///
-/// There is one slot per kind. They are the same type, so only the two named
+/// One slot per kind, and since both are this same type, only the two named
 /// `Runtime` fields keep them apart.
 pub(crate) type TrackMemory = Option<TrackPreference>;
 
 impl TrackPreference {
-    /// What the user just picked, or `None` when it cannot be identified.
-    ///
-    /// Two choices are unidentifiable: an index this item cannot select, and a
-    /// stream carrying neither a language nor a name. Both are *forgotten*
-    /// rather than stored — an identity that can never match again would just
-    /// keep the previous choice alive, and silently re-applying a track the
-    /// user has already moved away from is the most confusing outcome
-    /// available.
+    /// What the user just picked, or `None` when it cannot be identified — an
+    /// unselectable index, or a stream with neither a language nor a name.
+    /// Forgotten rather than stored, so it falls back to the server default
+    /// instead of keeping a stale choice alive.
     pub(crate) fn from_selection(candidates: &[TrackId], stream_index: i64) -> Option<Self> {
-        // Off is a decision even for an item with no streams of this kind at
-        // all, so it never consults the candidate list.
+        // Off is a decision even for an item with no streams of this kind.
         if stream_index < 0 {
             return Some(Self::Off);
         }
@@ -101,17 +72,10 @@ impl TrackPreference {
     }
 }
 
-/// Score weights.
-///
-/// The magnitudes are deliberately non-overlapping, so the sum behaves
-/// lexicographically: everything below [`LANGUAGE`] adds up to less than it, so
-/// no pile of name and flag agreements can ever outrank the language. That
-/// ordering is the point — playing the wrong language is a far worse failure
-/// than playing the wrong track within the right one.
+/// Score weights. Non-overlapping magnitudes, so the sum is lexicographic:
+/// everything below [`LANGUAGE`] together cannot outrank the language.
 const LANGUAGE: u32 = 1000;
-/// Neither side names a language. Worth something (two unlabelled tracks in a
-/// single-language release really are comparable) but never enough to qualify a
-/// candidate on its own.
+/// Neither side names a language. Comparable, but never qualifying on its own.
 const BOTH_LANGUAGES_UNKNOWN: u32 = 200;
 const TITLE: u32 = 400;
 const DISPLAY_TITLE: u32 = 200;
@@ -121,10 +85,8 @@ const CODEC: u32 = 10;
 /// A tiebreak only, and strictly weaker than every semantic signal.
 const INDEX: u32 = 5;
 
-/// A field's value, or `None` when it carries no identity.
-///
-/// Jellyfin sends `""` and `"und"` rather than omitting these, and treating
-/// those as a value would make every unlabelled track match every other one.
+/// A field's value, or `None` when it carries no identity. Jellyfin sends `""`
+/// and `"und"` rather than omitting, and those match everything.
 fn named(field: &Option<String>) -> Option<&str> {
     let value = field.as_deref()?.trim();
     if value.is_empty()
@@ -136,12 +98,8 @@ fn named(field: &Option<String>) -> Option<&str> {
     Some(value)
 }
 
-/// Both sides present and equal ignoring ASCII case. Two absences are never a
-/// match: nothing is not an identity.
-///
-/// `eq_ignore_ascii_case` rather than `to_lowercase` so matching does not
-/// allocate a `String` per field per candidate per episode; a title with no
-/// ASCII in it has no case to fold anyway.
+/// Both sides present and equal ignoring ASCII case. Two absences never match:
+/// nothing is not an identity.
 fn same(a: Option<&str>, b: Option<&str>) -> bool {
     matches!((a, b), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b))
 }
@@ -166,8 +124,7 @@ fn score(wanted: &TrackId, candidate: &TrackId) -> Option<u32> {
     );
 
     // Flags, codec and index only *rank* candidates that already look like the
-    // same track. On their own they would happily match an unrelated stream —
-    // every non-forced embedded SRT agrees with every other one.
+    // same track; alone they match every non-forced embedded SRT equally.
     if !(language || title || display_title) {
         return None;
     }
@@ -204,21 +161,14 @@ pub(crate) fn best_match<'a>(wanted: &TrackId, candidates: &'a [TrackId]) -> Opt
     candidates
         .iter()
         .filter_map(|candidate| Some((score(wanted, candidate)?, candidate)))
-        // Highest score wins; a tie goes to the lowest index, so an item with
-        // two indistinguishable tracks resolves the same way every time.
+        // Ties go to the lowest index, so this is stable.
         .min_by_key(|(score, candidate)| (std::cmp::Reverse(*score), candidate.index))
         .map(|(_, candidate)| candidate)
 }
 
-/// The Jellyfin stream index to play for this item.
-///
-/// Precedence, highest first:
-///
-/// 1. `requested` — the remote named a stream for this item. It just told us
-///    what the user wants; nothing we remember outranks that.
-/// 2. The remembered preference, when this item has a track matching it.
-/// 3. `server_default` — `DefaultAudioStreamIndex` /
-///    `DefaultSubtitleStreamIndex`, the behaviour before any of this existed.
+/// The Jellyfin stream index to play for this item. Precedence: `requested`
+/// (the remote just told us), then a matching remembered preference, then
+/// `server_default`.
 pub(crate) fn resolve_track_index(
     kind: TrackKind,
     requested: Option<i64>,

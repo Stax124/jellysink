@@ -2,7 +2,6 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// Represents the current playing state of the media player
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PlayingState {
     pub(crate) item_id: String,
@@ -15,13 +14,11 @@ pub(crate) struct PlayingState {
     pub(crate) audio_stream_index: i64,
     pub(crate) subtitle_stream_index: i64,
     pub(crate) can_seek: bool,
-    /// The prebuilt `NowPlayingQueue` payload. Shared rather than rebuilt per
-    /// report — see `PlaylistWindow::now_playing`.
+    /// The prebuilt `NowPlayingQueue` payload; see `PlaylistWindow::now_playing`.
     pub(crate) now_playing_queue: Arc<Vec<Value>>,
 }
 
 impl PlayingState {
-    /// Converts the playing state to something that we can send back to Jellyfin
     pub(crate) fn to_json(&self) -> Value {
         json!({
             "VolumeLevel": self.volume,
@@ -41,7 +38,6 @@ impl PlayingState {
     }
 }
 
-/// Represents a type of report to be sent back to Jellyfin
 #[derive(Debug, Clone)]
 pub(crate) enum Report {
     Start(PlayingState),
@@ -49,10 +45,8 @@ pub(crate) enum Report {
     Stopped(PlayingState),
 }
 
-/// Ordered, non-blocking session reports. Stopped then Start must never race.
-///
-/// The handle is returned rather than detached so a session owns its reporter
-/// and can abort it on teardown.
+/// Ordered, non-blocking session reports: a Stopped must never overtake the
+/// Start before it. The handle is returned so a session can abort it.
 pub(crate) fn spawn_reporter<F, Fut>(
     mut send: F,
 ) -> (mpsc::UnboundedSender<Report>, tokio::task::JoinHandle<()>)

@@ -75,9 +75,8 @@ impl Runtime {
             index = self.window.index(),
             "playing"
         );
-        // After `loadfile ... replace` (which wipes mpv's playlist), put the
-        // rest of the window in: remaining episodes at the end, previous
-        // episodes spliced in ahead of the current file.
+        // `loadfile ... replace` wiped mpv's playlist, so refill it around the
+        // current file.
         self.fill_forward_into_mpv().await;
         self.fill_previous_into_mpv().await;
         Ok(())
@@ -101,10 +100,8 @@ impl Runtime {
         self.send_stopped();
         self.window.adopt_index(queue_index);
         tracing::info!(item = %item_id, index = queue_index, "adopted mpv playlist jump");
-        // No cache branch here. `prepare_item` already returns the cached
-        // prepare for a plain request, and routing through it is what lets the
-        // remembered subtitle reach a playlist jump and mpv's own autoplay —
-        // which is the path a series actually takes between episodes.
+        // Via `prepare_item` (which caches plain requests itself) so remembered
+        // tracks also reach a playlist jump and mpv's own autoplay.
         let (prep, _) = self.prepare_item(&item_id, &PlayRequest::default()).await?;
         self.current = Some(prep);
         self.item_id = Some(item_id);
@@ -166,11 +163,8 @@ impl Runtime {
             );
             let _ = self.apply_subtitle(subtitle_stream_index).await;
         }
-        // Whatever mpv ended up on is the baseline for this file, so the
-        // property changes `sub-add` and our own `sid` writes just emitted are
-        // not mistaken for the user reaching for the track menu. Read rather
-        // than assumed: with no index to apply, the selection is mpv's own —
-        // its config's default track, or the last `sub-add`ed one.
+        // Whatever mpv ended up on is this file's baseline, so the property
+        // changes the writes above emitted do not read as a user's pick.
         self.settle_subtitle_track().await;
         self.settle_audio_track().await;
         Ok(())
@@ -198,24 +192,13 @@ impl Runtime {
         }
     }
 
-    /// Adopts a subtitle track picked in the mpv window.
+    /// Adopts a subtitle track picked in the mpv window (`j`), mapping mpv's
+    /// track id back to the Jellyfin stream index the rest of the code speaks.
     ///
-    /// A Jellyfin client is not the only way to change subtitles — `j` in mpv
-    /// is, and in practice it is the usual one. mpv reports it as a `sid`
-    /// property change; this maps that track id back to the Jellyfin stream
-    /// index the rest of the code speaks, so the choice is remembered for the
-    /// next episode ([`Runtime::remember_subtitle`]) and the Jellyfin UI stops
-    /// showing a track that is not playing.
-    ///
-    /// The event's own value is not used. Property changes travel on their own
-    /// channel and are handled well after they were emitted, so mpv's
-    /// auto-selection during a file load lands here *after*
-    /// [`Runtime::configure_streams`] has applied our choice over it. Comparing
-    /// mpv's live selection against the one we last settled on is what makes
-    /// those stale events no-ops.
+    /// The event carries no value: it is handled long after it was emitted, so
+    /// only mpv's live `sid` against the last settled one says anything.
     pub(super) async fn adopt_mpv_subtitle_track(&mut self) {
-        // A file that is still loading reports the selection of neither the old
-        // file nor the configured new one.
+        // A loading file reports neither the old selection nor the new one.
         if self.transitioning || self.stopping || self.current.is_none() {
             return;
         }
@@ -240,12 +223,9 @@ impl Runtime {
                 match self.jellyfin_subtitle_index(subtitle_track_id) {
                     Some(jellyfin_index) => jellyfin_index,
                     None => {
-                        // A track mpv has and Jellyfin does not: a sidecar the
-                        // user loaded themselves, or an in-file track Jellyfin
-                        // only offers as an extracted sidecar. Nothing to
-                        // report, and nothing that could be re-found in the
-                        // next episode — but it is what is on screen, so it
-                        // becomes the baseline and stops re-firing.
+                        // A track Jellyfin does not have (a user's own sidecar).
+                        // Unreportable, but still the baseline so it stops
+                        // re-firing.
                         tracing::debug!(
                             subtitle_track_id,
                             "mpv selected a subtitle track with no Jellyfin stream index"
@@ -271,8 +251,8 @@ impl Runtime {
 
     /// The Jellyfin stream index an mpv subtitle track id came from.
     fn jellyfin_subtitle_index(&self, subtitle_track_id: i64) -> Option<i64> {
-        // `sub-add` appends, so an external track's id sits above the embedded
-        // numbering and the two cannot collide; the order here is arbitrary.
+        // `sub-add` appends, so external ids sit above the embedded numbering
+        // and the two lookups cannot collide.
         self.external_subtitle_track_ids
             .iter()
             .find(|(_, track_id)| **track_id == subtitle_track_id)
@@ -282,13 +262,10 @@ impl Runtime {
             })
     }
 
-    /// Records the user's subtitle choice by identity, so the next episode can
-    /// get the same track even though its stream index will differ.
-    ///
-    /// A choice we cannot identify is *forgotten* rather than kept: an identity
-    /// that can never match again would leave the previous choice in place, and
-    /// silently re-applying a track the user has already moved away from is
-    /// worse than falling back to the server default.
+    /// Records the user's subtitle choice by identity, since the next episode
+    /// numbers its streams differently. An unidentifiable choice is forgotten
+    /// rather than kept: re-applying a track the user left is worse than the
+    /// server default.
     pub(super) fn remember_subtitle(&mut self, jellyfin_index: i64) {
         let candidates = self
             .current
@@ -315,16 +292,10 @@ impl Runtime {
         self.last_subtitle = preference;
     }
 
-    /// Adopts an audio track picked in the mpv window.
-    ///
-    /// `#` in the mpv window is the audio counterpart of `j`, and the same
-    /// staleness problem applies: mpv's own auto-selection during a file load
-    /// arrives after [`Runtime::configure_streams`] has applied our choice over
-    /// it, so the live `aid` is compared against the one we last settled on
-    /// rather than trusting the event.
+    /// Adopts an audio track picked in the mpv window (`#`), the audio side of
+    /// [`Runtime::adopt_mpv_subtitle_track`] and stale for the same reason.
     pub(super) async fn adopt_mpv_audio_track(&mut self) {
-        // A file that is still loading reports the selection of neither the old
-        // file nor the configured new one.
+        // A loading file reports neither the old selection nor the new one.
         if self.transitioning || self.stopping || self.current.is_none() {
             return;
         }
@@ -344,17 +315,15 @@ impl Runtime {
         let jellyfin_index = match selected {
             // mpv between tracks, not a decision to report.
             SelectedTrack::Unresolved => return,
-            // `cycle audio` past the last track. A decision like any other.
+            // `cycle audio` past the last track: a decision like any other.
             SelectedTrack::Off => -1,
             SelectedTrack::Id(audio_track_id) => {
                 match self.jellyfin_audio_index(audio_track_id) {
                     Some(jellyfin_index) => jellyfin_index,
                     None => {
-                        // A track mpv has and Jellyfin does not — an external
-                        // file mpv picked up beside the stream. Nothing to
-                        // report, and nothing that could be re-found in the
-                        // next episode, but it is what is playing, so it
-                        // becomes the baseline and stops re-firing.
+                        // A track Jellyfin does not have (an external file mpv
+                        // picked up). Unreportable, but still the baseline so
+                        // it stops re-firing.
                         tracing::debug!(
                             audio_track_id,
                             "mpv selected an audio track with no Jellyfin stream index"
@@ -378,19 +347,14 @@ impl Runtime {
         self.send_progress();
     }
 
-    /// The Jellyfin stream index an mpv audio track id came from.
-    ///
-    /// One lookup rather than the subtitle version's two: mpv never loads an
-    /// external audio stream, so there is no `sub-add` equivalent to consult.
+    /// The Jellyfin stream index an mpv audio track id came from. One lookup,
+    /// not the subtitle version's two: there is no external audio.
     fn jellyfin_audio_index(&self, audio_track_id: i64) -> Option<i64> {
         jellyfin_embedded_audio_index(&self.current.as_ref()?.maps, audio_track_id)
     }
 
-    /// Records the user's audio choice by identity, so the next episode can get
-    /// the same track even though its stream index will differ.
-    ///
-    /// A choice we cannot identify is *forgotten* rather than kept, for the
-    /// reason [`Runtime::remember_subtitle`] gives.
+    /// Records the user's audio choice by identity, like
+    /// [`Runtime::remember_subtitle`] and forgetful in the same case.
     pub(super) fn remember_audio(&mut self, jellyfin_index: i64) {
         let candidates = self
             .current
@@ -513,12 +477,9 @@ impl Runtime {
         self.send_progress();
     }
 
-    /// Re-announces the current play on a freshly connected session.
-    ///
-    /// A server that dropped this device's session during the outage has no
-    /// now-playing for it, and progress reports alone never bring it back. The
-    /// state is resampled first: nothing polled mpv while the socket was down,
-    /// so the position can be a whole backoff interval stale.
+    /// Re-announces the current play on a freshly connected session: a server
+    /// that dropped the session needs a start to show a now-playing again.
+    /// Resampled first, since nothing polled mpv while the socket was down.
     pub(super) async fn reannounce(&mut self) {
         if self.mpv.is_none() || self.current.is_none() {
             return;
@@ -527,14 +488,13 @@ impl Runtime {
         self.send_start();
     }
 
-    /// Pulls position, pause, volume and mute out of mpv. Each read is
-    /// independently fallible and a failure keeps the previous value: a
-    /// half-dead IPC socket must not rewrite the state we would report.
+    /// Pulls position, pause, volume and mute out of mpv, keeping the previous
+    /// value per failed read: a half-dead IPC socket must not rewrite state.
     async fn sample_mpv_state(&mut self) {
         let Some(mpv) = self.mpv.as_mut() else {
             return;
         };
-        // A dead/zero sample during unload must not throw away a known position.
+        // A dead/zero sample during unload must not lose a known position.
         let live = mpv.time_pos().await.ok();
         self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
         if let Ok(p) = mpv.paused().await {
@@ -643,9 +603,8 @@ impl Runtime {
         self.mpv_gen = self.mpv_gen.wrapping_add(1);
         let generation = self.mpv_gen;
         let tx = self.mpv_tx.clone();
-        // Aborting the previous forwarder stops it leaking, but is not enough on
-        // its own: events it already put on the shared channel are still queued.
-        // `generation` is what lets the main loop discard those.
+        // Aborting the previous forwarder leaves the events it already queued on
+        // the shared channel; `generation` is how the main loop discards those.
         if let Some(previous) = self.mpv_events.replace(tokio::spawn(async move {
             let mut events = events;
             while let Some(ev) = events.recv().await {
@@ -679,8 +638,7 @@ impl Runtime {
         } else {
             None
         };
-        // A teardown sample can fail or read 0 (window closed, IPC gone);
-        // never let it clobber the position the progress ticks already saved.
+        // A teardown sample can fail or read 0 (window closed, IPC gone).
         self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
         if report {
             self.send_stopped();
@@ -695,8 +653,7 @@ impl Runtime {
         self.current = None;
         self.item_id = None;
         self.external_subtitle_track_ids.clear();
-        // Per-mpv-session state, unlike `last_subtitle` / `last_audio`, which
-        // outlive both the session and a reconnect.
+        // Per-mpv-session, unlike `last_subtitle` / `last_audio`.
         self.settled_subtitle_track = SelectedTrack::Unresolved;
         self.settled_audio_track = SelectedTrack::Unresolved;
         self.paused = false;
@@ -771,12 +728,9 @@ fn stream_url_with_token(api: &Api, item_id: &str, prep: &PreparedPlay) -> Strin
     }
 }
 
-/// The URL to hand mpv, plus whether mpv is now carrying the Authorization
-/// header.
-///
-/// The header is a global mpv property, so it also covers playlist rows loaded
-/// later — which is how [`Runtime::playlist_stub_entries`] avoids putting the
-/// token in URLs mpv writes to its watch_later files.
+/// The URL to hand mpv, plus whether mpv now carries the Authorization header.
+/// The header is global, so it covers later playlist rows too and keeps the
+/// token out of the URLs mpv writes to its watch_later files.
 struct AppliedAuth {
     url: String,
     header_set: bool,

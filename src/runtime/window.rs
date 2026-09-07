@@ -2,7 +2,7 @@ use crate::mpv::EndFileReason;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-/// The queue, plus how much of it mpv currently holds.
+/// The queue, plus how much of it mpv currently holds. See `specs/playlist.md`.
 ///
 /// mpv's playlist is always a contiguous slice of the queue:
 ///
@@ -11,21 +11,9 @@ use std::sync::Arc;
 /// ```
 ///
 /// The `+ 1` is the current item, whose mpv position is therefore
-/// `queue.index - origin` ([`Self::expected_pos`]).
-///
-/// These five values only make sense together, and `specs/playlist.md` calls
-/// the arithmetic "easy to break" — it has been broken twice already. Keeping
-/// them behind one type means there is one place to reason about, and the tests
-/// at the bottom of this file exercise the real code rather than a parallel
-/// model of it.
-///
-/// Two consequences that are easy to get wrong, both pinned by tests below:
-///
-/// 1. **A prepend does not move `origin`.** Splicing n entries before the
-///    current item shifts its queue index *and* its mpv position by the same n.
-/// 2. **The current position is `index - origin`, not `head`.** They coincide
-///    right after a prepend and diverge as soon as a playlist jump moves
-///    `index`.
+/// `queue.index - origin` ([`Self::expected_pos`]) — not `head`, which only
+/// coincides with it until a playlist jump moves `index`. A prepend leaves
+/// `origin` alone, since the index and the mpv position shift together.
 #[derive(Debug, Default)]
 pub(super) struct PlaylistWindow {
     queue: Queue,
@@ -35,15 +23,11 @@ pub(super) struct PlaylistWindow {
     head: usize,
     /// Queue entries already in mpv *after* the current one.
     tail: usize,
-    /// Previous episodes spliced into the queue but not yet into mpv. They wait
-    /// until the current file is loaded, because `loadfile ... replace` wipes
-    /// mpv's playlist.
+    /// Previous episodes spliced into the queue but not yet into mpv; they wait
+    /// out the `loadfile ... replace` that would wipe them.
     pending_prepend: Vec<String>,
     /// The rendered `NowPlayingQueue` payload, rebuilt only when the queue
-    /// changes. Jellyfin gets this on every progress report — once a second —
-    /// and with prepending on it is the whole series, up to 500 entries.
-    /// Rebuilding it per tick meant 500 `String` clones plus 500 `format!`s a
-    /// second.
+    /// changes; it goes out once a second and can be 500 entries long.
     now_playing: Arc<Vec<Value>>,
 }
 
@@ -76,10 +60,8 @@ impl PlaylistWindow {
         self.tail
     }
 
-    /// The current item's position in mpv's playlist.
-    ///
-    /// Deriving this from `head` instead reports a stale position after a
-    /// playlist jump and misreads every subsequent EOF.
+    /// The current item's position in mpv's playlist. Deriving it from `head`
+    /// instead goes stale on a playlist jump and misreads every later EOF.
     pub(super) fn expected_pos(&self) -> usize {
         self.queue.index.saturating_sub(self.origin)
     }
@@ -105,23 +87,18 @@ impl PlaylistWindow {
 
     /// Splices previous episodes into the queue ahead of the current item and
     /// holds them for [`Self::take_pending_prepend`]. Returns how many.
-    ///
-    /// Callers pass only ids not already in the queue, so this is idempotent
-    /// when it runs again after advancing to the next episode.
     pub(super) fn prepend(&mut self, previous: Vec<String>) -> usize {
         let n = self.queue.insert_before_current(previous.clone());
         self.rebuild_now_playing();
-        // The current item's queue index and its mpv position both shift by n,
-        // so the window start is unchanged and only `head` grows.
+        // Queue index and mpv position shift together, so only `head` grows.
         self.head += n;
         self.pending_prepend = previous;
         n
     }
 
     // --- Queue delegation ---------------------------------------------------
-    // `Queue`'s fields are private to this module: `index` and the window's
-    // `origin`/`head`/`tail` are one invariant, and reaching past these is how
-    // it got broken before.
+    // `Queue`'s fields stay private: `index` and `origin`/`head`/`tail` are one
+    // invariant.
 
     pub(super) fn items(&self) -> &[String] {
         &self.queue.items
@@ -170,14 +147,13 @@ impl PlaylistWindow {
         self.rebuild_now_playing();
     }
 
-    /// The `NowPlayingQueue` Jellyfin's now-playing view renders. Cloning it is
-    /// a refcount bump; see [`Self::now_playing`].
+    /// The `NowPlayingQueue` Jellyfin's now-playing view renders.
     pub(super) fn now_playing_queue(&self) -> Arc<Vec<Value>> {
         Arc::clone(&self.now_playing)
     }
 
-    /// Rebuilt eagerly on every queue mutation rather than lazily per report:
-    /// mutations are a handful per play, reports are one a second.
+    /// Eager on mutation rather than lazy per report: mutations are a handful
+    /// per play, reports are one a second.
     fn rebuild_now_playing(&mut self) {
         self.now_playing = Arc::new(
             self.queue
@@ -200,8 +176,7 @@ impl PlaylistWindow {
         std::mem::take(&mut self.pending_prepend)
     }
 
-    /// The slice of the queue this window claims mpv is holding. The invariant
-    /// itself, spelled out; the tests below assert against it.
+    /// The window invariant spelled out, for the tests to assert against.
     #[cfg(test)]
     fn mpv_playlist(&self) -> &[String] {
         let end = (self.origin + self.head + 1 + self.tail).min(self.queue.items.len());
@@ -238,12 +213,8 @@ impl Queue {
     }
 
     /// Splices `ids` in immediately before the current item, keeping `index`
-    /// on the same item. Returns how many were inserted.
-    ///
-    /// The splice is at `index`, not at 0: mpv's playlist is the contiguous
-    /// window `items[origin..origin + 1 + tail]`, so entries inserted ahead of
-    /// the current item must land inside that window. Splicing at 0 would put
-    /// them before `origin` and leave a hole the window arithmetic cannot see.
+    /// on the same item. Returns how many were inserted. At `index`, not 0, so
+    /// they land inside mpv's window rather than in a hole before `origin`.
     pub(super) fn insert_before_current(&mut self, ids: Vec<String>) -> usize {
         let n = ids.len();
         let at = self.index;
@@ -295,8 +266,8 @@ pub(super) fn end_file_action(
         return EndFileAction::Ignore;
     }
     match reason {
-        // Advance always tries the next item (and may expand the series).
-        // Stopping is play_next_or_stop's decision when nothing follows.
+        // Advance may still expand the series; stopping is
+        // play_next_or_stop's call.
         EndFileReason::Eof | EndFileReason::Redirect => EndFileAction::Advance,
         EndFileReason::Quit | EndFileReason::Stop | EndFileReason::Error => EndFileAction::Stop,
         EndFileReason::Other => EndFileAction::Ignore,
@@ -320,13 +291,10 @@ pub(super) fn queue_index_at(
     origin.checked_add(playlist_pos).filter(|i| *i < queue_len)
 }
 
-/// After EOF (caller already applied `end_file_action`). `playlist_count` is mpv's
-/// playlist length, which is `Queue[origin..]` entries already appended.
-///
-/// `expected_pos` is the playlist index of the file that just ended
-/// (`queue.index - origin`). `from_eof` is true for mpv `end-file`, false for
-/// a user Next. With `keep-open=yes` mpv already auto-plays the next playlist
-/// entry on EOF; `playlist-next` on top of that skips to N+2.
+/// After EOF (caller already applied `end_file_action`). `expected_pos` is the
+/// playlist index of the file that just ended; `from_eof` separates mpv's own
+/// `end-file` from a user Next, because `keep-open=yes` already auto-plays the
+/// next entry and a `playlist-next` on top of it would skip to N+2.
 pub(super) fn playlist_eof(
     playlist_pos: usize,
     playlist_count: usize,

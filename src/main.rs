@@ -57,12 +57,11 @@ enum ConfigCmd {
     Get { key: Option<String> },
     /// Set a key (mpv_path, mpv_args, log_level, autoplay, prepend_previous)
     ///
-    /// The list is `config::Field`; a test pins it against this help text.
+    /// A test pins this list against `config::Field`.
     Set {
         key: String,
-        /// Values may start with `-` (e.g. `mpv_args --fullscreen`).
-        /// `mpv_args` is stored in mpv_args.conf and re-read on every mpv
-        /// spawn, so changes apply without restarting the daemon.
+        /// Values may start with `-` (e.g. `mpv_args --fullscreen`). `mpv_args`
+        /// is re-read on every mpv spawn, so no restart is needed.
         #[arg(allow_hyphen_values = true)]
         value: String,
     },

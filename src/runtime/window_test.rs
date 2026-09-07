@@ -1,10 +1,7 @@
 //! mpv's playlist is the contiguous window
 //! `items[origin .. origin + head + 1 + tail]`, and the current item sits at
-//! `index - origin`. These tests pin that invariant across a prepend, because
-//! every index calculation in `runtime/` depends on it.
-//!
-//! They used to run against a `Window` struct in the test module that
-//! reimplemented the arithmetic, so they could pass while the real code drifted.
+//! `index - origin`. These tests pin that invariant across a prepend, against
+//! the real `PlaylistWindow` rather than a model of it.
 
 use super::*;
 use serde_json::json;
@@ -12,8 +9,7 @@ use serde_json::json;
 /// `start_current`: mpv holds only the current item.
 fn start(items: &[&str], index: usize) -> PlaylistWindow {
     let mut w = PlaylistWindow::default();
-    // Through the window's own method, not `queue` directly: `replace` also
-    // rebuilds the NowPlayingQueue payload.
+    // `replace`, not `queue` directly: it also rebuilds NowPlayingQueue.
     w.replace(items.iter().map(|s| s.to_string()).collect(), index);
     w.reset_to_current();
     w

@@ -26,14 +26,9 @@ impl Paths {
         Ok(Self { config_dir })
     }
 
-    /// Creates the config directory, mode 0700.
-    ///
-    /// This is the race-free half of keeping the access token private. cred.json
-    /// gets 0600 of its own, but `mpv.sock` is created by *mpv*, and anyone who
-    /// can open it can read the token back out of `http-header-fields`. We
-    /// cannot choose that socket's mode, so we make the directory around it
-    /// unreadable to anyone else instead. Applied on every run, so an existing
-    /// 0755 directory from an older version is tightened too.
+    /// Creates the config directory, mode 0700 — `mpv.sock` is created by mpv
+    /// under its own umask and hands out the access token, so the directory
+    /// around it is what keeps it private. Re-applied on every run.
     pub(crate) fn ensure(&self) -> color_eyre::Result<()> {
         fs::create_dir_all(&self.config_dir)
             .wrap_err_with(|| format!("creating {}", self.config_dir.display()))?;
@@ -67,19 +62,12 @@ impl Paths {
     }
 }
 
-/// Every user-facing configuration key.
-///
-/// The list used to be spelled out in six places — the struct, four `default_*`
-/// functions, the `Default` impl, `get`, `set`, and the CLI help — with
-/// `mpv_args` handled entirely outside `Config` as a seventh special case, so
-/// `jellysink config get` with no key silently omitted it. Matching on this
-/// enum is exhaustive, so adding a key is a compile error until every arm is
-/// handled.
+/// Every user-facing configuration key. Matching on it is exhaustive, so a new
+/// key is a compile error until every place that handles keys handles it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Field {
     MpvPath,
-    /// Lives in `mpv_args.conf`, not `config.toml`: a running daemon re-reads
-    /// it on every mpv spawn instead of holding a copy from startup.
+    /// Lives in `mpv_args.conf`, re-read on every mpv spawn.
     MpvArgs,
     LogLevel,
     Autoplay,
@@ -141,11 +129,8 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Reads config.toml, or the defaults when there is none.
-    ///
-    /// Pure: this used to `save` on a missing file, so `jellysink config path`
-    /// created one as a side effect. [`Self::load_or_create`] is the version
-    /// that writes.
+    /// Reads config.toml, or the defaults when there is none. Pure;
+    /// [`Self::load_or_create`] is the version that writes.
     pub fn load(paths: &Paths) -> color_eyre::Result<Self> {
         let path = paths.config_file();
         if !path.exists() {
@@ -197,8 +182,7 @@ impl Config {
         match field {
             Field::MpvArgs => return Ok(false),
             Field::MpvPath => self.mpv_path = value.to_string(),
-            // Validate now rather than failing at the next startup, which is
-            // where `parse_log_filter` would otherwise reject it.
+            // Rejected here rather than at the next startup.
             Field::LogLevel => {
                 crate::tracing::validate_log_level(value)
                     .map_err(|e| usage_err(format!("invalid log_level {value:?}: {e}")))?;
@@ -211,12 +195,10 @@ impl Config {
     }
 }
 
-/// Extra mpv argv, kept in its own file so a running daemon re-reads it on
-/// every spawn instead of holding a stale copy from startup.
+/// Extra mpv argv, kept in its own file and re-read on every spawn.
 ///
-/// One argument per line; blank lines and `#` comments are ignored. A line
-/// may itself contain whitespace (e.g. `--title=My Movie`), so splitting is
-/// by line, not by shell words.
+/// One argument per line (`--title=My Movie` is one line, not two words);
+/// blank lines and `#` comments are ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct MpvArgs(pub Vec<String>);
 
@@ -284,8 +266,8 @@ pub(crate) struct Credentials {
 }
 
 impl fmt::Debug for Credentials {
-    /// Hand-written so `access_token` cannot reach a log line or a color-eyre
-    /// capture. Serialization is unaffected — cred.json still holds the token.
+    /// Hand-written so `access_token` cannot reach a log line. Serialization is
+    /// unaffected — cred.json still holds the token.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials")
             .field("server", &self.server)
@@ -382,8 +364,7 @@ pub(crate) fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
     let port_part = match url.port() {
         Some(p) => format!(":{p}"),
         None if explicit_port(trimmed) => {
-            // `Url::port()` hides the scheme default (80/443), but the user
-            // wrote it on purpose — keep it.
+            // `Url::port()` hides 80/443, but the user wrote it on purpose.
             match url.port_or_known_default() {
                 Some(p) => format!(":{p}"),
                 None => String::new(),

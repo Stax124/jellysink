@@ -122,9 +122,8 @@ async fn spawn_launches(launches: &[TerminalLaunch]) -> std::io::Result<()> {
     let mut last_err =
         std::io::Error::new(std::io::ErrorKind::NotFound, "no terminal emulator found");
     for launch in launches {
-        // tokio's Command, not std's: this runs on the daemon's
-        // `current_thread` runtime, where a synchronous fork/exec stalls the
-        // WebSocket keepalive and mpv IPC along with everything else.
+        // tokio's Command: a synchronous fork/exec would stall the daemon's
+        // single-threaded runtime.
         let mut cmd = Command::new(&launch.program);
         cmd.args(&launch.args)
             .stdin(Stdio::null())
@@ -142,12 +141,9 @@ async fn spawn_launches(launches: &[TerminalLaunch]) -> std::io::Result<()> {
     Err(last_err)
 }
 
-/// Ok if the child is still running or exited 0 (double-fork). Err if it
-/// exited non-zero before `timeout`.
-///
-/// Awaits the child rather than polling `try_wait` every 20 ms: with up to
-/// fifteen candidate terminals, that loop could spend seconds of the daemon's
-/// single runtime thread doing nothing.
+/// Ok if the child is still running or exited 0 (double-fork), Err if it exited
+/// non-zero before `timeout`. Awaited, not polled: fifteen candidate terminals
+/// would busy-wait seconds of the daemon's one runtime thread.
 async fn spawn_looks_ok(child: &mut Child, timeout: Duration) -> std::io::Result<()> {
     match tokio::time::timeout(timeout, child.wait()).await {
         // Still running when the probe expired: it launched.

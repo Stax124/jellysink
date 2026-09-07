@@ -83,8 +83,7 @@ pub fn cmd_config_path(paths: &Paths) -> color_eyre::Result<()> {
 
 pub fn cmd_config_get(paths: &Paths, key: Option<&str>) -> color_eyre::Result<()> {
     let Some(key) = key else {
-        // The whole configuration, including mpv_args — which lives in its own
-        // file and used to be silently omitted from this dump.
+        // The whole configuration, including the mpv_args from their own file.
         let cfg = Config::load(paths)?;
         print!("{}", cfg.to_toml()?);
         let args = MpvArgs::get(paths)?;

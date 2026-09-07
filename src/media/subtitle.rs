@@ -1,25 +1,17 @@
-//! The subtitle side of the track memory.
-//!
-//! All of the matching lives in [`crate::media::track`]; this is the
-//! subtitle-specific surface — the names the rest of the code uses, and the
-//! `kind` the log lines are tagged with.
+//! The subtitle side of the track memory: names and log `kind` only, with the
+//! matching in [`crate::media::track`].
 
 use super::streams::SubtitleId;
 use super::track::{TrackKind, TrackMemory, TrackPreference, resolve_track_index};
 
-/// The subtitle track the user last chose by hand.
-///
-/// [`TrackPreference::Off`] resolves to `-1`, an explicit `sid=no` rather than
-/// "unspecified" — it has to, because `sub-add` selects the track it adds, so
-/// leaving the index unset shows the last external subtitle instead of none.
+/// The subtitle track the user last chose by hand. [`TrackPreference::Off`] is
+/// an explicit `sid=no`, since `sub-add` selects whatever it just added.
 pub(crate) type SubtitlePreference = TrackPreference;
 
 /// The one slot holding the [`SubtitlePreference`]. See [`TrackMemory`].
 pub(crate) type SubtitleMemory = TrackMemory;
 
-/// The Jellyfin subtitle stream index to play for this item.
-///
-/// See [`resolve_track_index`] for the precedence.
+/// The Jellyfin subtitle stream index to play; see [`resolve_track_index`].
 pub(crate) fn resolve_subtitle_index(
     requested: Option<i64>,
     preference: Option<&SubtitlePreference>,

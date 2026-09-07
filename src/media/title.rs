@@ -26,10 +26,8 @@ pub(crate) fn display_title(item: &Value) -> String {
     name.to_string()
 }
 
-/// Display titles from a series episode listing, keyed by item id.
-///
-/// Playlist fill uses this so mpv's selector has names without a per-item
-/// `PlaybackInfo` / `GET /Items/{id}` round trip.
+/// Display titles from a series episode listing, keyed by item id, so the
+/// playlist fill needs no per-item round trip.
 pub(crate) fn episode_titles(listing: &Value) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some(items) = listing.get("Items").and_then(Value::as_array) else {

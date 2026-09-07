@@ -22,9 +22,8 @@ pub(crate) struct UpdateOffer {
     pub(crate) version: String,
 }
 
-/// `progress` only controls the download progress bar; `self_update`'s own commentary is always
-/// off. Its "New release is *NOT* compatible" line is semver-correct for every 0.x minor bump
-/// (and for any future major one) but reads as a warning, so jellysink prints its own messages.
+/// `progress` is the download bar only. `self_update`'s own commentary stays
+/// off: its "*NOT* compatible" line fires on every 0.x minor bump.
 fn updater(progress: bool) -> color_eyre::Result<github::AsyncUpdate> {
     let target = release_target().ok_or_else(|| {
         eyre!(
@@ -69,8 +68,8 @@ pub(crate) async fn install(progress: bool) -> color_eyre::Result<self_update::V
 /// Linux `readlink(/proc/self/exe)` appends this after the original inode is unlinked.
 const DELETED_SUFFIX: &str = " (deleted)";
 
-/// Directory-entry path to exec after `self_replace`. `current_exe()` at restart
-/// time is `$path (deleted)` and `execve` fails with ENOENT.
+/// Path to exec after `self_replace`; `current_exe()` is then `$path (deleted)`
+/// and `execve` fails with ENOENT.
 pub(crate) fn restart_exe_path(current: &Path) -> PathBuf {
     match current.to_str() {
         Some(s) if s.ends_with(DELETED_SUFFIX) => {

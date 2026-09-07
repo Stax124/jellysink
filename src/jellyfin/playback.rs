@@ -7,9 +7,6 @@ use color_eyre::eyre::WrapErr;
 use serde_json::{Value, json};
 
 /// The playback and session endpoints.
-///
-/// These used to hang off a `PlaybackEndpoints<'a>` wrapper holding a single
-/// `&Api` field, constructed at four call sites and adding nothing.
 impl Api {
     pub(crate) async fn post_capabilities(&self) -> color_eyre::Result<()> {
         self.post_json("/Sessions/Capabilities/Full", &capabilities())
@@ -61,11 +58,8 @@ impl Api {
         resp.json().await.wrap_err("decoding PlaybackInfo")
     }
 
-    /// The whole series in aired order, with no `StartItemId` cursor.
-    ///
-    /// `StartItemId` is a forward-only `SkipWhile`, so it can never return the
-    /// episodes *before* the current one. Omitting it is the only way to see
-    /// them; the caller splits the listing at the current item.
+    /// The whole series in aired order. No `StartItemId`: it is a forward-only
+    /// `SkipWhile`, so the caller splits the listing itself.
     pub(crate) async fn episodes_all(&self, series_id: &str) -> color_eyre::Result<Value> {
         let path = format!(
             "/Shows/{series_id}/Episodes?userId={}&Limit=500",

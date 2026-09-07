@@ -1,31 +1,21 @@
-//! The audio side of the track memory.
+//! The audio side of the track memory: names and log `kind` only, with the
+//! matching in [`crate::media::track`].
 //!
-//! All of the matching lives in [`crate::media::track`]; this is the
-//! audio-specific surface — the names the rest of the code uses, and the `kind`
-//! the log lines are tagged with.
-//!
-//! Audio needs this for the same reason subtitles do: a dual-audio release
-//! flags whichever track it likes as `DefaultAudioStreamIndex`, so a user who
-//! switches from the dub to the original track gets the dub back on the next
-//! episode. Stream indexes are per-file, so the choice is remembered as an
-//! identity and re-matched.
+//! Needed because a dual-audio release flags whichever track it likes as
+//! `DefaultAudioStreamIndex`, so a user who picks the original gets the dub
+//! back next episode.
 
 use super::streams::AudioId;
 use super::track::{TrackKind, TrackMemory, TrackPreference, resolve_track_index};
 
-/// The audio track the user last chose by hand.
-///
-/// [`TrackPreference::Off`] is reachable: mpv's `cycle audio` (`#`) cycles
-/// through "no audio", and that is a decision like any other — it resolves to
-/// `-1`, an explicit `aid=no`.
+/// The audio track the user last chose by hand. [`TrackPreference::Off`] is
+/// reachable: `cycle audio` (`#`) passes through "no audio".
 pub(crate) type AudioPreference = TrackPreference;
 
 /// The one slot holding the [`AudioPreference`]. See [`TrackMemory`].
 pub(crate) type AudioMemory = TrackMemory;
 
-/// The Jellyfin audio stream index to play for this item.
-///
-/// See [`resolve_track_index`] for the precedence.
+/// The Jellyfin audio stream index to play; see [`resolve_track_index`].
 pub(crate) fn resolve_audio_index(
     requested: Option<i64>,
     preference: Option<&AudioPreference>,

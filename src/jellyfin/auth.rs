@@ -6,11 +6,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::fmt;
 
-/// The server rejected our access token.
-///
-/// Typed so the reconnect loop can recognise it without substring-matching a
-/// formatted error chain. That chain carries the request URL, so matching on
-/// `"401"` also fired for a server on port 401 or an item id containing `401`.
+/// The server rejected our access token. Typed so the reconnect loop does not
+/// have to look for `"401"` in an error chain that also carries the URL.
 #[derive(Debug)]
 pub(crate) struct AuthExpired;
 
@@ -22,9 +19,8 @@ impl fmt::Display for AuthExpired {
 
 impl std::error::Error for AuthExpired {}
 
-/// Whether `err` was caused by an expired token, at any depth. `Report`'s own
-/// `downcast_ref` only inspects the outermost error, so a caller adding
-/// `wrap_err` context would hide it.
+/// Whether `err` was caused by an expired token at any depth; `downcast_ref`
+/// would only see the outermost error.
 pub(crate) fn is_auth_expired(err: &color_eyre::Report) -> bool {
     err.chain().any(|cause| cause.is::<AuthExpired>())
 }
@@ -66,13 +62,12 @@ pub(crate) struct Api {
     pub(crate) device_id: String,
     pub(crate) device_name: String,
     pub(crate) user_id: String,
-    /// Precomputed: it is the same for the process lifetime, and every request
-    /// needs it — including a progress report once a second.
+    /// Precomputed: constant for the process, and needed once a second.
     auth_header: String,
 }
 
 impl fmt::Debug for Api {
-    /// Hand-written so `token` cannot reach a log line or a color-eyre capture.
+    /// Hand-written so `token` cannot reach a log line.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Api")
             .field("server", &self.server)
@@ -110,8 +105,7 @@ impl Api {
         format!("Authorization: {}", self.auth_header())
     }
 
-    /// Attaches auth, sends, and turns a 401 into [`AuthExpired`]. The single
-    /// place that decides what a 401 means.
+    /// Attaches auth, sends, and turns a 401 into [`AuthExpired`].
     async fn send(
         &self,
         req: reqwest::RequestBuilder,
@@ -145,8 +139,7 @@ impl Api {
     }
 }
 
-/// The one place an HTTP client is built. `login` cannot go through `Api`,
-/// which needs credentials it does not have yet.
+/// The one place an HTTP client is built; `login` has no `Api` to go through.
 fn http_client() -> color_eyre::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(format!("{CLIENT_NAME}/{VERSION}"))

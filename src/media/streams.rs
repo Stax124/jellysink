@@ -20,23 +20,15 @@ pub(crate) struct StreamMaps {
 }
 
 /// One subtitle stream, identified by what it *is* rather than where it sits.
-/// See [`TrackId`] and [`crate::media::subtitle`], which matches on this.
-///
-/// An alias, not a distinct type: it and [`AudioId`] name the same struct, and
-/// only the two named `Runtime` fields keep the two memories apart.
+/// An alias, not a distinct type — see [`TrackId`].
 pub(crate) type SubtitleId = TrackId;
 
-/// One audio stream, identified the same way. See [`SubtitleId`].
-///
-/// Only streams mpv has a track for become an `AudioId`; an external audio
-/// stream is never loaded, so it can never be selected and must never become a
-/// remembered choice.
+/// One audio stream, identified the same way as [`SubtitleId`]. Only streams
+/// mpv has a track for: an external audio stream is never loaded.
 pub(crate) type AudioId = TrackId;
 
-/// A `MediaStream`'s `Type`.
-///
-/// Parsed rather than derived so an unknown value cannot fail the whole
-/// response; Jellyfin adds fields and values between versions.
+/// A `MediaStream`'s `Type`. Parsed rather than derived, so a value Jellyfin
+/// added since cannot fail the whole response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StreamType {
     Audio,
@@ -76,10 +68,6 @@ impl DeliveryMethod {
 }
 
 /// One entry of a `MediaSource`'s `MediaStreams`.
-///
-/// `#[serde(default)]` throughout: the whole surface used to be walked with
-/// `get(..).and_then(Value::as_bool).unwrap_or(false)`, eight times in this
-/// file alone, with `IsExternal` read twice in one loop iteration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub(crate) struct MediaStream {
@@ -94,9 +82,8 @@ pub(crate) struct MediaStream {
     pub(crate) delivery_url: Option<String>,
     pub(crate) codec: Option<String>,
     pub(crate) language: Option<String>,
-    /// Jellyfin's raw `Title` — the muxer's track name ("Signs and Songs",
-    /// "Dialogue"). More stable across episodes and providers than
-    /// `DisplayTitle`, which bakes in the language and the codec.
+    /// The muxer's track name ("Signs and Songs"). More stable across episodes
+    /// than `DisplayTitle`, which bakes in the language and codec.
     pub(crate) title: Option<String>,
     pub(crate) display_title: Option<String>,
     pub(crate) path: Option<String>,
@@ -145,9 +132,8 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
         let Some(jellyfin_index) = stream.index else {
             continue;
         };
-        // mpv only has a track for audio muxed into the file. An external audio
-        // stream is never loaded, and mapping it anyway handed back the aid of
-        // the *next* embedded track — selecting it played the wrong audio.
+        // mpv only has a track for muxed audio; mapping an external stream
+        // anyway hands back the aid of the next embedded one.
         if stream.is_external {
             tracing::debug!(
                 jellyfin_index,
@@ -199,9 +185,8 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
             display_title = sub.display_title.as_deref(),
             "subtitle stream"
         );
-        // The two warn arms are the streams we cannot point mpv at, so they
-        // also must not become a remembered choice: the user would pick one and
-        // every later episode would silently fall back to the server default.
+        // The warn arms are streams we cannot point mpv at, so they must not
+        // become a remembered choice either.
         let selectable = match sub.delivery() {
             DeliveryMethod::Embed => {
                 maps.subtitle_track_id_by_stream_index
@@ -239,12 +224,9 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
                 is_external: sub.is_external,
             });
         }
-        // Unlike the audio loop above, this counter tracks what *mpv* sees, and
-        // the Embed/External branch above tracks how *Jellyfin* delivers it.
-        // The two are independent: Jellyfin reports an in-file subtitle as
-        // External when it has to extract it to a sidecar, and mpv still has an
-        // in-file track for it. So gate the counter on IsExternal, not on
-        // DeliveryMethod, and do not skip the entry.
+        // Gated on IsExternal, not delivery: Jellyfin reports an in-file
+        // subtitle as External when it extracts a sidecar, and mpv still has an
+        // in-file track for it.
         if !sub.is_external {
             subtitle_track_id += 1;
         }
@@ -253,15 +235,9 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
     maps
 }
 
-/// Whether any subtitle stream is served from a different origin than the
-/// Jellyfin server.
-///
-/// mpv applies `http-header-fields` to *every* request it makes, so if a
-/// subtitle lives elsewhere the Authorization header would be sent to a third
-/// party. In that case the token goes on the stream URL instead.
-///
-/// This built a `HashSet<String>` of hostnames whose only consumer was
-/// `.is_empty()`, allocating for every subtitle stream on every prepare.
+/// Whether any subtitle stream comes from another origin, in which case the
+/// token goes on the stream URL: mpv applies `http-header-fields` to every
+/// request it makes, third-party hosts included.
 pub(crate) fn has_foreign_subtitle_host(server: &str, source: &MediaSource) -> bool {
     let Ok(base) = reqwest::Url::parse(server) else {
         return false;
@@ -301,13 +277,8 @@ pub(crate) fn mpv_embedded_subtitle_track_id(
         .copied()
 }
 
-/// Resolve an embedded mpv subtitle track id (`sid`) back to its Jellyfin
-/// stream index — [`mpv_embedded_subtitle_track_id`] backwards, for a track the
-/// user picked in the mpv window rather than in a Jellyfin client.
-///
-/// A linear scan of a map that holds one entry per subtitle stream in the file;
-/// keeping a second `HashMap` in sync for a handful of entries read once per
-/// track change is not worth it.
+/// [`mpv_embedded_subtitle_track_id`] backwards, for a track picked in the mpv
+/// window. A scan: one entry per subtitle stream, read once per track change.
 pub(crate) fn jellyfin_embedded_subtitle_index(
     maps: &StreamMaps,
     subtitle_track_id: i64,
@@ -318,13 +289,8 @@ pub(crate) fn jellyfin_embedded_subtitle_index(
         .map(|(jellyfin_index, _)| *jellyfin_index)
 }
 
-/// Resolve an mpv audio track id (`aid`) back to its Jellyfin stream index —
-/// [`mpv_audio_track_id`] backwards, for a track the user picked in the mpv
-/// window rather than in a Jellyfin client.
-///
-/// A linear scan of a map that holds one entry per embedded audio stream in the
-/// file; keeping a second `HashMap` in sync for a handful of entries read once
-/// per track change is not worth it.
+/// [`mpv_audio_track_id`] backwards, for a track picked in the mpv window.
+/// A scan: one entry per audio stream, read once per track change.
 pub(crate) fn jellyfin_embedded_audio_index(maps: &StreamMaps, audio_track_id: i64) -> Option<i64> {
     maps.audio_track_id_by_stream_index
         .iter()

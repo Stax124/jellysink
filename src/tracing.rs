@@ -6,28 +6,16 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 /// Parse a `tracing` filter spec (`info`, `jellysink=debug,warn`, …).
 ///
-/// `Targets`, not `EnvFilter`, to keep the binary small — but not for the
-/// reason this comment used to give. `regex`, `regex-automata`, `regex-syntax`
-/// and `aho-corasick` are *already* linked in via `self_update`, and
-/// `EnvFilter` adds only one crate on top (`matchers`).
-///
-/// Measured anyway, because the crate count is misleading: enabling
-/// `env-filter` grew the release binary from 9,072,344 to 9,258,856 bytes
-/// (+186 KB, +2.1%) — LTO drops much of `regex` today, and `EnvFilter` pulls it
-/// back. `Targets` covers the directives jellysink actually uses (`log_level`
-/// and simple `RUST_LOG` values); what it gives up is span-field filtering.
+/// `Targets` rather than `EnvFilter`: measured at +186 KB (+2.1%) of release
+/// binary, and all we give up is span-field filtering.
 pub(crate) fn parse_log_filter(spec: &str) -> Result<Targets> {
     spec.parse()
         .wrap_err_with(|| format!("invalid log filter {spec:?}"))
 }
 
-/// Validates a `log_level` before it is written to config.toml.
-///
-/// Stricter than [`parse_log_filter`] on purpose. `Targets` reads a bare word
-/// as a *target name*, so `log_level = "banana"` parses happily and then
-/// filters out everything jellysink logs — the setting silently does the
-/// opposite of what was meant. A spec with no `=` is a level, so require it to
-/// be one.
+/// Validates a `log_level` before it is written to config.toml. Stricter than
+/// [`parse_log_filter`], which reads a bare `"banana"` as a target name and
+/// then silently filters out everything jellysink logs.
 pub(crate) fn validate_log_level(spec: &str) -> Result<()> {
     parse_log_filter(spec)?;
     let bare = spec.trim();

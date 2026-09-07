@@ -3,15 +3,10 @@ use tokio::sync::watch;
 
 /// A latching one-way signal: shutdown, restart, or "install the update".
 ///
-/// This replaces `Arc<Notify>` + `notify_waiters()`. `notify_waiters` stores no
-/// permit — it only wakes futures that are *already registered*. Every receiver
-/// in this crate re-creates its future on each loop iteration, and those loop
-/// bodies routinely await mpv IPC (10 s timeout), so a tray Quit or a
-/// `jellysink stop` landing in that window was silently dropped.
-///
-/// `watch` latches instead: [`Signal::fire`] is observed by [`Signal::fired`]
-/// no matter when it was called. [`Signal::fired`] is cancel-safe — dropping
-/// the future never consumes the latched value.
+/// Latching matters because receivers re-create their future each iteration
+/// around awaits as long as mpv's 10 s IPC timeout, so anything that only wakes
+/// already-registered futures drops a Quit landing in that window.
+/// [`Signal::fired`] is cancel-safe.
 #[derive(Clone, Debug)]
 pub(crate) struct Signal {
     tx: Arc<watch::Sender<bool>>,
@@ -45,9 +40,7 @@ impl Signal {
             if *rx.borrow_and_update() {
                 return;
             }
-            // The sender lives as long as this `Signal`, so `Err` only happens
-            // once every clone is gone. Treat that as "nothing left to wait for"
-            // rather than hanging.
+            // Every `Signal` clone is gone: nothing left to wait for.
             if rx.changed().await.is_err() {
                 return;
             }

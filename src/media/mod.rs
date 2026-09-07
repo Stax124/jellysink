@@ -21,7 +21,6 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::fmt;
 
-/// Represents a prepared play session
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PreparedPlay {
     pub(crate) url: String,
@@ -37,8 +36,7 @@ pub(crate) struct PreparedPlay {
 }
 
 impl fmt::Debug for PreparedPlay {
-    /// Hand-written so `url` cannot carry the access token into a log line or a
-    /// color-eyre capture.
+    /// Hand-written so `url` cannot carry the access token into a log line.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PreparedPlay")
             .field("url", &redact_api_key(&self.url))
@@ -55,12 +53,8 @@ impl fmt::Debug for PreparedPlay {
     }
 }
 
-/// What the remote asked for when starting an item.
-///
-/// These four travelled as positional parameters through five layers, and three
-/// of them are `Option<i64>` — so transposing two compiled fine and silently
-/// picked the wrong track. Six of the eight `start_current` call sites pass
-/// nothing at all, which is [`PlayRequest::default`].
+/// What the remote asked for when starting an item. A struct because three of
+/// the four are `Option<i64>`, and most callers want [`PlayRequest::default`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PlayRequest {
     /// Resume offset, in Jellyfin ticks.
@@ -85,7 +79,6 @@ impl PlayRequest {
     }
 }
 
-/// Prepares a play session for the given item
 pub(crate) fn prepare_play(
     server: &str,
     item_id: &str,
@@ -128,10 +121,8 @@ pub(crate) fn prepare_play(
     let default_audio_stream_index = source.default_audio_stream_index;
     let default_subtitle_stream_index = source.default_subtitle_stream_index;
     let audio_stream_index = req.audio_stream_index.or(default_audio_stream_index);
-    // `None` from Play means "use the server default". `-1` from Play is an
-    // explicit Off. The server also uses `-1` when SubtitleMode=Default and
-    // no stream is flagged default/forced/external — that is still a decision
-    // of Off, not "unspecified".
+    // `None` means "server default", `-1` an explicit Off — including the `-1`
+    // the server itself returns when nothing is flagged.
     let play_subtitle_stream_index = req.subtitle_stream_index;
     let subtitle_stream_index = req.subtitle_stream_index.or(default_subtitle_stream_index);
 
@@ -163,16 +154,13 @@ pub(crate) fn prepare_play(
         subtitle_stream_index,
         uses_auth_header,
         external_sub_urls,
-        // Overwritten from `/Items/{id}` when that optional fetch succeeds; this
-        // is the same fallback `display_title` uses when it does not.
+        // Overwritten from `/Items/{id}` when that optional fetch succeeds.
         title: "Jellyfin".to_string(),
     })
 }
 
-/// Highest-value source, unless the caller named one.
-///
-/// DirectPlay outweighs any bitrate difference; among equals, the fattest
-/// stream wins.
+/// Highest-value source, unless the caller named one: DirectPlay outweighs any
+/// bitrate difference, and among equals the fattest stream wins.
 pub(crate) fn select_media_source<'a>(
     sources: &'a [MediaSource],
     preferred: Option<&str>,
