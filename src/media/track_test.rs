@@ -140,29 +140,3 @@ fn the_lowest_index_wins_between_two_indistinguishable_tracks() {
     let candidates = vec![track(5, "eng", "Dialogue"), track(4, "eng", "Dialogue")];
     assert_eq!(best_match(&wanted, &candidates).map(|c| c.index), Some(4));
 }
-
-#[test]
-fn the_shared_memory_round_trips_and_can_be_forgotten() {
-    let memory = TrackMemory::default();
-    assert_eq!(remembered_track(&memory), None);
-    remember_track(&memory, Some(TrackPreference::Off));
-    assert_eq!(remembered_track(&memory), Some(TrackPreference::Off));
-    // A second session holding the same slot sees the choice; this is what
-    // survives a websocket reconnect.
-    assert_eq!(
-        remembered_track(&TrackMemory::clone(&memory)),
-        Some(TrackPreference::Off)
-    );
-    remember_track(&memory, None);
-    assert_eq!(remembered_track(&memory), None);
-}
-
-/// The two slots are the same type; only the fields that hold them keep
-/// them apart. Nothing should leak from one into the other.
-#[test]
-fn two_memory_slots_are_independent() {
-    let audio = TrackMemory::default();
-    let subtitle = TrackMemory::default();
-    remember_track(&audio, Some(TrackPreference::Off));
-    assert_eq!(remembered_track(&subtitle), None);
-}

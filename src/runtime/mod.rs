@@ -16,14 +16,14 @@ use crate::signal::Signal;
 use color_eyre::eyre::{WrapErr, eyre};
 use futures_util::{SinkExt, StreamExt};
 
-/// The background tasks a session owns.
+/// Background tasks tied to the lifetime of whatever owns this.
 ///
-/// Dropping this aborts them. Without it, a reconnect spawned a fresh
-/// WebSocket reader and left the previous one running: against a half-open TCP
+/// Dropping it aborts them. Without it, a reconnect spawned a fresh WebSocket
+/// reader and left the previous one running: against a half-open TCP
 /// connection it never returns, so it leaked for the life of the process.
-struct SessionTasks(Vec<tokio::task::JoinHandle<()>>);
+struct AbortOnDrop(Vec<tokio::task::JoinHandle<()>>);
 
-impl Drop for SessionTasks {
+impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         for task in &self.0 {
             task.abort();
@@ -70,6 +70,14 @@ fn reconnect_delay(current: Duration, session_lasted: Duration, auth_expired: bo
     }
 }
 
+/// The daemon loop: one long-lived player, a WebSocket that comes and goes.
+///
+/// `Runtime` is built once here and reused by every session, so a dropped
+/// WebSocket is not visible to the user — mpv keeps playing, the queue, the
+/// volume and the remembered tracks all stay put, and the next session picks
+/// up exactly where the last one left off. Only the socket, its reader and the
+/// keepalive are per-session; the mpv channel and the report sink are not, so
+/// neither an mpv event nor a queued report is lost to a reconnect.
 pub(crate) async fn run(
     config: Config,
     creds: Credentials,
@@ -77,45 +85,42 @@ pub(crate) async fn run(
     shutdown: Signal,
 ) -> color_eyre::Result<()> {
     let mut backoff = BACKOFF_MIN;
-    // Owned out here, not by `Runtime`: `run_session` builds a fresh `Runtime`
-    // on every reconnect, and the tracks the user picked should outlive a
-    // network blip. Memory only — nothing about them reaches disk.
-    let last_subtitle = SubtitleMemory::default();
-    let last_audio = AudioMemory::default();
+    let api = Api::from_credentials(&creds)?;
+    let (mpv_tx, mut mpv_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, MpvEvent)>();
+    let (report_tx, report_task) = spawn_report_sink(Arc::new(api.clone()));
+    // Aborted when `run` returns, however it returns.
+    let _tasks = AbortOnDrop(vec![report_task]);
+    let mut rt = Runtime::new(api, config, paths, mpv_tx, report_tx);
     loop {
         let started = Instant::now();
-        tokio::select! {
-            _ = shutdown.fired() => return Ok(()),
-            result = run_session(
-                &config,
-                &creds,
-                &paths,
-                shutdown.clone(),
-                &last_subtitle,
-                &last_audio,
-            ) => {
-                match result {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        let auth_expired = is_auth_expired(&e);
-                        if auth_expired {
-                            tracing::error!(
-                                "{e:#}; staying idle until `jellysink login` is run again"
-                            );
-                        } else {
-                            tracing::warn!("session ended: {e:#}");
-                        }
-                        backoff = reconnect_delay(backoff, started.elapsed(), auth_expired);
-                    }
+        match run_session(&mut rt, &mut mpv_rx, &shutdown).await {
+            // Only shutdown ends a session cleanly.
+            Ok(()) => break,
+            Err(e) => {
+                let auth_expired = is_auth_expired(&e);
+                if auth_expired {
+                    tracing::error!("{e:#}; staying idle until `jellysink login` is run again");
+                } else {
+                    tracing::warn!("session ended: {e:#}");
                 }
+                backoff = reconnect_delay(backoff, started.elapsed(), auth_expired);
             }
         }
+        // Playback is deliberately left alone across the gap: nothing here
+        // touches `rt`. Progress goes unreported until the next session (the
+        // server is usually unreachable anyway), and mpv events raised while
+        // we wait stay queued on `mpv_rx` for it to handle — the `mpv_gen` tag
+        // is what keeps stale ones out.
         tokio::select! {
-            _ = shutdown.fired() => return Ok(()),
+            _ = shutdown.fired() => break,
             _ = sleep(backoff) => {}
         }
         backoff = (backoff * 2).min(BACKOFF_MAX);
     }
+    // Not in a `select!` arm above: `run_session` holds `&mut rt`, so the
+    // borrow checker will not let one of its arms touch `rt`.
+    rt.stop_playback(true).await;
+    Ok(())
 }
 
 /// Connects the remote-control WebSocket and pumps it into two channels.
@@ -182,18 +187,19 @@ fn spawn_report_sink(
     })
 }
 
+/// One WebSocket session against the given, already-running [`Runtime`].
+///
+/// Returns `Ok(())` only for shutdown; any other end is an `Err` the caller
+/// backs off and reconnects from. Errors deliberately leave `rt` — and so mpv,
+/// the queue and the reported state — untouched.
 async fn run_session(
-    config: &Config,
-    creds: &Credentials,
-    paths: &Paths,
-    shutdown: Signal,
-    last_subtitle: &SubtitleMemory,
-    last_audio: &AudioMemory,
+    rt: &mut Runtime,
+    mpv_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(u64, MpvEvent)>,
+    shutdown: &Signal,
 ) -> color_eyre::Result<()> {
-    let api = Api::from_credentials(creds)?;
-    api.post_capabilities().await?;
+    rt.api.post_capabilities().await?;
 
-    let ws_url = websocket_url(&api.server, &api.token, &api.device_id)?;
+    let ws_url = websocket_url(&rt.api.server, &rt.api.token, &rt.api.device_id)?;
     tracing::info!("connecting websocket");
     let (ws, _) = tokio_tungstenite::connect_async(&ws_url)
         .await
@@ -202,19 +208,10 @@ async fn run_session(
     let (mut ws_write, ws_read) = ws.split();
 
     let (mut ev_rx, mut ka_rx, ws_task) = spawn_ws_reader(ws_read);
-    let (mpv_tx, mut mpv_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, MpvEvent)>();
-    let (report_tx, report_task) = spawn_report_sink(Arc::new(api.clone()));
     // Aborted when this returns, however it returns.
-    let _tasks = SessionTasks(vec![ws_task, report_task]);
-    let mut rt = Runtime::new(
-        api,
-        config.clone(),
-        paths.clone(),
-        mpv_tx,
-        report_tx,
-        last_subtitle.clone(),
-        last_audio.clone(),
-    );
+    let _tasks = AbortOnDrop(vec![ws_task]);
+
+    rt.reannounce().await;
 
     let mut keepalive = tokio::time::interval(Duration::from_secs(30));
     let mut progress = tokio::time::interval(Duration::from_secs(1));
@@ -223,16 +220,12 @@ async fn run_session(
 
     loop {
         tokio::select! {
-            _ = shutdown.fired() => {
-                rt.stop_playback(true).await;
-                return Ok(());
-            }
+            _ = shutdown.fired() => return Ok(()),
             _ = keepalive.tick() => {
                 let msg = tokio_tungstenite::tungstenite::Message::Text(
                     json!({"MessageType":"KeepAlive"}).to_string().into(),
                 );
                 if ws_write.send(msg).await.is_err() {
-                    rt.stop_playback(true).await;
                     return Err(eyre!("websocket send failed"));
                 }
             }
@@ -249,10 +242,7 @@ async fn run_session(
                     // immediately and forever, so an empty body here left the
                     // arm permanently hot and spun the loop until `select!`
                     // happened to pick `ev_rx`.
-                    None => {
-                        rt.stop_playback(true).await;
-                        return Err(eyre!("websocket closed"));
-                    }
+                    None => return Err(eyre!("websocket closed")),
                 }
             }
             _ = progress.tick() => {
@@ -265,10 +255,7 @@ async fn run_session(
                             tracing::error!("cast command failed: {e:#}");
                         }
                     }
-                    None => {
-                        rt.stop_playback(true).await;
-                        return Err(eyre!("websocket closed"));
-                    }
+                    None => return Err(eyre!("websocket closed")),
                 }
             }
             tagged = mpv_rx.recv() => {
@@ -278,13 +265,10 @@ async fn run_session(
                     }
                     // From a previous mpv session; see `mpv_gen`.
                     Some(_) => {}
-                    // `rt` owns the matching sender for as long as this loop
+                    // `rt` owns the matching sender for as long as `run`
                     // runs, so this cannot fire. Kept as a safety net rather
                     // than a panic, since the alternative in a daemon is worse.
-                    None => {
-                        rt.stop_playback(true).await;
-                        return Err(eyre!("mpv event channel closed"));
-                    }
+                    None => return Err(eyre!("mpv event channel closed")),
                 }
             }
         }
@@ -315,17 +299,16 @@ struct Runtime {
     /// Jellyfin subtitle stream index → mpv subtitle track id for `sub-add`ed files.
     external_subtitle_track_ids: HashMap<i64, i64>,
     /// The subtitle track the user last picked by hand, re-applied to the next
-    /// episode by identity rather than by index. Shared with `run`, so it
-    /// survives a reconnect; deliberately never cleared by `start_current`,
-    /// `adopt_playlist_pos` or `stop_playback`.
+    /// episode by identity rather than by index. Deliberately never cleared by
+    /// `start_current`, `adopt_playlist_pos` or `stop_playback`.
     last_subtitle: SubtitleMemory,
     /// mpv's subtitle selection as of the last time it was *ours* — the end of
     /// `configure_streams`, or an `apply_subtitle`. A `sid` property change
     /// reporting anything else is the user picking a track in the mpv window.
     settled_subtitle_track: SelectedTrack,
     /// The audio track the user last picked by hand, re-applied to the next
-    /// episode by identity rather than by index. Shared and never cleared, for
-    /// the same reasons as `last_subtitle`.
+    /// episode by identity rather than by index. Never cleared, for the same
+    /// reasons as `last_subtitle`.
     last_audio: AudioMemory,
     /// `settled_subtitle_track` for `aid`.
     settled_audio_track: SelectedTrack,
@@ -351,8 +334,6 @@ impl Runtime {
         paths: Paths,
         mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
         report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
-        last_subtitle: SubtitleMemory,
-        last_audio: AudioMemory,
     ) -> Self {
         Self {
             api,
@@ -371,9 +352,9 @@ impl Runtime {
             stopping: false,
             last_ticks: 0,
             external_subtitle_track_ids: HashMap::new(),
-            last_subtitle,
+            last_subtitle: SubtitleMemory::default(),
             settled_subtitle_track: SelectedTrack::Unresolved,
-            last_audio,
+            last_audio: AudioMemory::default(),
             settled_audio_track: SelectedTrack::Unresolved,
             report_tx,
             transitioning: false,

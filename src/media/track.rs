@@ -18,8 +18,6 @@
 //! and in how the log lines read, so both go through this one matcher; see
 //! [`crate::media::audio`] and [`crate::media::subtitle`] for the two sides.
 
-use std::sync::{Arc, Mutex, PoisonError};
-
 /// One selectable stream, identified by what it *is* rather than where it sits.
 ///
 /// Stream indexes are per-file: the next episode can order its streams
@@ -72,33 +70,16 @@ pub(crate) enum TrackPreference {
     Stream(TrackId),
 }
 
-/// The one slot holding a [`TrackPreference`].
+/// The one slot holding a [`TrackPreference`]; `None` is "nothing remembered".
 ///
-/// Shared rather than owned because `Runtime` is rebuilt by `run_session` on
-/// every websocket reconnect; a plain field would drop the choice on any
-/// network blip. Created once in `runtime::run`, cloned into each session.
+/// A plain field on `Runtime`, which outlives every websocket session — this
+/// used to be an `Arc<Mutex<_>>` shared with `runtime::run`, back when a
+/// reconnect built a fresh `Runtime` and a plain field would have dropped the
+/// user's choice on any network blip.
 ///
 /// There is one slot per kind. They are the same type, so only the two named
 /// `Runtime` fields keep them apart.
-pub(crate) type TrackMemory = Arc<Mutex<Option<TrackPreference>>>;
-
-/// Reads the remembered choice out of a shared slot.
-///
-/// Clones rather than handing back a guard: every caller is `async`, and a
-/// `std::sync::MutexGuard` held across an `.await` is exactly the deadlock this
-/// avoids. A poisoned lock still yields the value — losing a track preference
-/// is not worth a panic in a daemon.
-pub(crate) fn remembered_track(memory: &TrackMemory) -> Option<TrackPreference> {
-    memory
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone()
-}
-
-/// Overwrites the remembered choice. `None` forgets it.
-pub(crate) fn remember_track(memory: &TrackMemory, preference: Option<TrackPreference>) {
-    *memory.lock().unwrap_or_else(PoisonError::into_inner) = preference;
-}
+pub(crate) type TrackMemory = Option<TrackPreference>;
 
 impl TrackPreference {
     /// What the user just picked, or `None` when it cannot be identified.

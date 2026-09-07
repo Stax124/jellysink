@@ -14,7 +14,6 @@ pub(crate) use streams::{
 };
 pub(crate) use subtitle::{SubtitleMemory, SubtitlePreference, resolve_subtitle_index};
 pub(crate) use title::{display_title, episode_titles, item_type, series_id};
-pub(crate) use track::{remember_track, remembered_track};
 
 use crate::jellyfin::url::{direct_stream_url, redact_api_key};
 use color_eyre::eyre::{WrapErr, eyre};

@@ -3,7 +3,6 @@ use crate::jellyfin::auth::Api;
 use crate::media::{
     AudioPreference, PlayRequest, PreparedPlay, SubtitlePreference, jellyfin_embedded_audio_index,
     jellyfin_embedded_subtitle_index, mpv_audio_track_id, mpv_embedded_subtitle_track_id,
-    remember_track,
 };
 use crate::mpv::{MpvSession, SelectedTrack};
 use crate::report::{PlayingState, Report};
@@ -290,7 +289,7 @@ impl Runtime {
     /// that can never match again would leave the previous choice in place, and
     /// silently re-applying a track the user has already moved away from is
     /// worse than falling back to the server default.
-    pub(super) fn remember_subtitle(&self, jellyfin_index: i64) {
+    pub(super) fn remember_subtitle(&mut self, jellyfin_index: i64) {
         let candidates = self
             .current
             .as_ref()
@@ -313,7 +312,7 @@ impl Runtime {
                 "subtitle choice carries no identity; forgetting the previous one"
             ),
         }
-        remember_track(&self.last_subtitle, preference);
+        self.last_subtitle = preference;
     }
 
     /// Adopts an audio track picked in the mpv window.
@@ -392,7 +391,7 @@ impl Runtime {
     ///
     /// A choice we cannot identify is *forgotten* rather than kept, for the
     /// reason [`Runtime::remember_subtitle`] gives.
-    pub(super) fn remember_audio(&self, jellyfin_index: i64) {
+    pub(super) fn remember_audio(&mut self, jellyfin_index: i64) {
         let candidates = self
             .current
             .as_ref()
@@ -415,7 +414,7 @@ impl Runtime {
                 "audio choice carries no identity; forgetting the previous one"
             ),
         }
-        remember_track(&self.last_audio, preference);
+        self.last_audio = preference;
     }
 
     pub(super) async fn apply_audio(&mut self, jellyfin_index: i64) -> color_eyre::Result<()> {
@@ -510,21 +509,43 @@ impl Runtime {
         if self.mpv.is_none() || self.current.is_none() {
             return;
         }
-        if let Some(mpv) = self.mpv.as_mut() {
-            // A dead/zero sample during unload must not throw away a known position.
-            let live = mpv.time_pos().await.ok();
-            self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
-            if let Ok(p) = mpv.paused().await {
-                self.paused = p;
-            }
-            if let Ok(v) = mpv.volume().await {
-                self.volume = v;
-            }
-            if let Ok(m) = mpv.muted().await {
-                self.muted = m;
-            }
-        }
+        self.sample_mpv_state().await;
         self.send_progress();
+    }
+
+    /// Re-announces the current play on a freshly connected session.
+    ///
+    /// A server that dropped this device's session during the outage has no
+    /// now-playing for it, and progress reports alone never bring it back. The
+    /// state is resampled first: nothing polled mpv while the socket was down,
+    /// so the position can be a whole backoff interval stale.
+    pub(super) async fn reannounce(&mut self) {
+        if self.mpv.is_none() || self.current.is_none() {
+            return;
+        }
+        self.sample_mpv_state().await;
+        self.send_start();
+    }
+
+    /// Pulls position, pause, volume and mute out of mpv. Each read is
+    /// independently fallible and a failure keeps the previous value: a
+    /// half-dead IPC socket must not rewrite the state we would report.
+    async fn sample_mpv_state(&mut self) {
+        let Some(mpv) = self.mpv.as_mut() else {
+            return;
+        };
+        // A dead/zero sample during unload must not throw away a known position.
+        let live = mpv.time_pos().await.ok();
+        self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
+        if let Ok(p) = mpv.paused().await {
+            self.paused = p;
+        }
+        if let Ok(v) = mpv.volume().await {
+            self.volume = v;
+        }
+        if let Ok(m) = mpv.muted().await {
+            self.muted = m;
+        }
     }
 
     fn snapshot(&self, position_ticks: i64) -> Option<PlayingState> {
