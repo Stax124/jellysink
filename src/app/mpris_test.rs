@@ -5,7 +5,7 @@ use crate::runtime::status::NowPlaying;
 fn playing_status(paused: bool, has_next: bool, has_previous: bool) -> PlayerStatus {
     PlayerStatus {
         server: "http://x".into(),
-        username: "tomas".into(),
+        username: "admin".into(),
         now_playing: Some(NowPlaying {
             item_id: "item-1".into(),
             title: "Ep 1".into(),
@@ -23,7 +23,7 @@ fn playing_status(paused: bool, has_next: bool, has_previous: bool) -> PlayerSta
 }
 
 fn idle_status() -> PlayerStatus {
-    PlayerStatus::idle("http://x".into(), "tomas".into())
+    PlayerStatus::idle("http://x".into(), "admin".into())
 }
 
 fn player(status: PlayerStatus) -> (PlayerIface, mpsc::UnboundedReceiver<CastEvent>) {

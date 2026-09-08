@@ -2,9 +2,9 @@ use super::*;
 
 #[test]
 fn idle_status_has_no_now_playing() {
-    let s = PlayerStatus::idle("http://x".into(), "tomas".into());
+    let s = PlayerStatus::idle("http://x".into(), "admin".into());
     assert!(s.now_playing.is_none());
-    assert_eq!(s.username, "tomas");
+    assert_eq!(s.username, "admin");
 }
 
 /// The wire format between the daemon (serializes) and the CLI (deserializes)
@@ -13,7 +13,7 @@ fn idle_status_has_no_now_playing() {
 fn status_round_trips_through_json() {
     let s = PlayerStatus {
         server: "http://x".into(),
-        username: "tomas".into(),
+        username: "admin".into(),
         now_playing: Some(NowPlaying {
             item_id: "1".into(),
             title: "Ep 1".into(),
@@ -30,6 +30,6 @@ fn status_round_trips_through_json() {
     };
     let json = serde_json::to_vec(&s).unwrap();
     let back: PlayerStatus = serde_json::from_slice(&json).unwrap();
-    assert_eq!(back.username, "tomas");
+    assert_eq!(back.username, "admin");
     assert_eq!(back.now_playing.unwrap().title, "Ep 1");
 }

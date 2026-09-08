@@ -65,7 +65,7 @@ async fn status_round_trips_over_the_socket() {
     let restart = Signal::new();
     let (_status_tx, status_rx) = tokio::sync::watch::channel(PlayerStatus::idle(
         "http://jelly.example".into(),
-        "tomas".into(),
+        "admin".into(),
     ));
 
     let listen_paths = paths.clone();
@@ -87,7 +87,7 @@ async fn status_round_trips_over_the_socket() {
     .unwrap();
 
     assert_eq!(status.server, "http://jelly.example");
-    assert_eq!(status.username, "tomas");
+    assert_eq!(status.username, "admin");
     assert!(status.now_playing.is_none());
 
     shutdown.fire();
