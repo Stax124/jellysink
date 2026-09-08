@@ -14,7 +14,7 @@ rule rather than left to be rediscovered.
 
 | Layer                   | Lives in                 | Lifetime                                   |
 | ----------------------- | ------------------------ | ------------------------------------------ |
-| `cmd_run`               | `src/cli.rs`             | The process. Owns the lock, tray, signals. |
+| `cmd_run`               | `src/app/cli.rs`             | The process. Owns the lock, tray, signals. |
 | `runtime::run`          | `src/runtime/session.rs` | The process. Owns the reconnect loop, the mpv-event channel and the report sink. |
 | `run_session`           | `src/runtime/session.rs` | One WebSocket connection over the shared `Runtime`. |
 | `Runtime`               | `src/runtime/state.rs`   | The whole daemon session. Owns the queue, mpv and the track memories. |
@@ -163,7 +163,7 @@ was just replaced advances the queue past the episode that is now playing.
 
 ## Signals
 
-`Signal` (`src/signal.rs`) is a latching `watch` channel, not
+`Signal` (`src/app/signal.rs`) is a latching `watch` channel, not
 `Notify::notify_waiters`. `notify_waiters` stores no permit — it only wakes
 futures already registered — and every receiver in this crate re-creates its
 future on each loop iteration, around loop bodies that routinely await mpv IPC
@@ -213,7 +213,7 @@ flag would stay set and `end_file_action` would `Ignore` every later end-file:
 autoplay dead until the daemon restarts. `advance_in_mpv` (`src/runtime/queue.rs`)
 and `play_previous` (`src/runtime/state.rs`) both do this explicitly.
 
-`EndFileReason` is parsed once in `src/mpv.rs` rather than carried up as a
+`EndFileReason` is parsed once in `src/mpv/mod.rs` rather than carried up as a
 `String` and matched in three places, so `end_file_action` can match
 exhaustively and a typo cannot fall silently into the ignore arm.
 
@@ -232,7 +232,7 @@ index, re-preparing, reporting — is the playlist window's business and lives i
 fabricated `(0, 0)`, and `play_next_or_stop` stops playback when it cannot
 read. `playlist_eof` decides autoplay from those two numbers, so guessing puts
 the wrong episode on screen; mpv failing to answer means it is gone or wedged.
-The same rule is why `as_i64_property` and friends (`src/mpv.rs`) reject a
+The same rule is why `as_i64_property` and friends (`src/mpv/mod.rs`) reject a
 wrong-typed answer instead of falling back to a plausible value —
 `playlist-pos` → 0 and `volume` → 100 used to make a transient IPC hiccup play
 the wrong episode.
@@ -311,6 +311,6 @@ End-file gating (`src/runtime/window_test.rs`):
 `end_file_eof_always_tries_the_next_item`, `end_file_quit_or_error_stops`,
 `playlist_jump_stop_is_not_a_session_stop`.
 
-IPC plumbing (`src/mpv_test.rs`): `abandoned_requests_are_evicted`,
+IPC plumbing (`src/mpv/mod_test.rs`): `abandoned_requests_are_evicted`,
 `property_coercions_reject_a_missing_or_wrong_typed_answer`,
 `end_file_reasons_parse_to_their_variants`.

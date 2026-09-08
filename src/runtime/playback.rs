@@ -530,7 +530,7 @@ impl Runtime {
     ) -> color_eyre::Result<()> {
         // Re-read mpv_args on every spawn so edits apply to the next play
         // without restarting the daemon.
-        let mpv_args = crate::config::MpvArgs::load(&self.paths)
+        let mpv_args = crate::app::config::MpvArgs::load(&self.paths)
             .inspect_err(|e| {
                 tracing::warn!("mpv_args unreadable; spawning without extra args: {e:#}");
             })

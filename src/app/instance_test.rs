@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::Paths;
+use crate::app::config::Paths;
 use tempfile::TempDir;
 
 #[test]

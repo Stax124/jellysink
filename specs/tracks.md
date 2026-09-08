@@ -197,7 +197,7 @@ mpv's own — its config's default track, or the last `sub-add`ed one.
 A Jellyfin client is not the only way to change tracks. `j` and `#` in the mpv
 window are, and in practice they are the usual way. mpv reports both as a
 property change on `sid` / `aid`, registered by `observe_subtitle_track` and
-`observe_audio_track` (`src/mpv.rs`).
+`observe_audio_track` (`src/mpv/mod.rs`).
 
 ### Why the event carries no value
 
@@ -234,7 +234,7 @@ the only places that match on `kind` to pick between them. Everything else —
 mpv back). A property change reporting anything else is the user reaching for
 the track menu.
 
-`SelectedTrack` (`src/mpv.rs`) is a tri-state, because mpv's answer is not just
+`SelectedTrack` (`src/mpv/mod.rs`) is a tri-state, because mpv's answer is not just
 a number:
 
 | mpv answers      | `SelectedTrack` | Meaning                                  |
@@ -357,7 +357,7 @@ Resolution precedence, once per side (`src/media/subtitle_test.rs`,
 `a_language_the_next_episode_does_not_have_falls_back_to_the_server_default`,
 `a_commentary_track_is_not_confused_with_the_feature_audio`.
 
-The mpv side (`src/mpv_test.rs`): `a_track_property_tells_off_apart_from_not_yet_decided`,
+The mpv side (`src/mpv/mod_test.rs`): `a_track_property_tells_off_apart_from_not_yet_decided`,
 `only_the_observed_track_properties_become_events`,
 `observe_property_sends_an_id_and_the_property_name`,
 `max_subtitle_track_id_from_track_list_picks_the_highest_sub_id`.

@@ -2,12 +2,12 @@
 
 use super::state::Runtime;
 use super::task::AbortOnDrop;
-use crate::config::{Config, Credentials, Paths};
+use crate::app::config::{Config, Credentials, Paths};
+use crate::app::signal::Signal;
 use crate::jellyfin::auth::{Api, is_auth_expired};
 use crate::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
 use crate::mpv::MpvEvent;
 use crate::report::Report;
-use crate::signal::Signal;
 use color_eyre::eyre::{WrapErr, eyre};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;

@@ -1,10 +1,10 @@
-use crate::config::{
+use crate::app::config::{
     Config, Credentials, Field, MpvArgs, Paths, device_name, normalize_server_url,
 };
-use crate::instance::{self, InstanceLock};
+use crate::app::instance::{self, InstanceLock};
+use crate::app::signal::Signal;
+use crate::app::tray;
 use crate::jellyfin::auth::login;
-use crate::signal::Signal;
-use crate::tray;
 use crate::usage_err;
 use crate::{APP_NAME, VERSION};
 use color_eyre::eyre::WrapErr;
@@ -124,7 +124,7 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let creds = Credentials::load(&paths)?
         .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
 
-    let exe = crate::update::restart_exe_path(
+    let exe = crate::app::update::restart_exe_path(
         &std::env::current_exe().wrap_err("resolving current executable")?,
     );
 
@@ -197,7 +197,7 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     outcome?;
     if do_restart {
         tracing::info!(path = %exe.display(), "replacing process with updated binary");
-        let err = crate::update::exec_updated(&exe);
+        let err = crate::app::update::exec_updated(&exe);
         tracing::error!("restart after update failed: {err}");
         return Err(err).wrap_err("restarting after update");
     }
@@ -210,7 +210,7 @@ pub async fn cmd_update(
     from_tray: bool,
 ) -> color_eyre::Result<()> {
     if check_only {
-        match crate::update::check().await? {
+        match crate::app::update::check().await? {
             Some(offer) => {
                 println!("update available: {} (running {VERSION})", offer.version);
             }
@@ -237,7 +237,7 @@ pub async fn cmd_update(
 
 async fn install_and_handoff(paths: &Paths, from_tray: bool) -> color_eyre::Result<()> {
     println!("Checking for updates...");
-    let Some(offer) = crate::update::check().await? else {
+    let Some(offer) = crate::app::update::check().await? else {
         println!("{APP_NAME} {VERSION} is up to date.");
         return Ok(());
     };
@@ -245,7 +245,7 @@ async fn install_and_handoff(paths: &Paths, from_tray: bool) -> color_eyre::Resu
         "Downloading {APP_NAME} v{} (running {VERSION})...",
         offer.version
     );
-    let status = crate::update::install(true).await?;
+    let status = crate::app::update::install(true).await?;
     let updated = status.is_updated();
     if updated {
         println!("Updated to version {}.", status.version());
@@ -272,7 +272,7 @@ async fn install_and_handoff(paths: &Paths, from_tray: bool) -> color_eyre::Resu
 
 fn spawn_update_check(handle: Option<ksni::Handle<tray::CastTray>>) {
     tokio::spawn(async move {
-        match crate::update::check().await {
+        match crate::app::update::check().await {
             Ok(Some(offer)) => {
                 tracing::info!(version = %offer.version, "update available");
                 if let Some(handle) = handle {
@@ -286,7 +286,7 @@ fn spawn_update_check(handle: Option<ksni::Handle<tray::CastTray>>) {
 }
 
 async fn spawn_tray_update(paths: &Paths, exe: &std::path::Path) -> std::io::Result<()> {
-    crate::terminal::spawn_in_terminal(&[
+    crate::app::terminal::spawn_in_terminal(&[
         exe.as_os_str(),
         OsStr::new("--config"),
         paths.config_dir.as_os_str(),
@@ -299,7 +299,7 @@ async fn spawn_tray_update(paths: &Paths, exe: &std::path::Path) -> std::io::Res
 async fn apply_update_from_daemon(paths: Paths, exe: std::path::PathBuf, restart: Signal) {
     if let Err(e) = spawn_tray_update(&paths, &exe).await {
         tracing::warn!("could not open a terminal for the update ({e}); updating silently");
-        match crate::update::install(false).await {
+        match crate::app::update::install(false).await {
             Ok(status) if status.is_updated() => {
                 tracing::info!(version = %status.version(), "updated; restarting");
                 restart.fire();

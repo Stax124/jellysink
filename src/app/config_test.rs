@@ -174,7 +174,7 @@ fn every_field_parses_back_from_its_own_name() {
 /// `--help` spells the key list out; keep it honest.
 #[test]
 fn the_cli_help_lists_every_config_key() {
-    let main_rs = include_str!("main.rs");
+    let main_rs = include_str!("../main.rs");
     for field in Field::ALL {
         assert!(
             main_rs.contains(field.name()),

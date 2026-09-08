@@ -1,20 +1,13 @@
 use std::fmt;
 
+pub mod app;
 pub(crate) mod cast;
-pub mod cli;
-pub mod config;
-pub(crate) mod instance;
 pub(crate) mod jellyfin;
 pub(crate) mod media;
 pub(crate) mod mpv;
 pub(crate) mod report;
 pub(crate) mod runtime;
-pub(crate) mod signal;
-pub(crate) mod terminal;
 pub(crate) mod ticks;
-pub mod tracing;
-pub(crate) mod tray;
-pub(crate) mod update;
 
 pub(crate) const APP_NAME: &str = "jellysink";
 pub(crate) const CLIENT_NAME: &str = "jellysink";

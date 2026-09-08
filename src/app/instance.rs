@@ -1,5 +1,5 @@
-use crate::config::Paths;
-use crate::signal::Signal;
+use crate::app::config::Paths;
+use crate::app::signal::Signal;
 use crate::usage_err;
 use color_eyre::eyre::{WrapErr, eyre};
 use rustix::fs::{FlockOperation, flock};

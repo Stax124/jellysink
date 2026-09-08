@@ -184,7 +184,7 @@ impl Config {
             Field::MpvPath => self.mpv_path = value.to_string(),
             // Rejected here rather than at the next startup.
             Field::LogLevel => {
-                crate::tracing::validate_log_level(value)
+                crate::app::tracing::validate_log_level(value)
                     .map_err(|e| usage_err(format!("invalid log_level {value:?}: {e}")))?;
                 self.log_level = value.to_string();
             }

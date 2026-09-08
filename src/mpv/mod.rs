@@ -754,9 +754,9 @@ async fn ipc_loop(
 }
 
 #[cfg(test)]
-#[path = "mpv_test.rs"]
+#[path = "mod_test.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "mpv_integration_test.rs"]
+#[path = "integration_test.rs"]
 mod integration_tests;

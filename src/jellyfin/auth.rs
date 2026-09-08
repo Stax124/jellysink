@@ -1,4 +1,4 @@
-use crate::config::{Credentials, device_name, normalize_server_url};
+use crate::app::config::{Credentials, device_name, normalize_server_url};
 use crate::usage_err;
 use crate::{CLIENT_NAME, VERSION};
 use color_eyre::eyre::WrapErr;

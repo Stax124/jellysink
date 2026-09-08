@@ -2,8 +2,8 @@
 
 use super::task::AbortOnDrop;
 use super::window::{EndFileAction, PlaylistWindow, end_file_action, ignore_stop_for_playlist};
+use crate::app::config::{Config, Paths};
 use crate::cast::CastEvent;
-use crate::config::{Config, Paths};
 use crate::jellyfin::auth::Api;
 use crate::media::{PlayRequest, PreparedPlay, TrackKind, TrackPreference};
 use crate::mpv::{EndFileReason, MpvEvent, MpvSession, SelectedTrack};

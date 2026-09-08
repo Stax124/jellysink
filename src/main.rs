@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use jellysink::UsageError;
-use jellysink::cli;
-use jellysink::config::{Config, Paths};
-use jellysink::tracing::init_tracing;
+use jellysink::app::cli;
+use jellysink::app::config::{Config, Paths};
+use jellysink::app::tracing::init_tracing;
 use std::path::PathBuf;
 
 #[global_allocator]
