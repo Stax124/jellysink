@@ -199,7 +199,10 @@ impl PlayerIface {
     /// absolute ticks [`CastEvent::Seek`] wants.
     fn seek(&self, offset: i64) {
         if let Some(np) = &self.status().now_playing {
-            let ticks = (np.position_ticks + offset.saturating_mul(10)).max(0);
+            let ticks = np
+                .position_ticks
+                .saturating_add(offset.saturating_mul(10))
+                .max(0);
             self.0.send(CastEvent::Seek { ticks });
         }
     }

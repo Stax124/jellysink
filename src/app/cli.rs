@@ -120,6 +120,10 @@ pub fn cmd_stop(paths: &Paths) -> color_eyre::Result<()> {
 pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
     let status = instance::request_status(paths)?;
     if json {
+        let mut status = status;
+        if let Some(np) = &mut status.now_playing {
+            np.art_url = crate::jellyfin::url::redact_api_key(&np.art_url);
+        }
         println!("{}", serde_json::to_string_pretty(&status)?);
         return Ok(());
     }
@@ -207,11 +211,18 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         creds.username.clone(),
     ));
 
-    // `ext_tx` is only ever cloned below, never moved, so it stays alive (and
-    // `ext_rx` open) for the rest of `cmd_run` even if `mpris::start` bails
-    // out early for lack of a session bus.
     let (ext_tx, ext_rx) = tokio::sync::mpsc::unbounded_channel();
-    crate::app::mpris::start(status_rx.clone(), ext_tx.clone(), shutdown.clone()).await;
+    if tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        crate::app::mpris::start(status_rx.clone(), ext_tx.clone(), shutdown.clone()),
+    )
+    .await
+    .is_err()
+    {
+        tracing::warn!(
+            "mpris unavailable (timed out connecting to session bus); media keys and desktop widgets won't see jellysink"
+        );
+    }
 
     let stop_paths = paths.clone();
     let stop_shutdown = shutdown.clone();
