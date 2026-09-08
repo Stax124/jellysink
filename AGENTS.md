@@ -38,6 +38,19 @@ Design notes for the trickier subsystems live in `specs/`:
   `src/runtime/playback.rs`**; the index arithmetic has subtle invariants that
   are easy to break. `PlaylistWindow` (`src/runtime/window.rs`) owns all of it —
   keep its fields private and add a method rather than reaching past them.
+- `specs/tracks.md` — the Jellyfin-index ↔ mpv-track-id maps, how a hand-picked
+  track is remembered as an identity and re-matched in the next episode, and the
+  `TrackState::settled` baseline that makes stale property changes no-ops.
+  **Read this before touching `src/media/track.rs`, `src/media/streams.rs` or
+  the `configure_streams` / `adopt_mpv_track` paths in
+  `src/runtime/playback.rs`**; the two numbering systems and the two subtitle
+  counter gates look interchangeable and are not.
+- `specs/session.md` — the daemon loop: task and channel ownership, reconnect
+  backoff, keepalive, report ordering, mpv generations, the latching `Signal`,
+  and the `transitioning` / `stopping` contract behind `end_file_action`.
+  **Read this before touching `src/runtime/session.rs`, `src/signal.rs` or
+  `src/report.rs`**, and before adding a `select!` arm or a spawned task to a
+  session.
 
 Single binary crate. `src/main.rs` parses the CLI (clap derive) and dispatches; `src/lib.rs` re-exports the modules:
 
