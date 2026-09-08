@@ -75,8 +75,9 @@ impl Api {
             encode_query_value(&self.user_id)
         );
         match self.get_json(&path).await {
-            Ok(v) => Ok(v),
-            Err(_) => {
+            Ok(item) => Ok(item),
+            Err(err) => {
+                tracing::debug!(%err, path, "item lookup failed; trying legacy endpoint");
                 let legacy = format!("/Users/{}/Items/{item_id}", self.user_id);
                 self.get_json(&legacy).await
             }

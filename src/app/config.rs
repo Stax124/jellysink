@@ -200,7 +200,7 @@ impl Config {
 /// One argument per line (`--title=My Movie` is one line, not two words);
 /// blank lines and `#` comments are ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct MpvArgs(pub Vec<String>);
+pub(crate) struct MpvArgs(pub(crate) Vec<String>);
 
 impl MpvArgs {
     pub(crate) fn load(paths: &Paths) -> color_eyre::Result<Self> {
@@ -315,9 +315,11 @@ fn atomic_write(path: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {
             fs::File::create(&tmp).wrap_err_with(|| format!("creating {}", tmp.display()))?;
         f.write_all(data)
             .wrap_err_with(|| format!("writing {}", tmp.display()))?;
-        f.sync_all()?;
+        f.sync_all()
+            .wrap_err_with(|| format!("flushing {}", tmp.display()))?;
     }
-    fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))?;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
+        .wrap_err_with(|| format!("restricting {}", tmp.display()))?;
     fs::rename(&tmp, path)
         .wrap_err_with(|| format!("renaming {} -> {}", tmp.display(), path.display()))?;
     Ok(())

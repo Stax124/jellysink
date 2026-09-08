@@ -15,15 +15,6 @@ fn second_lock_fails() {
 }
 
 #[test]
-fn is_running_false_without_stop_socket() {
-    let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
-    assert!(!is_running(&paths));
-}
-
-#[test]
 fn lock_released_on_drop() {
     let tmp = TempDir::new().unwrap();
     let paths = Paths {

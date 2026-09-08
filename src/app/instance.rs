@@ -152,7 +152,9 @@ pub(crate) fn request_status(paths: &Paths) -> color_eyre::Result<PlayerStatus> 
     }
     let mut stream =
         StdUnixStream::connect(&sock).wrap_err("connecting to the running instance")?;
-    stream.write_all(b"status\n")?;
+    stream
+        .write_all(b"status\n")
+        .wrap_err("sending status request to the running instance")?;
     stream
         .shutdown(Shutdown::Write)
         .wrap_err("closing write half")?;
@@ -170,7 +172,9 @@ fn write_instance_command(paths: &Paths, msg: &[u8]) -> color_eyre::Result<()> {
     }
     let mut stream =
         StdUnixStream::connect(&sock).wrap_err("connecting to the running instance")?;
-    stream.write_all(msg)?;
+    stream
+        .write_all(msg)
+        .wrap_err_with(|| format!("writing to {}", sock.display()))?;
     Ok(())
 }
 

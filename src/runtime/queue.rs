@@ -65,7 +65,6 @@ impl Runtime {
                 return;
             }
         };
-        // The current item's mpv position is its offset from the window start.
         let expected_pos = self.window.expected_pos();
         tracing::info!(
             playlist_pos,

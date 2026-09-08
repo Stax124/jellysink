@@ -101,7 +101,7 @@ impl PlayerIface {
     fn playback_status(&self) -> String {
         match &self.status().now_playing {
             None => "Stopped",
-            Some(np) if np.is_paused => "Paused",
+            Some(now_playing) if now_playing.is_paused => "Paused",
             Some(_) => "Playing",
         }
         .to_string()
@@ -110,10 +110,16 @@ impl PlayerIface {
     #[zbus(property)]
     fn metadata(&self) -> HashMap<String, OwnedValue> {
         let mut map = HashMap::new();
-        if let Some(np) = &self.status().now_playing {
-            map.insert("mpris:trackid".to_string(), owned(track_id(&np.item_id)));
-            map.insert("xesam:title".to_string(), owned(np.title.clone()));
-            map.insert("mpris:artUrl".to_string(), owned(np.art_url.clone()));
+        if let Some(now_playing) = &self.status().now_playing {
+            map.insert(
+                "mpris:trackid".to_string(),
+                owned(track_id(&now_playing.item_id)),
+            );
+            map.insert("xesam:title".to_string(), owned(now_playing.title.clone()));
+            map.insert(
+                "mpris:artUrl".to_string(),
+                owned(now_playing.art_url.clone()),
+            );
         }
         map
     }
@@ -123,7 +129,7 @@ impl PlayerIface {
         self.status()
             .now_playing
             .as_ref()
-            .map_or(1.0, |np| np.volume as f64 / 100.0)
+            .map_or(1.0, |now_playing| now_playing.volume as f64 / 100.0)
     }
 
     #[zbus(property)]
@@ -138,17 +144,21 @@ impl PlayerIface {
         self.status()
             .now_playing
             .as_ref()
-            .map_or(0, |np| np.position_ticks / 10)
+            .map_or(0, |now_playing| now_playing.position_ticks / 10)
     }
 
     #[zbus(property)]
     fn can_go_next(&self) -> bool {
-        self.status().now_playing.is_some_and(|np| np.has_next)
+        self.status()
+            .now_playing
+            .is_some_and(|now_playing| now_playing.has_next)
     }
 
     #[zbus(property)]
     fn can_go_previous(&self) -> bool {
-        self.status().now_playing.is_some_and(|np| np.has_previous)
+        self.status()
+            .now_playing
+            .is_some_and(|now_playing| now_playing.has_previous)
     }
 
     #[zbus(property)]
@@ -198,8 +208,8 @@ impl PlayerIface {
     /// `offset` is a relative microsecond delta, per the spec — not the
     /// absolute ticks [`CastEvent::Seek`] wants.
     fn seek(&self, offset: i64) {
-        if let Some(np) = &self.status().now_playing {
-            let ticks = np
+        if let Some(now_playing) = &self.status().now_playing {
+            let ticks = now_playing
                 .position_ticks
                 .saturating_add(offset.saturating_mul(10))
                 .max(0);
@@ -209,8 +219,8 @@ impl PlayerIface {
 
     /// A no-op when `track_id` does not name the current track, per the spec.
     fn set_position(&self, track_id_arg: OwnedObjectPath, position: i64) {
-        if let Some(np) = &self.status().now_playing
-            && track_id(&np.item_id).as_str() == track_id_arg.as_str()
+        if let Some(now_playing) = &self.status().now_playing
+            && track_id(&now_playing.item_id).as_str() == track_id_arg.as_str()
         {
             self.0.send(CastEvent::Seek {
                 ticks: position.saturating_mul(10).max(0),

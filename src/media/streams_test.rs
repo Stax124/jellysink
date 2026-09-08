@@ -59,7 +59,6 @@ fn an_external_audio_stream_does_not_steal_the_next_embedded_track_id() {
     let maps = map_streams("http://s", &media_source(source));
     // mpv never loads the external stream, so it has no aid at all.
     assert_eq!(mpv_audio_track_id(&maps, 1), None);
-    // The embedded stream is mpv's first audio track, not its second.
     assert_eq!(mpv_audio_track_id(&maps, 2), Some(1));
 }
 

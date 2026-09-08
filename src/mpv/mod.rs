@@ -554,8 +554,11 @@ impl MpvSession {
         subtitle_track_id: Option<i64>,
     ) -> color_eyre::Result<()> {
         match subtitle_track_id {
-            Some(id) if id >= 0 => self.set_property("sid", json!(id)).await,
-            _ => self.set_property("sid", json!("no")).await,
+            Some(id) if id >= 0 => self.set_property(SUBTITLE_TRACK_PROPERTY, json!(id)).await,
+            _ => {
+                self.set_property(SUBTITLE_TRACK_PROPERTY, json!("no"))
+                    .await
+            }
         }
     }
 

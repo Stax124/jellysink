@@ -145,6 +145,9 @@ No per-item HTTP. Each direction is one M3U written next to the IPC socket:
 - Forward: remaining `queue.items[origin + head + 1 + tail ..]`, `loadlist
   append`.
 - Prepend: `pending_prepend`, `loadlist insert-at 0`.
+- PlayNext: the spliced ids, `loadlist insert-at expected_pos + 1`
+  (`insert_next_into_mpv`), run immediately — unlike the prepend there is no
+  later `loadfile ... replace` to wait out.
 
 Each entry is a display title plus a DirectPlay stub:
 
@@ -303,9 +306,9 @@ Checked live against mpv 0.41.0 and the Jellyfin server source, not inferred:
 ## Tests
 
 The window arithmetic is the risky part and is covered in
-`src/runtime/window.rs`, **against `PlaylistWindow` itself**. The tests used to
-run against a `Window` struct in the test module that reimplemented the
-arithmetic, so they could pass while the real code drifted:
+`src/runtime/window_test.rs`, **against `PlaylistWindow` itself**. The tests
+used to run against a `Window` struct in the test module that reimplemented
+the arithmetic, so they could pass while the real code drifted:
 
 - `prepend_keeps_the_window_contiguous_and_current_stable`
 - `prepend_then_fill_appends_after_the_current_item`

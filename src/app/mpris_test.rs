@@ -177,15 +177,9 @@ or run the suite under `dbus-run-session -- cargo test`";
 
 /// A private, per-process well-known name for the live smoke test.
 ///
-/// The test deliberately does NOT call [`super::start`] — that claims the real
-/// `BUS_NAME`, which a real running `jellysink` instance may already own.
-/// Bypassing `InstanceLock` the way this test does, a well-known-name
-/// collision with a live daemon is a real hazard (observed once during
-/// development: it briefly bumped a real instance off the MPRIS name).
-/// The test registers the exact same interfaces under this name instead, so it
-/// can never touch a real instance no matter what is running. The pid suffix
-/// keeps two concurrent test runs (say, an editor and a terminal) from
-/// stealing the name from each other.
+/// Not [`super::start`]: claiming the real `BUS_NAME` bumps a running jellysink
+/// off MPRIS, and this test bypasses `InstanceLock`. The pid suffix keeps two
+/// concurrent test runs from stealing the name from each other.
 fn test_bus_name() -> String {
     format!(
         "org.mpris.MediaPlayer2.jellysink.selftest.p{}",

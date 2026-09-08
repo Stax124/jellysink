@@ -171,9 +171,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// The two slots, addressed by kind. This — plus the small accessors below
-    /// — is all that keeps the audio and subtitle paths from being two copies
-    /// of the same code, as they were before.
     fn track_state(&self, kind: TrackKind) -> &TrackState {
         match kind {
             TrackKind::Audio => &self.audio,
@@ -614,7 +611,6 @@ impl Runtime {
         self.current = None;
         self.item_id = None;
         self.external_subtitle_track_ids.clear();
-        // Per-mpv-session, unlike the remembered tracks.
         self.audio.settled = SelectedTrack::Unresolved;
         self.subtitle.settled = SelectedTrack::Unresolved;
         self.paused = false;

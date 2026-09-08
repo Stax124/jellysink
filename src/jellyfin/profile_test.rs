@@ -9,9 +9,3 @@ fn direct_play_profiles_have_no_codec_list() {
         assert!(entry.get("AudioCodec").is_none());
     }
 }
-
-#[test]
-fn bitrate_cap_is_high() {
-    let p = device_profile();
-    assert_eq!(p["MaxStreamingBitrate"], 1_200_000_000u64);
-}

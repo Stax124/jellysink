@@ -35,22 +35,33 @@ everything cooperatively scheduled.
 ## Tasks and channels
 
 `run` spawns two long-lived tasks before the loop starts, and `run_session`
-spawns one more per connection.
+spawns one more per connection. `cmd_run` and `mpris::start` add three more,
+outside `runtime`.
 
 | Task            | Produces                        | Spawned by    | Lifetime                        |
 | --------------- | -------------------------------- | ------------- | -------------------------------- |
 | Report sink     | nothing; consumes `report_tx`   | `run`          | The daemon session.              |
 | mpv forwarder   | `mpv_rx` (`(generation, MpvEvent)`) | `Runtime` (`spawn_and_load`) | One mpv process; respawned with it. |
 | WebSocket reader| `ws_rx` (`WsIncoming`)            | `run_session`  | One WebSocket connection.        |
+| Update check    | nothing; badges the tray        | `cmd_run` (`spawn_update_check`) | Detached; ends after one check. |
+| Tray update apply| nothing; consumes `apply`      | `cmd_run`      | Detached; the process.           |
+| MPRIS emitter   | `PropertiesChanged` from `status_rx` | `mpris::start` | Detached; the D-Bus connection. |
+
+Two channels cross layers: `status_tx`/`status_rx` (a `watch` of
+`PlayerStatus`, written by `Runtime`, read by `instance::listen_stop` for
+`jellysink status` and by MPRIS) and `ext_tx`/`ext_rx` (unbounded `CastEvent`,
+written by MPRIS, read by `run_session`).
 
 Only the WebSocket reader is session-scoped. The report sink and the mpv
 channel are created once in `run`, before the reconnect loop, precisely so a
-reconnect does not have to re-plumb them. Every spawned task is wrapped in an
-`AbortOnDrop` (`src/runtime/task.rs`) so dropping the handle aborts the task —
-there is no single collecting struct, each call site owns its own handle.
-Without it a reconnect spawned a fresh WebSocket reader and left the previous
-one running; against a half-open TCP connection that never returns, so it
-leaked for the life of the process.
+reconnect does not have to re-plumb them. Every task spawned inside `runtime`
+is wrapped in an `AbortOnDrop` (`src/runtime/task.rs`) so dropping the handle
+aborts the task — there is no single collecting struct, each call site owns its
+own handle. Without it a reconnect spawned a fresh WebSocket reader and left
+the previous one running; against a half-open TCP connection that never
+returns, so it leaked for the life of the process. The three `cmd_run` and
+`mpris` tasks are deliberately detached instead: they are process-scoped, and
+the process ends by `exec` or exit.
 
 `run_session`'s `select!` arms, in the order they appear:
 
@@ -61,6 +72,7 @@ leaked for the life of the process.
 | `progress.tick()`| `tick_progress` — sample mpv and report, once a second.        |
 | `ws_rx.recv()`   | Dispatch the parsed `WsIncoming`; see below.                    |
 | `mpv_rx.recv()`  | `on_mpv_event`, but only for the current generation.            |
+| `ext_rx.recv()`  | An MPRIS `CastEvent` to `Runtime::handle`. Disabled by `ext_closed` once the senders are gone — MPRIS is optional, so a `None` here is not fatal. |
 
 `ws_rx` carries a parsed `WsIncoming`, not the raw WebSocket frame — the reader
 task does that parsing so `run_session`'s own loop never blocks on it. Its
@@ -173,7 +185,7 @@ consumes the latch.
 
 | Signal     | Fired by                                        | Consumed by                                  |
 | ---------- | ------------------------------------------------ | --------------------------------------------- |
-| `shutdown` | tray Quit, `stop.sock` `stop`, `cmd_run` unconditionally after its top-level `select!` | `run_session`'s loop, `instance::listen_stop`. |
+| `shutdown` | tray Quit, MPRIS `Quit`, `stop.sock` `stop`, `cmd_run` unconditionally after its top-level `select!` | `run_session`'s loop, `instance::listen_stop`. |
 | `restart`  | `stop.sock` `restart` (tray update)             | `cmd_run`, which then `exec`s the new binary. |
 | `apply`    | tray **Install update**                          | The update task in `cmd_run`.                |
 
@@ -296,7 +308,7 @@ Backoff (`src/runtime/session_test.rs`):
 - `a_healthy_session_resets_the_backoff`
 - `an_expired_token_backs_off_to_the_maximum_however_long_the_session_ran`
 
-The latch (`src/signal_test.rs`) — these pin the `notify_waiters` bug directly:
+The latch (`src/app/signal_test.rs`) — these pin the `notify_waiters` bug directly:
 
 - `a_signal_fired_before_anyone_waits_is_not_lost`
 - `dropping_a_fired_future_does_not_consume_the_latch`

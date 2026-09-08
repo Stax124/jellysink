@@ -121,8 +121,8 @@ pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
     let status = instance::request_status(paths)?;
     if json {
         let mut status = status;
-        if let Some(np) = &mut status.now_playing {
-            np.art_url = crate::jellyfin::url::redact_api_key(&np.art_url);
+        if let Some(now_playing) = &mut status.now_playing {
+            now_playing.art_url = crate::jellyfin::url::redact_api_key(&now_playing.art_url);
         }
         println!("{}", serde_json::to_string_pretty(&status)?);
         return Ok(());
@@ -130,19 +130,23 @@ pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
     println!("server:   {}", status.server);
     println!("user:     {}", status.username);
     match status.now_playing {
-        Some(np) => {
+        Some(now_playing) => {
             println!(
                 "playing:  {} (paused: {}, muted: {}, volume: {})",
-                np.title,
-                if np.is_paused { "yes" } else { "no" },
-                if np.is_muted { "yes" } else { "no" },
-                np.volume
+                now_playing.title,
+                if now_playing.is_paused { "yes" } else { "no" },
+                if now_playing.is_muted { "yes" } else { "no" },
+                now_playing.volume
             );
             println!(
                 "position: {}",
-                format_hms(crate::ticks::ticks_to_seconds(np.position_ticks))
+                format_hms(crate::ticks::ticks_to_seconds(now_playing.position_ticks))
             );
-            println!("queue:    {}/{}", np.queue_index + 1, np.queue_len);
+            println!(
+                "queue:    {}/{}",
+                now_playing.queue_index + 1,
+                now_playing.queue_len
+            );
         }
         None => println!("playing:  nothing"),
     }

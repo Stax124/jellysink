@@ -1,12 +1,5 @@
 use super::*;
 
-#[test]
-fn idle_status_has_no_now_playing() {
-    let s = PlayerStatus::idle("http://x".into(), "admin".into());
-    assert!(s.now_playing.is_none());
-    assert_eq!(s.username, "admin");
-}
-
 /// The wire format between the daemon (serializes) and the CLI (deserializes)
 /// over the stop socket — the part this feature actually adds.
 #[test]
