@@ -1,12 +1,15 @@
 use crate::app::config::Paths;
 use crate::app::signal::Signal;
+use crate::runtime::PlayerStatus;
 use crate::usage_err;
 use color_eyre::eyre::{WrapErr, eyre};
 use rustix::fs::{FlockOperation, flock};
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream as StdUnixStream;
+use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
 
 #[derive(Debug)]
@@ -38,12 +41,14 @@ impl InstanceLock {
 pub(crate) enum InstanceCommand {
     Stop,
     Restart,
+    Status,
 }
 
 pub(crate) fn parse_instance_command(buf: &str) -> Option<InstanceCommand> {
     match buf.trim() {
         "stop" => Some(InstanceCommand::Stop),
         "restart" => Some(InstanceCommand::Restart),
+        "status" => Some(InstanceCommand::Status),
         _ => None,
     }
 }
@@ -52,6 +57,7 @@ pub(crate) async fn listen_stop(
     paths: &Paths,
     shutdown: Signal,
     restart: Signal,
+    status_rx: tokio::sync::watch::Receiver<PlayerStatus>,
 ) -> color_eyre::Result<()> {
     let sock = paths.stop_socket();
     let _ = std::fs::remove_file(&sock);
@@ -86,6 +92,13 @@ pub(crate) async fn listen_stop(
                                 Some(InstanceCommand::Restart) => {
                                     tracing::info!("restart requested");
                                     restart.fire();
+                                }
+                                Some(InstanceCommand::Status) => {
+                                    let status = status_rx.borrow().clone();
+                                    if let Ok(payload) = serde_json::to_vec(&status) {
+                                        let _ = stream.write_all(&payload).await;
+                                    }
+                                    let _ = stream.shutdown().await;
                                 }
                                 None => {}
                             }
@@ -128,6 +141,26 @@ pub(crate) fn request_stop(paths: &Paths) -> color_eyre::Result<()> {
 
 pub(crate) fn request_restart(paths: &Paths) -> color_eyre::Result<()> {
     write_instance_command(paths, b"restart\n")
+}
+
+/// Asks a running instance what it is doing, over the same socket `stop`/
+/// `restart` use — the only request on it that reads a reply back.
+pub(crate) fn request_status(paths: &Paths) -> color_eyre::Result<PlayerStatus> {
+    let sock = paths.stop_socket();
+    if !sock.exists() {
+        return Err(usage_err("jellysink is not running"));
+    }
+    let mut stream =
+        StdUnixStream::connect(&sock).wrap_err("connecting to the running instance")?;
+    stream.write_all(b"status\n")?;
+    stream
+        .shutdown(Shutdown::Write)
+        .wrap_err("closing write half")?;
+    let mut buf = Vec::new();
+    stream
+        .read_to_end(&mut buf)
+        .wrap_err("reading status reply")?;
+    serde_json::from_slice(&buf).wrap_err("parsing status reply")
 }
 
 fn write_instance_command(paths: &Paths, msg: &[u8]) -> color_eyre::Result<()> {

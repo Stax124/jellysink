@@ -52,6 +52,7 @@ This project is not trying to be a full replacement for jellyfin-mpv-shim. It is
 - Remembers the audio and subtitle tracks you pick — in a Jellyfin client or in mpv itself — and re-selects them on the next episode
 - Remaining episodes are appended to mpv’s playlist (`<` / `>` or the OSC playlist)
 - Optional StatusNotifier tray icon (KDE, GNOME AppIndicator, Waybar, …)
+- Optional MPRIS player (`org.mpris.MediaPlayer2`) — media keys, GNOME/KDE now-playing widgets, lock-screen controls, `playerctl`
 - Self-update from GitHub Releases (`jellysink update`, or **Install update** in the tray)
 
 ## Installation
@@ -107,6 +108,7 @@ cargo install --git https://github.com/Stax124/jellysink --target x86_64-unknown
 jellysink login          # server URL, username, password
 jellysink run            # default if you pass no subcommand
 jellysink stop           # ask a running instance to quit
+jellysink status         # show what a running instance is doing
 jellysink update         # install the latest GitHub release
 jellysink update --check # print whether a newer release exists
 ```
@@ -175,7 +177,7 @@ Design notes for the trickier subsystems live in [`specs/`](specs/):
 - A [Rust](https://rustup.rs/) toolchain (edition 2024)
 - [`mpv`](https://mpv.io/) on `PATH` (or set `mpv_path`)
 - A [Jellyfin](https://jellyfin.org/) server
-- Optional: a StatusNotifier tray host
+- Optional: a StatusNotifier tray host, and/or a D-Bus session bus for MPRIS
 
 ## Acknowledgements
 

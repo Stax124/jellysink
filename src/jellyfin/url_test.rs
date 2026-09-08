@@ -50,3 +50,18 @@ fn direct_stream_url_values_cannot_inject_parameters() {
     assert!(url.contains("MediaSourceId=a%26Foo%3D1"), "{url}");
     assert!(!url.contains("&Foo=1"), "{url}");
 }
+
+#[test]
+fn image_url_carries_the_item_and_token() {
+    let url = image_url("http://h:8096/", "item1", "tok");
+    assert_eq!(url, "http://h:8096/Items/item1/Images/Primary?ApiKey=tok");
+}
+
+#[test]
+fn image_url_is_redacted_like_a_stream_url() {
+    let url = image_url("http://h:8096", "item1", "sekrit");
+    assert_eq!(
+        redact_api_key(&url),
+        "http://h:8096/Items/item1/Images/Primary?ApiKey=<redacted>"
+    );
+}

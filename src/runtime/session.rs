@@ -4,6 +4,7 @@ use super::state::Runtime;
 use super::task::AbortOnDrop;
 use crate::app::config::{Config, Credentials, Paths};
 use crate::app::signal::Signal;
+use crate::cast::CastEvent;
 use crate::jellyfin::auth::{Api, is_auth_expired};
 use crate::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
 use crate::mpv::MpvEvent;
@@ -46,16 +47,26 @@ pub(crate) async fn run(
     creds: Credentials,
     paths: Paths,
     shutdown: Signal,
+    status_tx: tokio::sync::watch::Sender<super::status::PlayerStatus>,
+    mut ext_rx: tokio::sync::mpsc::UnboundedReceiver<CastEvent>,
 ) -> color_eyre::Result<()> {
     let mut backoff = BACKOFF_MIN;
     let api = Api::from_credentials(&creds)?;
     let (mpv_tx, mut mpv_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, MpvEvent)>();
     let (report_tx, report_task) = spawn_report_sink(api.clone());
     let _report_task = AbortOnDrop(report_task);
-    let mut rt = Runtime::new(api, config, paths, mpv_tx, report_tx);
+    let mut rt = Runtime::new(
+        api,
+        config,
+        paths,
+        mpv_tx,
+        report_tx,
+        creds.username,
+        status_tx,
+    );
     loop {
         let started = Instant::now();
-        match run_session(&mut rt, &mut mpv_rx, &shutdown).await {
+        match run_session(&mut rt, &mut mpv_rx, &mut ext_rx, &shutdown).await {
             // Only shutdown ends a session cleanly.
             Ok(()) => break,
             Err(e) => {
@@ -144,6 +155,7 @@ fn spawn_report_sink(
 async fn run_session(
     rt: &mut Runtime,
     mpv_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(u64, MpvEvent)>,
+    ext_rx: &mut tokio::sync::mpsc::UnboundedReceiver<CastEvent>,
     shutdown: &Signal,
 ) -> color_eyre::Result<()> {
     rt.api.post_capabilities().await?;
@@ -165,6 +177,11 @@ async fn run_session(
     let mut progress = tokio::time::interval(Duration::from_secs(1));
     keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Not `Some(cmd_tx)`-fatal like the websocket/mpv channels above: MPRIS is
+    // optional infrastructure, and every clone of its sender living forever
+    // (kept in `cmd_run`) means this should never actually flip to `true`.
+    let mut ext_closed = false;
 
     loop {
         tokio::select! {
@@ -214,6 +231,16 @@ async fn run_session(
                     Some(_) => {}
                     // Unreachable while `run` runs; a daemon should not panic.
                     None => return Err(eyre!("mpv event channel closed")),
+                }
+            }
+            ev = ext_rx.recv(), if !ext_closed => {
+                match ev {
+                    Some(ev) => {
+                        if let Err(e) = rt.handle(ev).await {
+                            tracing::error!("mpris command failed: {e:#}");
+                        }
+                    }
+                    None => ext_closed = true,
                 }
             }
         }

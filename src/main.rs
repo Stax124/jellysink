@@ -38,6 +38,12 @@ enum Command {
     Run,
     /// Ask a running instance to quit
     Stop,
+    /// Show what a running instance is doing
+    Status {
+        /// Print machine-readable JSON instead
+        #[arg(long)]
+        json: bool,
+    },
     /// Download and install the latest GitHub release
     Update {
         /// Only check; do not download
@@ -101,6 +107,7 @@ async fn try_main() -> Result<()> {
         },
         Command::Run => cli::cmd_run(paths).await?,
         Command::Stop => cli::cmd_stop(&paths)?,
+        Command::Status { json } => cli::cmd_status(&paths, json)?,
         Command::Update { check, from_tray } => cli::cmd_update(&paths, check, from_tray).await?,
     }
     Ok(())

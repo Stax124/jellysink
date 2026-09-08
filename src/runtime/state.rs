@@ -69,6 +69,13 @@ pub(super) struct Runtime {
     /// Item id → display title, for the playlist fill; `PlaybackInfo` is
     /// fetched only once an item actually starts.
     pub(super) titles: HashMap<String, String>,
+
+    /// The logged-in username, for `jellysink status` — not otherwise needed
+    /// once [`Api`] is built from `Credentials`.
+    pub(super) username: String,
+    /// Published on every state change; read by `jellysink status` over the
+    /// stop socket without ever reaching into a running `Runtime` directly.
+    pub(super) status_tx: tokio::sync::watch::Sender<super::status::PlayerStatus>,
 }
 
 impl Runtime {
@@ -78,6 +85,8 @@ impl Runtime {
         paths: Paths,
         mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
         report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
+        username: String,
+        status_tx: tokio::sync::watch::Sender<super::status::PlayerStatus>,
     ) -> Self {
         Self {
             api,
@@ -104,6 +113,8 @@ impl Runtime {
             pending_start_ticks: None,
             prepared: HashMap::new(),
             titles: HashMap::new(),
+            username,
+            status_tx,
         }
     }
 

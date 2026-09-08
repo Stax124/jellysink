@@ -46,9 +46,62 @@ fn parse_instance_command_stop_and_restart() {
         parse_instance_command("  restart  "),
         Some(InstanceCommand::Restart)
     );
+    assert_eq!(
+        parse_instance_command("status"),
+        Some(InstanceCommand::Status)
+    );
     assert_eq!(parse_instance_command("stopping"), None);
     assert_eq!(parse_instance_command("stop-please"), None);
     assert_eq!(parse_instance_command(""), None);
+}
+
+#[tokio::test]
+async fn status_round_trips_over_the_socket() {
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths {
+        config_dir: tmp.path().to_path_buf(),
+    };
+    let shutdown = Signal::new();
+    let restart = Signal::new();
+    let (_status_tx, status_rx) = tokio::sync::watch::channel(PlayerStatus::idle(
+        "http://jelly.example".into(),
+        "admin".into(),
+    ));
+
+    let listen_paths = paths.clone();
+    let listen_shutdown = shutdown.clone();
+    let listener = tokio::spawn(async move {
+        listen_stop(&listen_paths, listen_shutdown, restart, status_rx).await
+    });
+
+    while !paths.stop_socket().exists() {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    let status = tokio::task::spawn_blocking({
+        let paths = paths.clone();
+        move || request_status(&paths)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(status.server, "http://jelly.example");
+    assert_eq!(status.username, "admin");
+    assert!(status.now_playing.is_none());
+
+    shutdown.fire();
+    listener.await.unwrap().unwrap();
+}
+
+#[test]
+fn request_status_without_a_running_instance_is_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths {
+        config_dir: tmp.path().to_path_buf(),
+    };
+    let err = request_status(&paths).unwrap_err();
+    assert!(err.to_string().contains("not running"));
 }
 
 #[test]

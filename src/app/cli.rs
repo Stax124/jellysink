@@ -117,6 +117,48 @@ pub fn cmd_stop(paths: &Paths) -> color_eyre::Result<()> {
     instance::request_stop(paths)
 }
 
+pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
+    let status = instance::request_status(paths)?;
+    if json {
+        let mut status = status;
+        if let Some(np) = &mut status.now_playing {
+            np.art_url = crate::jellyfin::url::redact_api_key(&np.art_url);
+        }
+        println!("{}", serde_json::to_string_pretty(&status)?);
+        return Ok(());
+    }
+    println!("server:   {}", status.server);
+    println!("user:     {}", status.username);
+    match status.now_playing {
+        Some(np) => {
+            println!(
+                "playing:  {} (paused: {}, muted: {}, volume: {})",
+                np.title,
+                if np.is_paused { "yes" } else { "no" },
+                if np.is_muted { "yes" } else { "no" },
+                np.volume
+            );
+            println!(
+                "position: {}",
+                format_hms(crate::ticks::ticks_to_seconds(np.position_ticks))
+            );
+            println!("queue:    {}/{}", np.queue_index + 1, np.queue_len);
+        }
+        None => println!("playing:  nothing"),
+    }
+    Ok(())
+}
+
+fn format_hms(seconds: f64) -> String {
+    let total = seconds.max(0.0).round() as u64;
+    let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
+    if h > 0 {
+        format!("{h:02}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
+    }
+}
+
 pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     tracing::info!("jellysink {VERSION}");
 
@@ -164,14 +206,34 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .wrap_err("SIGINT handler")?;
 
+    let (status_tx, status_rx) = tokio::sync::watch::channel(crate::runtime::PlayerStatus::idle(
+        creds.server.clone(),
+        creds.username.clone(),
+    ));
+
+    let (ext_tx, ext_rx) = tokio::sync::mpsc::unbounded_channel();
+    if tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        crate::app::mpris::start(status_rx.clone(), ext_tx.clone(), shutdown.clone()),
+    )
+    .await
+    .is_err()
+    {
+        tracing::warn!(
+            "mpris unavailable (timed out connecting to session bus); media keys and desktop widgets won't see jellysink"
+        );
+    }
+
     let stop_paths = paths.clone();
     let stop_shutdown = shutdown.clone();
     let stop_restart = restart.clone();
-    let stop_fut =
-        async move { instance::listen_stop(&stop_paths, stop_shutdown, stop_restart).await };
+    let stop_fut = async move {
+        instance::listen_stop(&stop_paths, stop_shutdown, stop_restart, status_rx).await
+    };
 
     let session_shutdown = shutdown.clone();
-    let session_fut = crate::runtime::run(config, creds, paths, session_shutdown);
+    let session_fut =
+        crate::runtime::run(config, creds, paths, session_shutdown, status_tx, ext_rx);
     tokio::pin!(session_fut, stop_fut);
 
     let mut do_restart = false;
