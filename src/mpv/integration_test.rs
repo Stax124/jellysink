@@ -473,6 +473,63 @@ async fn inserting_before_the_current_entry_shifts_the_position() {
 }
 
 #[tokio::test]
+async fn inserting_at_the_end_of_the_playlist_behaves_like_append() {
+    // PlayNext's mpv position formula (`expected_pos + 1`) equals the
+    // playlist length when nothing is queued after the current item yet --
+    // this pins that `insert-at` there is just an append, so PlayNext needs
+    // no special case for an empty tail.
+    require_mpv!(0, 38);
+    let mut mpv = TestMpv::start().await;
+    let file = fixture("sample.mkv");
+    mpv.start_current("A").await;
+
+    mpv.session
+        .loadlist_insert_at(&[("Next", &file)], 1)
+        .await
+        .unwrap();
+
+    assert_eq!(mpv.session.playlist_count().await.unwrap(), 2);
+    assert_eq!(mpv.session.playlist_pos().await.unwrap(), 0);
+    assert_eq!(
+        playlist_titles(&mut mpv.session).await,
+        ["A", "Next"].map(|title| Some(title.to_owned()))
+    );
+}
+
+#[tokio::test]
+async fn play_next_splices_in_right_after_current_even_with_a_tail_already_queued() {
+    // Reproduces the PlayNext desync: casting mid-series forward-fills the
+    // rest of the season into mpv before any PlayNext happens, so the
+    // insertion point is never the end of the playlist in practice.
+    require_mpv!(0, 38);
+    let mut mpv = TestMpv::start().await;
+    let file = fixture("sample.mkv");
+    mpv.start_current("A").await;
+    mpv.session
+        .loadlist_append(&[("B", &file), ("C", &file)])
+        .await
+        .unwrap();
+
+    // PlayNext with A current and B, C already tailed in: splice at position 1.
+    mpv.session
+        .loadlist_insert_at(&[("X", &file)], 1)
+        .await
+        .unwrap();
+
+    assert_eq!(mpv.session.playlist_count().await.unwrap(), 4);
+    assert_eq!(
+        mpv.session.playlist_pos().await.unwrap(),
+        0,
+        "still playing A; the splice must not move the current entry"
+    );
+    assert_eq!(
+        playlist_titles(&mut mpv.session).await,
+        ["A", "X", "B", "C"].map(|title| Some(title.to_owned()))
+    );
+    mpv.expect_no_event(Duration::from_millis(300)).await;
+}
+
+#[tokio::test]
 async fn playlist_next_and_prev_move_the_position() {
     require_mpv!();
     let mut mpv = TestMpv::start().await;

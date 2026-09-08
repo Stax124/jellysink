@@ -10,6 +10,10 @@ enum Fill {
     Append,
     /// At position 0. Does not interrupt playback; mpv shifts `playlist-pos`.
     Prepend,
+    /// Right after the current item, at the mpv position
+    /// `PlaylistWindow::insert_next` returned. Same non-interrupting splice as
+    /// `Prepend`, just not pinned to 0.
+    Next(usize),
 }
 
 async fn fetch_prepared(
@@ -352,6 +356,14 @@ impl Runtime {
         self.load_stub_rows(ids, Fill::Append).await;
     }
 
+    /// Splices `ids` into mpv's playlist right after the current item, at the
+    /// mpv position `PlaylistWindow::insert_next` returned. `PlayNext`'s mpv
+    /// side: unlike the prepend, there is no upcoming `loadfile ... replace`
+    /// to wait out, so this runs immediately instead of being deferred.
+    pub(super) async fn insert_next_into_mpv(&mut self, ids: Vec<String>, mpv_pos: usize) {
+        self.load_stub_rows(ids, Fill::Next(mpv_pos)).await;
+    }
+
     /// One `loadlist` of stub rows. No HTTP: the titles are already cached and
     /// the URLs are stubs until the row is actually played.
     async fn load_stub_rows(&mut self, ids: Vec<String>, fill: Fill) {
@@ -378,12 +390,15 @@ impl Runtime {
         let loaded = match fill {
             Fill::Append => mpv.loadlist_append(&refs).await,
             Fill::Prepend => mpv.loadlist_insert_at(&refs, 0).await,
+            Fill::Next(index) => mpv.loadlist_insert_at(&refs, index).await,
         };
         if let Err(e) = loaded {
             tracing::warn!(?fill, "playlist fill loadlist: {e:#}");
             return;
         }
-        // A prepend already grew `head` when the ids entered the queue.
+        // A prepend or a play-next insert already grew `head`/`tail` when the
+        // ids entered the queue, in `PlaylistWindow::prepend` /
+        // `PlaylistWindow::insert_next`.
         if fill == Fill::Append {
             self.window.note_appended(n);
         }

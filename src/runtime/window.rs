@@ -138,9 +138,22 @@ impl PlaylistWindow {
         self.rebuild_now_playing();
     }
 
-    pub(super) fn insert_next(&mut self, ids: Vec<String>) {
+    /// Splices `ids` into the queue right after the current item, and returns
+    /// the mpv playlist position they must land at to match --
+    /// `expected_pos + 1`. Valid whether mpv already holds a tail or not: with
+    /// `tail == 0` that position is exactly the end of mpv's playlist, so an
+    /// insert there and an append coincide.
+    ///
+    /// `tail` grows here, at the same moment the queue does, mirroring how
+    /// `prepend` grows `head` immediately rather than waiting on the mpv
+    /// splice: the queue is the source of truth and the mpv side follows it.
+    pub(super) fn insert_next(&mut self, ids: Vec<String>) -> usize {
+        let mpv_pos = self.expected_pos() + 1;
+        let n = ids.len();
         self.queue.insert_next(ids);
         self.rebuild_now_playing();
+        self.tail += n;
+        mpv_pos
     }
 
     pub(super) fn now_playing_queue(&self) -> Arc<Vec<Value>> {

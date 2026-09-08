@@ -176,24 +176,16 @@ impl Runtime {
         }
         match where_ {
             Enqueue::Next => {
-                self.window.insert_next(item_ids);
+                let mpv_pos = self.window.insert_next(item_ids.clone());
                 self.log_queue("play-next-insert");
-                // An mpv playlist holding later entries would need an
-                // insert-at; the queue is right, mpv just does not show it yet.
-                if self.window.tail() != 0 {
-                    tracing::debug!(
-                        tail = self.window.tail(),
-                        "play-next not spliced into an already-appended mpv playlist"
-                    );
-                    return Ok(());
-                }
+                self.insert_next_into_mpv(item_ids, mpv_pos).await;
             }
             Enqueue::Last => {
                 self.window.append(item_ids);
                 self.log_queue("play-last-append");
+                self.fill_forward_into_mpv().await;
             }
         }
-        self.fill_forward_into_mpv().await;
         Ok(())
     }
 

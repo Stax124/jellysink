@@ -222,6 +222,66 @@ fn queue_play_next_inserts_after_current() {
 }
 
 #[test]
+fn play_next_with_nothing_queued_appends_like_before() {
+    // No tail yet: the insertion point is exactly the end of mpv's playlist,
+    // so this must behave like the old append-only path.
+    let mut w = start(&["e1"], 0);
+    let mpv_pos = w.insert_next(vec!["x".into()]);
+
+    assert_eq!(mpv_pos, 1, "right after the only item mpv has");
+    assert_eq!(w.queue.items, ["e1", "x"]);
+    assert_eq!(w.mpv_playlist(), ["e1", "x"]);
+    assert_eq!(w.tail(), 1);
+}
+
+#[test]
+fn play_next_keeps_the_window_in_sync_with_mpvs_playlist_when_a_tail_is_already_loaded() {
+    // Casting mid-series sends the whole remaining season, which
+    // `start_current` immediately forward-fills into mpv -- tail > 0 is the
+    // common case for PlayNext, not the exception the old code assumed.
+    let mut w = start(&["e6", "e7", "e8"], 0);
+    w.note_appended(2); // e7, e8 already sit in mpv's tail
+    assert_eq!(w.mpv_playlist(), ["e6", "e7", "e8"]);
+
+    let mpv_pos = w.insert_next(vec!["x".into()]);
+
+    assert_eq!(w.queue.items, ["e6", "x", "e7", "e8"]);
+    assert_eq!(mpv_pos, 1, "right after the current item, e6");
+    // The window's belief about what mpv holds must track the splice: e8
+    // must not silently fall out of it, and "x" must not appear to have
+    // replaced e7 in a window mpv was never told to change.
+    assert_eq!(w.mpv_playlist(), ["e6", "x", "e7", "e8"]);
+    assert_eq!(w.tail(), 3, "x plus the original e7, e8 tail");
+}
+
+#[test]
+fn play_next_after_a_playlist_jump_uses_expected_pos_not_head() {
+    // Mirrors `expected_pos_follows_a_playlist_jump_not_the_head`: jumping to
+    // e7 moves the queue index but leaves `head` at 5, so the insertion point
+    // must be derived from `expected_pos`, not `head`.
+    let mut w = start(&["e6", "e7", "e8"], 0);
+    prepend(&mut w, &["e1", "e2", "e3", "e4", "e5"]);
+    w.queue.advance(); // adopt_playlist_pos jumps to e7
+    assert_eq!(current(&w), "e7");
+    assert_eq!(w.expected_pos(), 6);
+    assert_ne!(w.expected_pos(), w.head());
+
+    let mpv_pos = w.insert_next(vec!["x".into()]);
+
+    assert_eq!(mpv_pos, 7, "right after e7, not after head's e6");
+    assert_eq!(w.queue.items[7], "x");
+}
+
+#[test]
+fn a_play_next_insert_shows_up_in_the_now_playing_payload() {
+    let mut w = start(&["e1", "e2"], 0);
+    w.insert_next(vec!["x".into()]);
+    let payload = w.now_playing_queue();
+    assert_eq!(payload.len(), 3);
+    assert_eq!(payload[1]["Id"], "x");
+}
+
+#[test]
 fn queue_has_next_is_false_on_the_last_item() {
     let mut q = Queue {
         items: vec!["a".into(), "b".into()],
