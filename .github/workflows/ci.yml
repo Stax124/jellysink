@@ -5,6 +5,14 @@ on:
   push:
     branches:
       - main
+  # Callable as a required pipeline: `.github/workflows/release.yml` gates the
+  # release on this exact workflow instead of keeping a second copy of it.
+  workflow_call:
+    inputs:
+      package:
+        description: Package the built binaries and upload them as artifacts.
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -71,8 +79,9 @@ jobs:
       - name: test
         run: dbus-run-session -- cargo test --locked
 
-  # Same musl release targets as `.github/workflows/release.yml`, without
-  # packaging, so a failing binary build is visible before tagging.
+  # The musl release build itself: on pull requests and pushes a failing binary
+  # build is visible before tagging, and the release workflow calls this same job
+  # with `package: true` to produce the artifacts it publishes.
   build:
     name: build-${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -109,3 +118,18 @@ jobs:
           key: ${{ matrix.target }}
       - name: Build
         run: ${{ matrix.cargo }} build --locked --release --target ${{ matrix.target }}
+      # `inputs` is null outside `workflow_call`, so PR and push runs skip these.
+      - name: Package
+        if: inputs.package
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          mv jellysink ../../../jellysink-${{ matrix.target }}
+          cd -
+      - name: Upload artifact
+        if: inputs.package
+        uses: actions/upload-artifact@v7
+        with:
+          name: jellysink-${{ matrix.target }}
+          path: jellysink-${{ matrix.target }}
+          if-no-files-found: error
