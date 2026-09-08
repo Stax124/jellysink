@@ -59,15 +59,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
-      - name: Install musl tools and mpv
+      - name: Install musl tools, mpv and dbus
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools mpv
+          sudo apt-get install -y musl-tools mpv dbus
           mpv --version | head -1
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+      # `dbus-run-session` gives the MPRIS smoke test a private session bus
+      # that is torn down with the step; runners have no user session bus.
       - name: test
-        run: cargo test --locked
+        run: dbus-run-session -- cargo test --locked
 
   # Same musl release targets as `.github/workflows/release.yml`, without
   # packaging, so a failing binary build is visible before tagging.

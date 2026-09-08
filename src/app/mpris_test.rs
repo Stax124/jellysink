@@ -172,18 +172,32 @@ fn quit_fires_the_shutdown_signal() {
     assert!(shutdown.take());
 }
 
-/// Deliberately does NOT call [`super::start`] — that claims the real
+const NO_BUS: &str = "no D-Bus session bus reachable: set DBUS_SESSION_BUS_ADDRESS, \
+or run the suite under `dbus-run-session -- cargo test`";
+
+/// A private, per-process well-known name for the live smoke test.
+///
+/// The test deliberately does NOT call [`super::start`] — that claims the real
 /// `BUS_NAME`, which a real running `jellysink` instance may already own.
 /// Bypassing `InstanceLock` the way this test does, a well-known-name
 /// collision with a live daemon is a real hazard (observed once during
 /// development: it briefly bumped a real instance off the MPRIS name).
-/// This registers the exact same interfaces under a private test-only name
-/// instead, so it can never touch a real instance no matter what is running.
-const TEST_BUS_NAME: &str = "org.mpris.MediaPlayer2.jellysink.selftest";
+/// The test registers the exact same interfaces under this name instead, so it
+/// can never touch a real instance no matter what is running. The pid suffix
+/// keeps two concurrent test runs (say, an editor and a terminal) from
+/// stealing the name from each other.
+fn test_bus_name() -> String {
+    format!(
+        "org.mpris.MediaPlayer2.jellysink.selftest.p{}",
+        std::process::id()
+    )
+}
 
+/// Needs a session bus: CI runs the suite under `dbus-run-session`, which
+/// provides a private one that dies with the job. See `.github/workflows/ci.yml`.
 #[tokio::test]
-#[ignore = "manual smoke test: registers a real (isolated) D-Bus session-bus service"]
 async fn live_smoke_test_against_the_real_session_bus() {
+    let bus_name = test_bus_name();
     let (_status_tx, status_rx) = watch::channel(playing_status(false, true, false));
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     let shutdown = Signal::new();
@@ -193,21 +207,21 @@ async fn live_smoke_test_against_the_real_session_bus() {
         shutdown: shutdown.clone(),
     });
     let _connection = zbus::connection::Builder::session()
-        .unwrap()
+        .expect(NO_BUS)
         .serve_at(OBJECT_PATH, RootIface(shared.clone()))
         .unwrap()
         .serve_at(OBJECT_PATH, PlayerIface(shared))
         .unwrap()
-        .name(TEST_BUS_NAME)
+        .name(bus_name.as_str())
         .unwrap()
         .build()
         .await
-        .unwrap();
+        .expect(NO_BUS);
 
-    let conn = zbus::Connection::session().await.unwrap();
+    let conn = zbus::Connection::session().await.expect(NO_BUS);
     let reply = conn
         .call_method(
-            Some(TEST_BUS_NAME),
+            Some(bus_name.as_str()),
             OBJECT_PATH,
             Some("org.freedesktop.DBus.Properties"),
             "Get",
@@ -220,7 +234,7 @@ async fn live_smoke_test_against_the_real_session_bus() {
     assert_eq!(String::try_from(status).unwrap(), "Playing");
 
     conn.call_method(
-        Some(TEST_BUS_NAME),
+        Some(bus_name.as_str()),
         OBJECT_PATH,
         Some("org.mpris.MediaPlayer2.Player"),
         "Next",
@@ -231,7 +245,7 @@ async fn live_smoke_test_against_the_real_session_bus() {
     assert_eq!(cmd_rx.recv().await.unwrap(), CastEvent::Next);
 
     conn.call_method(
-        Some(TEST_BUS_NAME),
+        Some(bus_name.as_str()),
         OBJECT_PATH,
         Some("org.mpris.MediaPlayer2"),
         "Quit",
