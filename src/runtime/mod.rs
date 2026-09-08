@@ -2,7 +2,7 @@ mod playback;
 mod queue;
 mod session;
 mod state;
-mod status;
+pub(crate) mod status;
 mod task;
 mod window;
 

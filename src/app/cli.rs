@@ -207,6 +207,12 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         creds.username.clone(),
     ));
 
+    // `ext_tx` is only ever cloned below, never moved, so it stays alive (and
+    // `ext_rx` open) for the rest of `cmd_run` even if `mpris::start` bails
+    // out early for lack of a session bus.
+    let (ext_tx, ext_rx) = tokio::sync::mpsc::unbounded_channel();
+    crate::app::mpris::start(status_rx.clone(), ext_tx.clone(), shutdown.clone()).await;
+
     let stop_paths = paths.clone();
     let stop_shutdown = shutdown.clone();
     let stop_restart = restart.clone();
@@ -215,7 +221,8 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     };
 
     let session_shutdown = shutdown.clone();
-    let session_fut = crate::runtime::run(config, creds, paths, session_shutdown, status_tx);
+    let session_fut =
+        crate::runtime::run(config, creds, paths, session_shutdown, status_tx, ext_rx);
     tokio::pin!(session_fut, stop_fut);
 
     let mut do_restart = false;
