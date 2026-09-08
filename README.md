@@ -107,6 +107,7 @@ cargo install --git https://github.com/Stax124/jellysink --target x86_64-unknown
 jellysink login          # server URL, username, password
 jellysink run            # default if you pass no subcommand
 jellysink stop           # ask a running instance to quit
+jellysink status         # show what a running instance is doing
 jellysink update         # install the latest GitHub release
 jellysink update --check # print whether a newer release exists
 ```

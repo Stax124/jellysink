@@ -46,13 +46,22 @@ pub(crate) async fn run(
     creds: Credentials,
     paths: Paths,
     shutdown: Signal,
+    status_tx: tokio::sync::watch::Sender<super::status::PlayerStatus>,
 ) -> color_eyre::Result<()> {
     let mut backoff = BACKOFF_MIN;
     let api = Api::from_credentials(&creds)?;
     let (mpv_tx, mut mpv_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, MpvEvent)>();
     let (report_tx, report_task) = spawn_report_sink(api.clone());
     let _report_task = AbortOnDrop(report_task);
-    let mut rt = Runtime::new(api, config, paths, mpv_tx, report_tx);
+    let mut rt = Runtime::new(
+        api,
+        config,
+        paths,
+        mpv_tx,
+        report_tx,
+        creds.username,
+        status_tx,
+    );
     loop {
         let started = Instant::now();
         match run_session(&mut rt, &mut mpv_rx, &shutdown).await {

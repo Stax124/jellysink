@@ -491,12 +491,14 @@ impl Runtime {
         if let Some(s) = self.snapshot(self.last_ticks) {
             let _ = self.report_tx.send(Report::Start(s));
         }
+        self.publish_status();
     }
 
     pub(super) fn send_progress(&self) {
         if let Some(s) = self.snapshot(self.last_ticks) {
             let _ = self.report_tx.send(Report::Progress(s));
         }
+        self.publish_status();
     }
 
     fn send_stopped(&self) {
@@ -617,6 +619,7 @@ impl Runtime {
         self.subtitle.settled = SelectedTrack::Unresolved;
         self.paused = false;
         self.stopping = false;
+        self.publish_status();
     }
 
     pub(super) async fn toggle_pause(&mut self) -> color_eyre::Result<()> {
