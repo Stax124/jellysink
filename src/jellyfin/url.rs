@@ -37,6 +37,18 @@ pub(crate) fn direct_stream_url(
     url
 }
 
+/// The item's primary image (cover art / thumbnail), for MPRIS `mpris:artUrl`.
+/// Carries the token in the query string like [`direct_stream_url`] — this
+/// URL is handed to a desktop widget to fetch itself, not read server-side by
+/// jellysink, so it is redacted by [`redact_api_key`] wherever it is logged.
+pub(crate) fn image_url(server: &str, item_id: &str, token: &str) -> String {
+    let server = server.trim_end_matches('/');
+    format!(
+        "{server}/Items/{item_id}/Images/Primary?ApiKey={}",
+        encode_query_value(token)
+    )
+}
+
 #[cfg(test)]
 #[path = "url_test.rs"]
 mod tests;

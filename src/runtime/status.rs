@@ -33,6 +33,9 @@ pub(crate) struct NowPlaying {
     pub(crate) has_previous: bool,
     pub(crate) queue_index: usize,
     pub(crate) queue_len: usize,
+    /// The item's primary image, carrying the access token in the query
+    /// string — see [`crate::jellyfin::url::image_url`].
+    pub(crate) art_url: String,
 }
 
 impl Runtime {
@@ -52,6 +55,11 @@ impl Runtime {
                     has_previous: self.window.index() > 0,
                     queue_index: self.window.index(),
                     queue_len: self.window.len(),
+                    art_url: crate::jellyfin::url::image_url(
+                        &self.api.server,
+                        item_id,
+                        &self.api.token,
+                    ),
                 });
         PlayerStatus {
             server: self.api.server.clone(),

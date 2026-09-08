@@ -113,6 +113,7 @@ impl PlayerIface {
         if let Some(np) = &self.status().now_playing {
             map.insert("mpris:trackid".to_string(), owned(track_id(&np.item_id)));
             map.insert("xesam:title".to_string(), owned(np.title.clone()));
+            map.insert("mpris:artUrl".to_string(), owned(np.art_url.clone()));
         }
         map
     }

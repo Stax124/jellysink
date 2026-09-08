@@ -25,6 +25,7 @@ fn status_round_trips_through_json() {
             has_previous: false,
             queue_index: 0,
             queue_len: 5,
+            art_url: "http://x/Items/1/Images/Primary?ApiKey=tok".into(),
         }),
     };
     let json = serde_json::to_vec(&s).unwrap();
