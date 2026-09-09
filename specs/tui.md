@@ -174,9 +174,19 @@ the single way back and in. They used to double as back and open there, which
 made `←` a second, unadvertised way to leave a level.
 
 A grid tile has no room for the `64%` a list row shows, so the shelf rule under
-each cover *is* the progress bar and the caption only says when something is
-finished. Selection is carried by the caption's highlight, which leaves the
+each cover *is* the progress bar and the caption spends its one row on the two
+facts the rule cannot carry: how many children are still unwatched, and the
+community rating — `46 left · ★ 8.0`. A finished item drops the count rather
+than showing a zero, so nothing needs a tick to repeat what the full rule
+already says. Selection is carried by the caption's highlight, which leaves the
 rule free to mean one thing.
+
+That rule is why `ITEM_FIELDS` asks for `RecursiveItemCount` and `seasons()`
+passes it too. A series or a season has a `PlaybackPositionTicks` of 0, so its
+progress can only come from `UserData.PlayedPercentage` — and the server
+leaves that null unless the count was requested. Without it every folder drew
+an empty rule while its `RunTimeTicks` reported the nominal length of one
+episode.
 
 Tiles are sized by the **height**, not by a fixed width. `grid::metrics`
 divides the body into `TARGET_ROWS` rows and takes the cover width from that,

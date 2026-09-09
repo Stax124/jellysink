@@ -181,6 +181,7 @@ fn watched(mut item: Item, played: bool, position_ticks: i64) -> Item {
         played,
         playback_position_ticks: position_ticks,
         played_percentage: None,
+        unplayed_item_count: None,
     });
     item
 }
@@ -203,12 +204,17 @@ fn a_watched_row_is_ticked_and_a_partly_watched_one_shows_its_percentage() {
 }
 
 #[test]
-fn a_finished_tile_is_ticked_even_though_a_tile_has_no_room_for_a_percentage() {
-    // Home is a grid: progress is the bar under the cover, and the caption
-    // only has to say when something is done with.
+fn a_tile_spends_its_one_caption_row_on_the_rating_not_on_a_tick() {
+    // Home is a grid: progress is the bar under the cover, and a container
+    // says what is left of it, so neither needs a tick to repeat.
     let mut app = app();
-    app.resume.fill(vec![watched(episode(), true, 0)]);
-    assert!(drawn(&app).contains('✓'));
+    let mut finished = watched(episode(), true, 0);
+    finished.community_rating = Some(8.0);
+    app.resume.fill(vec![finished]);
+
+    let screen = drawn(&app);
+    assert!(screen.contains("★ 8.0"), "{screen}");
+    assert!(!screen.contains('✓'), "{screen}");
 }
 
 #[test]

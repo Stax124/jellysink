@@ -158,7 +158,7 @@ pub(super) fn row(item: &Item) -> ListItem<'static> {
         Span::raw(if item.played() { "✓ " } else { "  " }),
         Span::raw(item.label()),
     ];
-    if let Some(fraction) = item.watched_fraction() {
+    if let Some(fraction) = item.watched_fraction().filter(|_| !item.played()) {
         spans.push(Span::styled(
             format!("  {}%", (fraction * 100.0).round() as u32),
             Style::default().fg(ACCENT),
