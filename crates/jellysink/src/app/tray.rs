@@ -3,7 +3,7 @@ use crate::app::signal::Signal;
 use std::io::Cursor;
 use std::sync::OnceLock;
 
-const JELLYFIN_ICO: &[u8] = include_bytes!("../../assets/logo.ico");
+const JELLYFIN_ICO: &[u8] = include_bytes!("../../../../assets/logo.ico");
 
 pub(crate) struct Tray {
     pub(crate) handle: ksni::Handle<CastTray>,
