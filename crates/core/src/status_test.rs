@@ -1,10 +1,10 @@
 use super::*;
 
-/// The wire format between the daemon (serializes) and the CLI (deserializes)
-/// over the stop socket — the part this feature actually adds.
+/// The daemon serializes, `jellysink status --json` and jellytui's footer
+/// deserialize; a renamed field is a silently empty footer and a broken script.
 #[test]
-fn status_round_trips_through_json() {
-    let s = PlayerStatus {
+fn status_serializes_the_field_names_its_readers_expect() {
+    let status = PlayerStatus {
         server: "http://x".into(),
         username: "admin".into(),
         now_playing: Some(NowPlaying {
@@ -21,8 +21,40 @@ fn status_round_trips_through_json() {
             art_url: "http://x/Items/1/Images/Primary?ApiKey=tok".into(),
         }),
     };
-    let json = serde_json::to_vec(&s).unwrap();
-    let back: PlayerStatus = serde_json::from_slice(&json).unwrap();
-    assert_eq!(back.username, "admin");
-    assert_eq!(back.now_playing.unwrap().title, "Ep 1");
+
+    let json = serde_json::to_value(&status).unwrap();
+    assert_eq!(field_names(&json), ["now_playing", "server", "username"]);
+    assert_eq!(
+        field_names(&json["now_playing"]),
+        [
+            "art_url",
+            "has_next",
+            "has_previous",
+            "is_muted",
+            "is_paused",
+            "item_id",
+            "position_ticks",
+            "queue_index",
+            "queue_len",
+            "title",
+            "volume",
+        ]
+    );
+}
+
+#[test]
+fn idle_status_carries_no_now_playing() {
+    let json = serde_json::to_value(PlayerStatus::idle("http://x".into(), "admin".into())).unwrap();
+    assert!(json["now_playing"].is_null());
+}
+
+/// Alphabetical: `serde_json`'s map is sorted, and field order is not part of
+/// what a reader depends on.
+fn field_names(value: &serde_json::Value) -> Vec<&str> {
+    value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect()
 }

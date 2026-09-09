@@ -6,6 +6,8 @@
 
 mod app;
 mod cover;
+#[cfg(test)]
+mod test_support;
 
 mod keys;
 mod nav;

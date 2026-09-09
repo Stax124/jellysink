@@ -357,7 +357,9 @@ Resolution precedence, once per side (`crates/jellysink/src/media/subtitle_test.
 `a_language_the_next_episode_does_not_have_falls_back_to_the_server_default`,
 `a_commentary_track_is_not_confused_with_the_feature_audio`.
 
-The mpv side (`crates/jellysink/src/mpv/event_test.rs`): `a_track_property_tells_off_apart_from_not_yet_decided`,
-`only_the_observed_track_properties_become_events`,
+The mpv side, in `crates/jellysink/src/mpv/event_test.rs`:
+`a_track_property_tells_off_apart_from_not_yet_decided`,
+`only_the_observed_track_properties_become_events`. In
+`crates/jellysink/src/mpv/command_test.rs`:
 `observe_property_sends_an_id_and_the_property_name`,
 `max_subtitle_track_id_from_track_list_picks_the_highest_sub_id`.

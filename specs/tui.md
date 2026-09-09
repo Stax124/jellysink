@@ -39,8 +39,8 @@ and it would have meant two ways to be a player.
 daemon, and it says so rather than failing obscurely (`session_id` sets the
 "jellysink is not connected" line). Anything it sends must be something
 `cast.rs` parses; the two halves are joined through a third process, so a
-misspelled command name fails silently at runtime. `jellyfin/remote_test.rs`
-round-trips every command through `CastEvent::from_ws` to catch that in CI.
+misspelled command name fails silently at runtime.
+`crates/core/src/jellyfin/remote_test.rs` round-trips every command through `CastEvent::from_ws` to catch that in CI.
 
 ## Finding the daemon's session
 
@@ -54,8 +54,9 @@ true; the cost is that jellytui only drives a jellysink on the same machine.
 ## Updating
 
 `jellysink update` and the tray's Install update replace the **daemon only**:
-`app/update.rs` pins the release asset to `jellysink-<target>` by exact name,
-because every asset of a release carries the target triple in its name and
+`crates/jellysink/src/daemon/update.rs` pins the release asset to
+`jellysink-<target>` by exact name, because every asset of a release carries
+the target triple in its name and
 `self_update`'s default substring match would otherwise be free to pick
 `jellytui-<target>` or a `.sha256`. `install.sh` installs and updates both.
 

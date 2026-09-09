@@ -323,6 +323,9 @@ End-file gating (`crates/jellysink/src/runtime/window_test.rs`):
 `end_file_eof_always_tries_the_next_item`, `end_file_quit_or_error_stops`,
 `playlist_jump_stop_is_not_a_session_stop`.
 
-IPC plumbing (`crates/jellysink/src/mpv/mod_test.rs`): `abandoned_requests_are_evicted`,
-`property_coercions_reject_a_missing_or_wrong_typed_answer`,
-`end_file_reasons_parse_to_their_variants`.
+IPC plumbing: `abandoned_requests_are_evicted`
+(`crates/jellysink/src/mpv/mod_test.rs`),
+`property_coercions_reject_a_missing_or_wrong_typed_answer`
+(`crates/jellysink/src/mpv/ipc_test.rs`),
+`end_file_reasons_parse_to_their_variants`
+(`crates/jellysink/src/mpv/event_test.rs`).

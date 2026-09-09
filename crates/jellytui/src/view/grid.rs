@@ -184,11 +184,8 @@ pub(crate) fn render(
         view.rows,
     );
     let start = view.offset * metrics.columns;
-    // What the tiles cannot use is split above and below them: a shelf whose
-    // cover is bounded by the width leaves a good deal of it, and all of it
-    // under the captions reads as the shelf having been drawn wrong. Measured
-    // against the rows the grid holds rather than the ones this page fills, so
-    // a short last page does not slide up the screen.
+    // Leftover height is split above and below the tiles, and measured against
+    // the rows the grid holds so a short last page does not slide up the screen.
     let used = u16::try_from(metrics.rows).unwrap_or(1) * metrics.tile.height;
     let top = area_inner.y + area_inner.height.saturating_sub(used) / 2;
     for (index, item) in items.iter().enumerate().skip(start).take(metrics.page()) {

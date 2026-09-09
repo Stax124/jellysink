@@ -16,7 +16,7 @@ pub(crate) enum IpcMessage {
         name: String,
         reason: Option<String>,
     },
-    /// The new value is dropped — see [`MpvEvent::SubtitleTrackChanged`].
+    /// The new value is dropped — see [`super::event::MpvEvent::SubtitleTrackChanged`].
     PropertyChange { property: String },
 }
 

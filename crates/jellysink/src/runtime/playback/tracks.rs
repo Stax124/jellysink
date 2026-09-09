@@ -1,5 +1,5 @@
-//! The Jellyfin-index <-> mpv-track-id maps and the remembered hand-picked
-//! track. See `specs/tracks.md`.
+//! Applying, adopting and remembering a track, parameterised over
+//! `TrackKind` rather than written once per kind. See `specs/tracks.md`.
 
 use crate::media::{
     TrackId, TrackKind, TrackPreference, jellyfin_embedded_audio_index,

@@ -56,11 +56,11 @@ struct AuthUser {
 
 #[derive(Clone)]
 pub struct Api {
-    pub http: reqwest::Client,
+    http: reqwest::Client,
     pub server: String,
     pub token: String,
     pub device_id: String,
-    pub device_name: String,
+    device_name: String,
     pub user_id: String,
     /// Precomputed: constant for the process, and needed once a second.
     auth_header: String,
