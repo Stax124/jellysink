@@ -92,7 +92,7 @@ fn prepend_happens_even_though_jellyfin_sent_a_full_queue() {
 
     // Full series listing split at e6.
     let (previous, _rest) = split_at(&["e1", "e2", "e3", "e4", "e5", "e6", "e7"], "e6");
-    let missing = crate::runtime::queue::ids_missing_from(&previous, &w.queue.items);
+    let missing = crate::runtime::queue::expand::ids_missing_from(&previous, &w.queue.items);
     assert_eq!(missing, ["e1", "e2", "e3", "e4", "e5"]);
 
     w.prepend(missing);
@@ -117,7 +117,7 @@ fn advancing_then_prepending_does_not_duplicate() {
     assert_eq!(current(&w), "e7");
 
     let (previous, _rest) = split_at(&["e1", "e2", "e3", "e4", "e5", "e6", "e7"], "e7");
-    let missing = crate::runtime::queue::ids_missing_from(&previous, &w.queue.items);
+    let missing = crate::runtime::queue::expand::ids_missing_from(&previous, &w.queue.items);
     assert!(
         missing.is_empty(),
         "e1..e6 are already in the queue: {missing:?}"
@@ -207,7 +207,7 @@ fn split_at(ids: &[&str], current: &str) -> (Vec<String>, Vec<String>) {
     let v = json!({
         "Items": ids.iter().map(|id| json!({"Id": id})).collect::<Vec<_>>()
     });
-    crate::runtime::queue::split_episode_ids(&v, current)
+    crate::runtime::queue::expand::split_episode_ids(&v, current)
 }
 
 #[test]
