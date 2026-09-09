@@ -12,13 +12,13 @@ const ITEM_FIELDS: &str = "Overview,ProductionYear";
 
 /// Jellyfin pages `/Shows/{id}/Episodes` without this; 500 covers a long
 /// running series in one request.
-pub(crate) const EPISODE_LIMIT: u32 = 500;
+pub const EPISODE_LIMIT: u32 = 500;
 
 /// The `/Items` parameters that vary between screens. Private fields with
 /// constructors instead of a literal, because `search` and `in_folder` differ
 /// in `Recursive` and getting that wrong silently returns the whole library.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct ItemQuery {
+pub struct ItemQuery {
     parent_id: Option<String>,
     search_term: Option<String>,
     include_item_types: Option<String>,
@@ -30,7 +30,7 @@ pub(crate) struct ItemQuery {
 
 impl ItemQuery {
     /// The direct children of one folder, in the server's sort order.
-    pub(crate) fn in_folder(parent_id: &str) -> Self {
+    pub fn in_folder(parent_id: &str) -> Self {
         Self {
             parent_id: Some(parent_id.to_string()),
             sort_by: Some("SortName".to_string()),
@@ -38,7 +38,7 @@ impl ItemQuery {
         }
     }
 
-    pub(crate) fn search(term: &str) -> Self {
+    pub fn search(term: &str) -> Self {
         Self {
             search_term: Some(term.to_string()),
             recursive: true,
@@ -46,18 +46,18 @@ impl ItemQuery {
         }
     }
 
-    pub(crate) fn with_types(mut self, include_item_types: &str) -> Self {
+    pub fn with_types(mut self, include_item_types: &str) -> Self {
         self.include_item_types = Some(include_item_types.to_string());
         self
     }
 
-    pub(crate) fn page(mut self, start_index: u32, limit: u32) -> Self {
+    pub fn page(mut self, start_index: u32, limit: u32) -> Self {
         self.start_index = Some(start_index);
         self.limit = Some(limit);
         self
     }
 
-    pub(crate) fn to_query(&self, user_id: &str) -> String {
+    pub fn to_query(&self, user_id: &str) -> String {
         let mut query = format!(
             "userId={}&Fields={ITEM_FIELDS}&Recursive={}",
             encode_query_value(user_id),
@@ -92,18 +92,18 @@ impl ItemQuery {
 }
 
 impl Api {
-    pub(crate) async fn user_views(&self) -> Result<Value> {
+    pub async fn user_views(&self) -> Result<Value> {
         let path = format!("/UserViews?userId={}", encode_query_value(&self.user_id));
         self.get_json(&path).await
     }
 
-    pub(crate) async fn items(&self, query: &ItemQuery) -> Result<Value> {
+    pub async fn items(&self, query: &ItemQuery) -> Result<Value> {
         let path = format!("/Items?{}", query.to_query(&self.user_id));
         tracing::debug!(path, "GET items");
         self.get_json(&path).await
     }
 
-    pub(crate) async fn seasons(&self, series_id: &str) -> Result<Value> {
+    pub async fn seasons(&self, series_id: &str) -> Result<Value> {
         let path = format!(
             "/Shows/{series_id}/Seasons?userId={}",
             encode_query_value(&self.user_id)
@@ -114,7 +114,7 @@ impl Api {
     /// One season, for a frontend that shows a synopsis. `/Shows/…/Episodes`
     /// omits `Overview` unless asked, and asking costs a few hundred bytes an
     /// episode — worth it here, not in [`Api::episodes_all`].
-    pub(crate) async fn episodes(
+    pub async fn episodes(
         &self,
         series_id: &str,
         season_id: Option<&str>,
@@ -126,7 +126,7 @@ impl Api {
 
     /// The whole series in aired order. No `StartItemId`: it is a forward-only
     /// `SkipWhile`, so the caller splits the listing itself.
-    pub(crate) async fn episodes_all(&self, series_id: &str) -> Result<Value> {
+    pub async fn episodes_all(&self, series_id: &str) -> Result<Value> {
         self.episodes_listing(series_id, None, EPISODE_LIMIT, false)
             .await
     }
@@ -160,7 +160,7 @@ impl Api {
     ///
     /// `Ok(None)` means the server has no such image, which is ordinary and
     /// permanent; an `Err` is worth retrying when the item is looked at again.
-    pub(crate) async fn primary_image(
+    pub async fn primary_image(
         &self,
         item_id: &str,
         image_tag: &str,
@@ -187,7 +187,7 @@ impl Api {
         ))
     }
 
-    pub(crate) async fn next_up(&self, limit: u32) -> Result<Value> {
+    pub async fn next_up(&self, limit: u32) -> Result<Value> {
         let path = format!(
             "/Shows/NextUp?userId={}&Limit={limit}",
             encode_query_value(&self.user_id)
@@ -200,7 +200,7 @@ impl Api {
     /// second instead of being logged — jellytui installs no tracing
     /// subscriber, so a debug line here reaches nobody and the legacy 404
     /// would be all the user ever saw of, say, an expired token.
-    pub(crate) async fn resume(&self, limit: u32) -> Result<Value> {
+    pub async fn resume(&self, limit: u32) -> Result<Value> {
         let user_id = encode_query_value(&self.user_id);
         let path = format!("/UserItems/Resume?userId={user_id}&Limit={limit}&MediaTypes=Video");
         let modern = match self.get_json(&path).await {
@@ -211,6 +211,20 @@ impl Api {
         self.get_json(&legacy)
             .await
             .wrap_err_with(|| format!("{modern:#}"))
+    }
+    pub async fn get_item(&self, item_id: &str) -> color_eyre::Result<Value> {
+        let path = format!(
+            "/Items/{item_id}?userId={}",
+            encode_query_value(&self.user_id)
+        );
+        match self.get_json(&path).await {
+            Ok(item) => Ok(item),
+            Err(err) => {
+                tracing::debug!(%err, path, "item lookup failed; trying legacy endpoint");
+                let legacy = format!("/Users/{}/Items/{item_id}", self.user_id);
+                self.get_json(&legacy).await
+            }
+        }
     }
 }
 

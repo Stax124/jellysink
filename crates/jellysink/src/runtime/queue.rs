@@ -1,7 +1,7 @@
 use super::state::Runtime;
-use crate::jellyfin::auth::Api;
 use crate::media::{self, PlayRequest, PreparedPlay};
 use crate::runtime::window::{PlaylistEof, playlist_eof};
+use jellysink_core::jellyfin::auth::Api;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -21,7 +21,7 @@ async fn fetch_prepared(
     item_id: &str,
     req: &PlayRequest,
 ) -> color_eyre::Result<(PreparedPlay, Option<Value>)> {
-    let info_fut = api.playback_info(item_id, req);
+    let info_fut = crate::jellyfin::playback_info(api, item_id, req);
     let item_fut = api.get_item(item_id);
     let (info, item) = tokio::join!(info_fut, item_fut);
     let info = info?;
@@ -428,10 +428,10 @@ fn playlist_stub_entry(
     title: Option<&str>,
     token: Option<&str>,
 ) -> (String, String) {
-    let url = crate::jellyfin::url::direct_stream_url(server, id, id, None, token);
-    let title = title
-        .map(str::to_string)
-        .unwrap_or_else(|| crate::jellyfin::url::direct_stream_url(server, id, id, None, None));
+    let url = jellysink_core::jellyfin::url::direct_stream_url(server, id, id, None, token);
+    let title = title.map(str::to_string).unwrap_or_else(|| {
+        jellysink_core::jellyfin::url::direct_stream_url(server, id, id, None, None)
+    });
     (title, url)
 }
 

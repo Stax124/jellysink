@@ -1,42 +1,7 @@
-//! A snapshot of what the daemon is doing right now, for `jellysink status`.
+//! Building the status snapshot core publishes over `stop.sock`.
 
 use super::state::Runtime;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct PlayerStatus {
-    pub(crate) server: String,
-    pub(crate) username: String,
-    pub(crate) now_playing: Option<NowPlaying>,
-}
-
-impl PlayerStatus {
-    /// The value published before playback ever starts, or once it stops.
-    pub(crate) fn idle(server: String, username: String) -> Self {
-        Self {
-            server,
-            username,
-            now_playing: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct NowPlaying {
-    pub(crate) item_id: String,
-    pub(crate) title: String,
-    pub(crate) position_ticks: i64,
-    pub(crate) is_paused: bool,
-    pub(crate) is_muted: bool,
-    pub(crate) volume: i64,
-    pub(crate) has_next: bool,
-    pub(crate) has_previous: bool,
-    pub(crate) queue_index: usize,
-    pub(crate) queue_len: usize,
-    /// The item's primary image, carrying the access token in the query
-    /// string — see [`crate::jellyfin::url::image_url`].
-    pub(crate) art_url: String,
-}
+use jellysink_core::status::{NowPlaying, PlayerStatus};
 
 impl Runtime {
     fn build_status(&self) -> PlayerStatus {
@@ -55,7 +20,7 @@ impl Runtime {
                     has_previous: self.window.index() > 0,
                     queue_index: self.window.index(),
                     queue_len: self.window.len(),
-                    art_url: crate::jellyfin::url::image_url(
+                    art_url: jellysink_core::jellyfin::url::image_url(
                         &self.api.server,
                         item_id,
                         &self.api.token,
@@ -76,7 +41,3 @@ impl Runtime {
         self.status_tx.send_replace(self.build_status());
     }
 }
-
-#[cfg(test)]
-#[path = "status_test.rs"]
-mod tests;

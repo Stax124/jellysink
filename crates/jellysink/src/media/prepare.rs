@@ -3,8 +3,8 @@
 use super::streams::{
     MediaSource, PlaybackInfo, StreamMaps, has_foreign_subtitle_host, map_streams,
 };
-use crate::jellyfin::url::{direct_stream_url, redact_api_key};
 use color_eyre::eyre::{WrapErr, eyre};
+use jellysink_core::jellyfin::url::{direct_stream_url, redact_api_key};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt;

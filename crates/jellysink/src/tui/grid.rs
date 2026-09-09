@@ -4,7 +4,7 @@
 use super::cover::{self, CoverKey, Covers};
 use super::rail;
 use super::ui::{ACCENT, DIM, to_width};
-use crate::jellyfin::model::Item;
+use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Modifier, Style};

@@ -3,7 +3,7 @@ use super::encode_query_value;
 
 /// Stream URLs carry the access token whenever the Authorization header is not
 /// in play, and those URLs end up in `Debug` output and color-eyre captures.
-pub(crate) fn redact_api_key(url: &str) -> String {
+pub fn redact_api_key(url: &str) -> String {
     let Some(at) = url.find("ApiKey=") else {
         return url.to_string();
     };
@@ -14,7 +14,7 @@ pub(crate) fn redact_api_key(url: &str) -> String {
     format!("{}<redacted>{}", &url[..value_start], &url[value_end..])
 }
 
-pub(crate) fn direct_stream_url(
+pub fn direct_stream_url(
     server: &str,
     item_id: &str,
     media_source_id: &str,
@@ -41,7 +41,7 @@ pub(crate) fn direct_stream_url(
 /// Carries the token in the query string like [`direct_stream_url`] — this
 /// URL is handed to a desktop widget to fetch itself, not read server-side by
 /// jellysink, so it is redacted by [`redact_api_key`] wherever it is logged.
-pub(crate) fn image_url(server: &str, item_id: &str, token: &str) -> String {
+pub fn image_url(server: &str, item_id: &str, token: &str) -> String {
     let server = server.trim_end_matches('/');
     format!(
         "{server}/Items/{item_id}/Images/Primary?ApiKey={}",

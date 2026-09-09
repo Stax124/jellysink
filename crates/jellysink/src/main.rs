@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use jellysink::UsageError;
 use jellysink::app::cli;
-use jellysink::app::config::{Config, Paths};
-use jellysink::app::tracing::init_tracing;
+use jellysink_core::UsageError;
+use jellysink_core::config::{Config, Paths};
+use jellysink_core::logging::init_tracing;
 use std::path::PathBuf;
 
 #[global_allocator]
@@ -93,7 +93,7 @@ async fn try_main() -> Result<()> {
         .map(|c| c.log_level)
         .unwrap_or_else(|_| "info".into());
 
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    jellysink_core::install_crypto_provider();
     init_tracing(&log_level)?;
 
     match cli.command.unwrap_or(Command::Run) {

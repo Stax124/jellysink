@@ -7,15 +7,15 @@ use super::nav::{self, End, Level, Source};
 use super::playing;
 use super::rail;
 use super::ui;
-use crate::app::config::Paths;
-use crate::app::instance;
-use crate::jellyfin::auth::Api;
-use crate::jellyfin::browse::{EPISODE_LIMIT, ItemQuery};
-use crate::jellyfin::model::{Item, ItemList};
-use crate::jellyfin::remote::PlaystateCommand;
-use crate::runtime::PlayerStatus;
-use crate::ticks::seconds_to_ticks;
 use color_eyre::eyre::Result;
+use jellysink_core::config::Paths;
+use jellysink_core::instance;
+use jellysink_core::jellyfin::auth::Api;
+use jellysink_core::jellyfin::browse::{EPISODE_LIMIT, ItemQuery};
+use jellysink_core::jellyfin::model::{Item, ItemList};
+use jellysink_core::jellyfin::remote::PlaystateCommand;
+use jellysink_core::status::PlayerStatus;
+use jellysink_core::ticks::seconds_to_ticks;
 use ratatui::crossterm::event::{Event, KeyEventKind};
 use ratatui::layout::{Rect, Size};
 use ratatui_image::picker::Picker;
@@ -855,7 +855,7 @@ impl App {
 }
 
 impl App {
-    pub(super) fn now_playing(&self) -> Option<&crate::runtime::status::NowPlaying> {
+    pub(super) fn now_playing(&self) -> Option<&jellysink_core::status::NowPlaying> {
         self.player.as_ref()?.now_playing.as_ref()
     }
 

@@ -1,11 +1,7 @@
-pub(crate) mod auth;
-pub(crate) mod browse;
-pub(crate) mod encode;
-pub(crate) mod model;
-pub(crate) mod playback;
-pub(crate) mod profile;
-pub(crate) mod remote;
-pub(crate) mod session;
-pub(crate) mod url;
+//! The Jellyfin endpoints only the daemon calls, over the `Api` client
+//! `jellysink_core` owns.
 
-pub(crate) use encode::encode_query_value;
+mod playback;
+pub(crate) mod profile;
+
+pub(crate) use playback::{playback_info, playing, post_capabilities, progress, stopped};

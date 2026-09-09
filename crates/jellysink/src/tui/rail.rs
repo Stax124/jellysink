@@ -1,8 +1,8 @@
 //! The detail rail: cover and metadata for whichever row holds the cursor.
 
 use super::cover::{self, CoverKey, Covers};
-use crate::jellyfin::model::Item;
-use crate::ticks::ticks_to_seconds;
+use jellysink_core::jellyfin::model::Item;
+use jellysink_core::ticks::ticks_to_seconds;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect, Size};
 use ratatui::style::{Modifier, Style};

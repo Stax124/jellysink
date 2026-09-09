@@ -10,10 +10,10 @@ mod playing;
 mod rail;
 mod ui;
 
-use crate::app::config::{Config, Credentials, Paths};
-use crate::jellyfin::auth::Api;
-use crate::usage_err;
 use color_eyre::eyre::Result;
+use jellysink_core::config::{Config, Credentials, Paths};
+use jellysink_core::jellyfin::auth::Api;
+use jellysink_core::usage_err;
 
 pub async fn run(paths: Paths) -> Result<()> {
     let credentials = Credentials::load(&paths)?

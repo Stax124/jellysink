@@ -1,6 +1,6 @@
 //! The browse stack: where the user is, and what Enter does next.
 
-use crate::jellyfin::model::Item;
+use jellysink_core::jellyfin::model::Item;
 
 /// One screen's worth of rows plus the cursor in them. Levels stack, so going
 /// back restores the position rather than re-fetching.

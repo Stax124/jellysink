@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 /// The `Playstate` commands jellysink acts on. An enum so a caller cannot
 /// invent a spelling the daemon silently drops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PlaystateCommand {
+pub enum PlaystateCommand {
     PlayPause,
     Stop,
     NextTrack,
@@ -37,19 +37,14 @@ impl Api {
     /// jellysink's own session, or `None` when the daemon is not connected.
     /// Filtered by device id: an earlier install leaves a same-named session
     /// behind, and commands sent to that one go nowhere.
-    pub(crate) async fn session_for_device(&self) -> Result<Option<Session>> {
+    pub async fn session_for_device(&self) -> Result<Option<Session>> {
         let path = format!("/Sessions?deviceId={}", encode_query_value(&self.device_id));
         let body = self.get_json(&path).await?;
         let sessions = Vec::<Session>::deserialize(&body).wrap_err("decoding Sessions")?;
         Ok(sessions.into_iter().next())
     }
 
-    pub(crate) async fn play_now(
-        &self,
-        session_id: &str,
-        item_id: &str,
-        start_ticks: i64,
-    ) -> Result<()> {
+    pub async fn play_now(&self, session_id: &str, item_id: &str, start_ticks: i64) -> Result<()> {
         let path = format!(
             "/Sessions/{}/Playing?PlayCommand=PlayNow&ItemIds={}&StartPositionTicks={start_ticks}",
             encode_query_value(session_id),
@@ -59,7 +54,7 @@ impl Api {
         self.post_command(&path).await
     }
 
-    pub(crate) async fn playstate(
+    pub async fn playstate(
         &self,
         session_id: &str,
         command: PlaystateCommand,
@@ -76,7 +71,7 @@ impl Api {
         self.post_command(&path).await
     }
 
-    pub(crate) async fn general_command(
+    pub async fn general_command(
         &self,
         session_id: &str,
         name: &str,

@@ -1,5 +1,5 @@
-use crate::APP_NAME;
 use crate::app::signal::Signal;
+use jellysink_core::APP_NAME;
 use std::io::Cursor;
 use std::sync::OnceLock;
 

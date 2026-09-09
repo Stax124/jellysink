@@ -1,14 +1,15 @@
-use crate::app::config::{
-    Config, Credentials, Field, MpvArgs, Paths, device_name, normalize_server_url,
-};
-use crate::app::instance::{self, InstanceLock};
+use crate::app::instance::listen_stop;
 use crate::app::signal::Signal;
 use crate::app::tray;
-use crate::jellyfin::auth::login;
-use crate::usage_err;
-use crate::{APP_NAME, VERSION};
 use color_eyre::eyre::WrapErr;
 use dialoguer::{Input, Password, theme::ColorfulTheme};
+use jellysink_core::config::{
+    Config, Credentials, Field, MpvArgs, Paths, device_name, normalize_server_url,
+};
+use jellysink_core::instance::{self, InstanceLock};
+use jellysink_core::jellyfin::auth::login;
+use jellysink_core::usage_err;
+use jellysink_core::{APP_NAME, VERSION};
 use std::ffi::OsStr;
 use uuid::Uuid;
 
@@ -122,7 +123,8 @@ pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
     if json {
         let mut status = status;
         if let Some(now_playing) = &mut status.now_playing {
-            now_playing.art_url = crate::jellyfin::url::redact_api_key(&now_playing.art_url);
+            now_playing.art_url =
+                jellysink_core::jellyfin::url::redact_api_key(&now_playing.art_url);
         }
         println!("{}", serde_json::to_string_pretty(&status)?);
         return Ok(());
@@ -140,7 +142,7 @@ pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
             );
             println!(
                 "position: {}",
-                crate::ticks::format_hms(now_playing.position_ticks)
+                jellysink_core::ticks::format_hms(now_playing.position_ticks)
             );
             println!(
                 "queue:    {}/{}",
@@ -200,10 +202,9 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .wrap_err("SIGINT handler")?;
 
-    let (status_tx, status_rx) = tokio::sync::watch::channel(crate::runtime::PlayerStatus::idle(
-        creds.server.clone(),
-        creds.username.clone(),
-    ));
+    let (status_tx, status_rx) = tokio::sync::watch::channel(
+        jellysink_core::status::PlayerStatus::idle(creds.server.clone(), creds.username.clone()),
+    );
 
     let (ext_tx, ext_rx) = tokio::sync::mpsc::unbounded_channel();
     if tokio::time::timeout(
@@ -221,9 +222,8 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let stop_paths = paths.clone();
     let stop_shutdown = shutdown.clone();
     let stop_restart = restart.clone();
-    let stop_fut = async move {
-        instance::listen_stop(&stop_paths, stop_shutdown, stop_restart, status_rx).await
-    };
+    let stop_fut =
+        async move { listen_stop(&stop_paths, stop_shutdown, stop_restart, status_rx).await };
 
     let session_shutdown = shutdown.clone();
     let session_fut =

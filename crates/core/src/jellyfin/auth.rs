@@ -1,4 +1,4 @@
-use crate::app::config::{Credentials, device_name, normalize_server_url};
+use crate::config::{Credentials, device_name, normalize_server_url};
 use crate::usage_err;
 use crate::{CLIENT_NAME, VERSION};
 use color_eyre::eyre::WrapErr;
@@ -9,7 +9,7 @@ use std::fmt;
 /// The server rejected our access token. Typed so the reconnect loop does not
 /// have to look for `"401"` in an error chain that also carries the URL.
 #[derive(Debug)]
-pub(crate) struct AuthExpired;
+pub struct AuthExpired;
 
 impl fmt::Display for AuthExpired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -21,11 +21,11 @@ impl std::error::Error for AuthExpired {}
 
 /// Whether `err` was caused by an expired token at any depth; `downcast_ref`
 /// would only see the outermost error.
-pub(crate) fn is_auth_expired(err: &color_eyre::Report) -> bool {
+pub fn is_auth_expired(err: &color_eyre::Report) -> bool {
     err.chain().any(|cause| cause.is::<AuthExpired>())
 }
 
-pub(crate) fn authorization_header(device: &str, device_id: &str, token: Option<&str>) -> String {
+pub fn authorization_header(device: &str, device_id: &str, token: Option<&str>) -> String {
     let device = sanitize_token_field(device);
     let mut header = format!(
         r#"MediaBrowser Client="{CLIENT_NAME}", Device="{device}", DeviceId="{device_id}", Version="{VERSION}""#
@@ -55,13 +55,13 @@ struct AuthUser {
 }
 
 #[derive(Clone)]
-pub(crate) struct Api {
-    pub(crate) http: reqwest::Client,
-    pub(crate) server: String,
-    pub(crate) token: String,
-    pub(crate) device_id: String,
-    pub(crate) device_name: String,
-    pub(crate) user_id: String,
+pub struct Api {
+    pub http: reqwest::Client,
+    pub server: String,
+    pub token: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub user_id: String,
     /// Precomputed: constant for the process, and needed once a second.
     auth_header: String,
 }
@@ -80,7 +80,7 @@ impl fmt::Debug for Api {
 }
 
 impl Api {
-    pub(crate) fn from_credentials(creds: &Credentials) -> color_eyre::Result<Self> {
+    pub fn from_credentials(creds: &Credentials) -> color_eyre::Result<Self> {
         let device_name = device_name();
         Ok(Self {
             http: http_client()?,
@@ -97,11 +97,11 @@ impl Api {
         })
     }
 
-    pub(crate) fn auth_header(&self) -> &str {
+    pub fn auth_header(&self) -> &str {
         &self.auth_header
     }
 
-    pub(crate) fn mpv_auth_header_field(&self) -> String {
+    pub fn mpv_auth_header_field(&self) -> String {
         format!("Authorization: {}", self.auth_header())
     }
 
@@ -123,12 +123,12 @@ impl Api {
         Ok(resp)
     }
 
-    pub(crate) async fn get(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
+    pub async fn get(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
         let url = format!("{}{path}", self.server);
         self.send(self.http.get(&url), "GET", &url).await
     }
 
-    pub(crate) async fn post_json(
+    pub async fn post_json(
         &self,
         path: &str,
         body: &serde_json::Value,
@@ -139,12 +139,12 @@ impl Api {
     }
 
     /// A POST whose parameters all live in the query string.
-    pub(crate) async fn post(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
+    pub async fn post(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
         let url = format!("{}{path}", self.server);
         self.send(self.http.post(&url), "POST", &url).await
     }
 
-    pub(crate) async fn get_json(&self, path: &str) -> color_eyre::Result<serde_json::Value> {
+    pub async fn get_json(&self, path: &str) -> color_eyre::Result<serde_json::Value> {
         let resp = self
             .get(path)
             .await?
@@ -162,7 +162,7 @@ fn http_client() -> color_eyre::Result<reqwest::Client> {
         .wrap_err("building HTTP client")
 }
 
-pub(crate) async fn login(
+pub async fn login(
     server: &str,
     username: &str,
     password: &str,

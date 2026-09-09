@@ -2,15 +2,16 @@
 
 use super::state::Runtime;
 use super::task::AbortOnDrop;
-use crate::app::config::{Config, Credentials, Paths};
 use crate::app::signal::Signal;
-use crate::cast::CastEvent;
-use crate::jellyfin::auth::{Api, is_auth_expired};
-use crate::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
+use crate::jellyfin;
 use crate::mpv::MpvEvent;
 use crate::report::Report;
 use color_eyre::eyre::{WrapErr, eyre};
 use futures_util::{SinkExt, StreamExt};
+use jellysink_core::cast::CastEvent;
+use jellysink_core::config::{Config, Credentials, Paths};
+use jellysink_core::jellyfin::auth::{Api, is_auth_expired};
+use jellysink_core::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
 use serde_json::json;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -47,7 +48,7 @@ pub(crate) async fn run(
     creds: Credentials,
     paths: Paths,
     shutdown: Signal,
-    status_tx: tokio::sync::watch::Sender<super::status::PlayerStatus>,
+    status_tx: tokio::sync::watch::Sender<jellysink_core::status::PlayerStatus>,
     mut ext_rx: tokio::sync::mpsc::UnboundedReceiver<CastEvent>,
 ) -> color_eyre::Result<()> {
     let mut backoff = BACKOFF_MIN;
@@ -137,9 +138,9 @@ fn spawn_report_sink(
     let task = tokio::spawn(async move {
         while let Some(report) = rx.recv().await {
             let r = match &report {
-                Report::Start(s) => api.playing(s).await,
-                Report::Progress(s) => api.progress(s).await,
-                Report::Stopped(s) => api.stopped(s).await,
+                Report::Start(s) => jellyfin::playing(&api, s).await,
+                Report::Progress(s) => jellyfin::progress(&api, s).await,
+                Report::Stopped(s) => jellyfin::stopped(&api, s).await,
             };
             if let Err(e) = r {
                 tracing::debug!("session report failed: {e:#}");
@@ -158,7 +159,7 @@ async fn run_session(
     ext_rx: &mut tokio::sync::mpsc::UnboundedReceiver<CastEvent>,
     shutdown: &Signal,
 ) -> color_eyre::Result<()> {
-    rt.api.post_capabilities().await?;
+    crate::jellyfin::post_capabilities(&rt.api).await?;
 
     let ws_url = websocket_url(&rt.api.server, &rt.api.token, &rt.api.device_id)?;
     tracing::info!("connecting websocket");

@@ -1291,16 +1291,15 @@ dependencies = [
  "clap",
  "color-eyre",
  "dialoguer",
- "directories",
  "futures-util",
  "ico",
  "image",
+ "jellysink-core",
  "ksni",
  "ratatui",
  "ratatui-image",
  "reqwest",
  "rustix 1.1.4",
- "rustls",
  "self_update",
  "serde",
  "serde_json",
@@ -1308,12 +1307,28 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "tokio-tungstenite",
+ "tracing",
+ "uuid",
+ "zbus",
+]
+
+[[package]]
+name = "jellysink-core"
+version = "0.8.0"
+dependencies = [
+ "color-eyre",
+ "directories",
+ "reqwest",
+ "rustix 1.1.4",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "toml",
  "tracing",
  "tracing-error",
  "tracing-subscriber",
- "uuid",
- "zbus",
 ]
 
 [[package]]

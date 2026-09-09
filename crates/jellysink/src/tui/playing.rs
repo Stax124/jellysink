@@ -5,7 +5,7 @@ use super::app::App;
 use super::cover::{self, CoverKey};
 use super::rail;
 use super::ui::{self, ACCENT, DIM};
-use crate::jellyfin::model::Item;
+use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect, Size};
 use ratatui::style::{Modifier, Style};

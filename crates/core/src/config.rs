@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct Paths {
-    pub(crate) config_dir: PathBuf,
+    pub config_dir: PathBuf,
 }
 
 impl Paths {
@@ -29,7 +29,7 @@ impl Paths {
     /// Creates the config directory, mode 0700 — `mpv.sock` is created by mpv
     /// under its own umask and hands out the access token, so the directory
     /// around it is what keeps it private. Re-applied on every run.
-    pub(crate) fn ensure(&self) -> color_eyre::Result<()> {
+    pub fn ensure(&self) -> color_eyre::Result<()> {
         fs::create_dir_all(&self.config_dir)
             .wrap_err_with(|| format!("creating {}", self.config_dir.display()))?;
         fs::set_permissions(&self.config_dir, fs::Permissions::from_mode(0o700))
@@ -37,27 +37,27 @@ impl Paths {
         Ok(())
     }
 
-    pub(crate) fn config_file(&self) -> PathBuf {
+    pub fn config_file(&self) -> PathBuf {
         self.config_dir.join("config.toml")
     }
 
-    pub(crate) fn cred_file(&self) -> PathBuf {
+    pub fn cred_file(&self) -> PathBuf {
         self.config_dir.join("cred.json")
     }
 
-    pub(crate) fn lock_file(&self) -> PathBuf {
+    pub fn lock_file(&self) -> PathBuf {
         self.config_dir.join("instance.lock")
     }
 
-    pub(crate) fn stop_socket(&self) -> PathBuf {
+    pub fn stop_socket(&self) -> PathBuf {
         self.config_dir.join("stop.sock")
     }
 
-    pub(crate) fn mpv_socket(&self) -> PathBuf {
+    pub fn mpv_socket(&self) -> PathBuf {
         self.config_dir.join("mpv.sock")
     }
 
-    pub(crate) fn mpv_args_file(&self) -> PathBuf {
+    pub fn mpv_args_file(&self) -> PathBuf {
         self.config_dir.join("mpv_args.conf")
     }
 }
@@ -65,7 +65,7 @@ impl Paths {
 /// Every user-facing configuration key. Matching on it is exhaustive, so a new
 /// key is a compile error until every place that handles keys handles it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Field {
+pub enum Field {
     MpvPath,
     /// Lives in `mpv_args.conf`, re-read on every mpv spawn.
     MpvArgs,
@@ -76,7 +76,7 @@ pub(crate) enum Field {
 }
 
 impl Field {
-    pub(crate) const ALL: &'static [Field] = &[
+    pub const ALL: &'static [Field] = &[
         Field::MpvPath,
         Field::MpvArgs,
         Field::LogLevel,
@@ -85,7 +85,7 @@ impl Field {
         Field::ImageScale,
     ];
 
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Field::MpvPath => "mpv_path",
             Field::MpvArgs => "mpv_args",
@@ -96,7 +96,7 @@ impl Field {
         }
     }
 
-    pub(crate) fn parse(key: &str) -> color_eyre::Result<Self> {
+    pub fn parse(key: &str) -> color_eyre::Result<Self> {
         Self::ALL
             .iter()
             .copied()
@@ -114,15 +114,15 @@ impl Field {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Config {
-    pub(crate) mpv_path: String,
+    pub mpv_path: String,
     pub log_level: String,
-    pub(crate) autoplay: bool,
-    pub(crate) prepend_previous: bool,
+    pub autoplay: bool,
+    pub prepend_previous: bool,
     /// jellytui only: how many pixels a cover is fetched and encoded at, per
     /// cell the terminal says it has. See `specs/tui.md` — a HiDPI display
     /// where the terminal reports a scaled cell size needs this at the
     /// display's scale factor, or covers land at a fraction of their box.
-    pub(crate) image_scale: f32,
+    pub image_scale: f32,
 }
 
 impl Default for Config {
@@ -154,7 +154,7 @@ impl Config {
 
     /// For the daemon, which is a reasonable moment to materialise a config
     /// file the user can then edit by hand.
-    pub(crate) fn load_or_create(paths: &Paths) -> color_eyre::Result<Self> {
+    pub fn load_or_create(paths: &Paths) -> color_eyre::Result<Self> {
         let cfg = Self::load(paths)?;
         if !paths.config_file().exists() {
             cfg.save(paths)?;
@@ -162,7 +162,7 @@ impl Config {
         Ok(cfg)
     }
 
-    pub(crate) fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
+    pub fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
         paths.ensure()?;
         let text = toml::to_string_pretty(self).wrap_err("serializing config.toml")?;
         atomic_write(&paths.config_file(), text.as_bytes(), 0o644)?;
@@ -171,7 +171,7 @@ impl Config {
 
     /// `None` for [`Field::MpvArgs`], which is not in config.toml — the caller
     /// reads it from `mpv_args.conf` instead.
-    pub(crate) fn get(&self, field: Field) -> Option<String> {
+    pub fn get(&self, field: Field) -> Option<String> {
         match field {
             Field::MpvArgs => None,
             Field::MpvPath => Some(self.mpv_path.clone()),
@@ -182,19 +182,19 @@ impl Config {
         }
     }
 
-    pub(crate) fn to_toml(&self) -> color_eyre::Result<String> {
+    pub fn to_toml(&self) -> color_eyre::Result<String> {
         toml::to_string_pretty(self).wrap_err("serializing config.toml")
     }
 
     /// Returns `false` for [`Field::MpvArgs`], which the caller writes to its
     /// own file.
-    pub(crate) fn set(&mut self, field: Field, value: &str) -> color_eyre::Result<bool> {
+    pub fn set(&mut self, field: Field, value: &str) -> color_eyre::Result<bool> {
         match field {
             Field::MpvArgs => return Ok(false),
             Field::MpvPath => self.mpv_path = value.to_string(),
             // Rejected here rather than at the next startup.
             Field::LogLevel => {
-                crate::app::tracing::validate_log_level(value)
+                crate::logging::validate_log_level(value)
                     .map_err(|e| usage_err(format!("invalid log_level {value:?}: {e}")))?;
                 self.log_level = value.to_string();
             }
@@ -211,10 +211,10 @@ impl Config {
 /// One argument per line (`--title=My Movie` is one line, not two words);
 /// blank lines and `#` comments are ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct MpvArgs(pub(crate) Vec<String>);
+pub struct MpvArgs(pub Vec<String>);
 
 impl MpvArgs {
-    pub(crate) fn load(paths: &Paths) -> color_eyre::Result<Self> {
+    pub fn load(paths: &Paths) -> color_eyre::Result<Self> {
         let path = paths.mpv_args_file();
         if !path.exists() {
             return Ok(Self::default());
@@ -224,7 +224,7 @@ impl MpvArgs {
         Ok(Self(parse_mpv_args(&text)))
     }
 
-    pub(crate) fn save(paths: &Paths, value: &str) -> color_eyre::Result<()> {
+    pub fn save(paths: &Paths, value: &str) -> color_eyre::Result<()> {
         let args = parse_mpv_args(value);
         let mut text = String::new();
         for arg in &args {
@@ -236,7 +236,7 @@ impl MpvArgs {
         Ok(())
     }
 
-    pub(crate) fn get(paths: &Paths) -> color_eyre::Result<String> {
+    pub fn get(paths: &Paths) -> color_eyre::Result<String> {
         Ok(Self::load(paths)?.0.join(" "))
     }
 }
@@ -285,12 +285,12 @@ fn parse_image_scale(value: &str) -> color_eyre::Result<f32> {
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct Credentials {
-    pub(crate) server: String,
-    pub(crate) username: String,
-    pub(crate) user_id: String,
-    pub(crate) access_token: String,
-    pub(crate) device_id: String,
+pub struct Credentials {
+    pub server: String,
+    pub username: String,
+    pub user_id: String,
+    pub access_token: String,
+    pub device_id: String,
 }
 
 impl fmt::Debug for Credentials {
@@ -308,7 +308,7 @@ impl fmt::Debug for Credentials {
 }
 
 impl Credentials {
-    pub(crate) fn load(paths: &Paths) -> color_eyre::Result<Option<Self>> {
+    pub fn load(paths: &Paths) -> color_eyre::Result<Option<Self>> {
         let path = paths.cred_file();
         if !path.exists() {
             return Ok(None);
@@ -320,14 +320,14 @@ impl Credentials {
         Ok(Some(creds))
     }
 
-    pub(crate) fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
+    pub fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
         paths.ensure()?;
         let text = serde_json::to_string_pretty(self).wrap_err("serializing cred.json")?;
         atomic_write(&paths.cred_file(), text.as_bytes(), 0o600)?;
         Ok(())
     }
 
-    pub(crate) fn remove(paths: &Paths) -> color_eyre::Result<()> {
+    pub fn remove(paths: &Paths) -> color_eyre::Result<()> {
         let path = paths.cred_file();
         if path.exists() {
             fs::remove_file(&path).wrap_err_with(|| format!("removing {}", path.display()))?;
@@ -355,7 +355,7 @@ fn atomic_write(path: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {
 
 /// Bare host → `http://host:8096`. Existing scheme/port/path are kept.
 /// Trailing slashes are stripped.
-pub(crate) fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
+pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
     let trimmed = input.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(usage_err("server URL is empty"));
@@ -426,7 +426,7 @@ fn explicit_port(input: &str) -> bool {
     hostport.contains(':')
 }
 
-pub(crate) fn device_name() -> String {
+pub fn device_name() -> String {
     let name = rustix::system::uname()
         .nodename()
         .to_string_lossy()

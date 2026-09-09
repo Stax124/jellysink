@@ -1,13 +1,13 @@
 use super::super::nav::{Level, Source};
 use super::*;
-use crate::runtime::PlayerStatus;
-use crate::runtime::status::NowPlaying;
+use jellysink_core::status::NowPlaying;
+use jellysink_core::status::PlayerStatus;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde::Deserialize;
 
 fn app() -> App {
-    let credentials = crate::app::config::Credentials {
+    let credentials = jellysink_core::config::Credentials {
         server: "http://localhost:8096".into(),
         username: "test".into(),
         user_id: "u1".into(),
@@ -15,9 +15,11 @@ fn app() -> App {
         device_id: "d1".into(),
     };
     App::new(
-        crate::jellyfin::auth::Api::from_credentials(&credentials).unwrap(),
-        crate::app::config::Paths::from_override(Some(std::path::PathBuf::from("/nonexistent")))
-            .unwrap(),
+        jellysink_core::jellyfin::auth::Api::from_credentials(&credentials).unwrap(),
+        jellysink_core::config::Paths::from_override(Some(std::path::PathBuf::from(
+            "/nonexistent",
+        )))
+        .unwrap(),
         ratatui_image::picker::Picker::halfblocks(),
         1.0,
     )
@@ -192,7 +194,7 @@ fn an_empty_library_says_so_rather_than_drawing_a_blank_box() {
 }
 
 fn watched(mut item: Item, played: bool, position_ticks: i64) -> Item {
-    item.user_data = Some(crate::jellyfin::model::UserData {
+    item.user_data = Some(jellysink_core::jellyfin::model::UserData {
         played,
         playback_position_ticks: position_ticks,
         played_percentage: None,

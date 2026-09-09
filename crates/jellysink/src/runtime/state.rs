@@ -2,12 +2,12 @@
 
 use super::task::AbortOnDrop;
 use super::window::{EndFileAction, PlaylistWindow, end_file_action, ignore_stop_for_playlist};
-use crate::app::config::{Config, Paths};
-use crate::cast::CastEvent;
-use crate::jellyfin::auth::Api;
 use crate::media::{PlayRequest, PreparedPlay, TrackKind, TrackPreference};
 use crate::mpv::{EndFileReason, MpvEvent, MpvSession, SelectedTrack};
 use crate::report::Report;
+use jellysink_core::cast::CastEvent;
+use jellysink_core::config::{Config, Paths};
+use jellysink_core::jellyfin::auth::Api;
 use std::collections::HashMap;
 
 /// Audio and subtitles go through the same [`TrackKind`]-parameterised code,
@@ -75,7 +75,7 @@ pub(super) struct Runtime {
     pub(super) username: String,
     /// Published on every state change; read by `jellysink status` over the
     /// stop socket without ever reaching into a running `Runtime` directly.
-    pub(super) status_tx: tokio::sync::watch::Sender<super::status::PlayerStatus>,
+    pub(super) status_tx: tokio::sync::watch::Sender<jellysink_core::status::PlayerStatus>,
 }
 
 impl Runtime {
@@ -86,7 +86,7 @@ impl Runtime {
         mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
         report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
         username: String,
-        status_tx: tokio::sync::watch::Sender<super::status::PlayerStatus>,
+        status_tx: tokio::sync::watch::Sender<jellysink_core::status::PlayerStatus>,
     ) -> Self {
         Self {
             api,
@@ -201,9 +201,12 @@ impl Runtime {
     }
 
     async fn seek_to(&mut self, ticks: i64) -> color_eyre::Result<()> {
-        tracing::info!(position_s = crate::ticks::ticks_to_seconds(ticks), "seek");
+        tracing::info!(
+            position_s = jellysink_core::ticks::ticks_to_seconds(ticks),
+            "seek"
+        );
         if let Some(mpv) = self.mpv.as_mut() {
-            mpv.seek_absolute(crate::ticks::ticks_to_seconds(ticks))
+            mpv.seek_absolute(jellysink_core::ticks::ticks_to_seconds(ticks))
                 .await?;
             // The next progress tick may sample mid-seek; report the target now.
             self.last_ticks = ticks;
@@ -272,7 +275,7 @@ impl Runtime {
         let Some(ticks) = self.pending_start_ticks.take() else {
             return;
         };
-        let seconds = crate::ticks::ticks_to_seconds(ticks);
+        let seconds = jellysink_core::ticks::ticks_to_seconds(ticks);
         tracing::info!(position_s = seconds, "resuming");
         if let Some(mpv) = self.mpv.as_mut()
             && let Err(e) = mpv.seek_absolute(seconds).await

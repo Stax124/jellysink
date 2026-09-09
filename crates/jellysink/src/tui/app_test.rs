@@ -1,7 +1,7 @@
 use super::*;
-use crate::app::config::{Credentials, Paths};
-use crate::runtime::PlayerStatus;
-use crate::runtime::status::NowPlaying;
+use jellysink_core::config::{Credentials, Paths};
+use jellysink_core::status::NowPlaying;
+use jellysink_core::status::PlayerStatus;
 use serde::Deserialize;
 
 fn app() -> App {

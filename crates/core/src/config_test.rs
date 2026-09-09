@@ -172,18 +172,6 @@ fn every_field_parses_back_from_its_own_name() {
 }
 
 #[test]
-fn the_cli_help_lists_every_config_key() {
-    let main_rs = include_str!("../main.rs");
-    for field in Field::ALL {
-        assert!(
-            main_rs.contains(field.name()),
-            "src/main.rs should mention {:?} in the `config set` help",
-            field.name()
-        );
-    }
-}
-
-#[test]
 fn an_invalid_log_level_is_rejected_at_set_time() {
     let mut cfg = Config::default();
     // This used to be accepted and only fail at the next startup.

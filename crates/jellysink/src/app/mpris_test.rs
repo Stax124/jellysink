@@ -1,6 +1,6 @@
 use super::*;
-use crate::runtime::PlayerStatus;
-use crate::runtime::status::NowPlaying;
+use jellysink_core::status::NowPlaying;
+use jellysink_core::status::PlayerStatus;
 
 fn playing_status(paused: bool, has_next: bool, has_previous: bool) -> PlayerStatus {
     PlayerStatus {

@@ -2,8 +2,8 @@
 
 use clap::Parser;
 use color_eyre::eyre::Result;
-use jellysink::UsageError;
-use jellysink::app::config::Paths;
+use jellysink_core::UsageError;
+use jellysink_core::config::Paths;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -22,7 +22,7 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let paths = Paths::from_override(cli.config)?;
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    jellysink_core::install_crypto_provider();
 
     match jellysink::tui::run(paths).await {
         Ok(()) => Ok(()),

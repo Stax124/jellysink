@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CastEvent {
+pub enum CastEvent {
     PlayNow {
         item_ids: Vec<String>,
         start_index: usize,
@@ -43,7 +43,7 @@ pub(crate) enum CastEvent {
 }
 
 impl CastEvent {
-    pub(crate) fn from_ws(message_type: &str, data: &Value) -> Option<Self> {
+    pub fn from_ws(message_type: &str, data: &Value) -> Option<Self> {
         match message_type {
             "Play" => parse_play(data),
             "Playstate" => parse_playstate(data),

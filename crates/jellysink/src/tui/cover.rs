@@ -1,9 +1,9 @@
 //! Cover art: which image an item wants, and the bounded cache of decoded
 //! terminal protocols behind it.
 
-use crate::jellyfin::auth::Api;
-use crate::jellyfin::model::Item;
 use color_eyre::eyre::{Result, WrapErr};
+use jellysink_core::jellyfin::auth::Api;
+use jellysink_core::jellyfin::model::Item;
 use ratatui::layout::{Rect, Size};
 use ratatui_image::FontSize;
 use ratatui_image::Resize;

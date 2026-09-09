@@ -1,6 +1,5 @@
 use super::state::{Runtime, TrackState};
 use super::task::AbortOnDrop;
-use crate::jellyfin::auth::Api;
 use crate::media::{
     PlayRequest, PreparedPlay, TrackId, TrackKind, TrackPreference, jellyfin_embedded_audio_index,
     jellyfin_embedded_subtitle_index, mpv_audio_track_id, mpv_embedded_subtitle_track_id,
@@ -8,6 +7,7 @@ use crate::media::{
 use crate::mpv::{MpvSession, SelectedTrack};
 use crate::report::{PlayingState, Report};
 use color_eyre::eyre::eyre;
+use jellysink_core::jellyfin::auth::Api;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -26,7 +26,8 @@ impl Runtime {
         if reuse {
             if let Some(mpv) = self.mpv.as_mut() {
                 let live = mpv.time_pos().await.ok();
-                self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
+                self.last_ticks =
+                    jellysink_core::ticks::coalesce_position_ticks(live, self.last_ticks);
             }
             self.send_stopped();
             self.transitioning = true;
@@ -454,7 +455,7 @@ impl Runtime {
         };
         // A dead/zero sample during unload must not lose a known position.
         let live = mpv.time_pos().await.ok();
-        self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
+        self.last_ticks = jellysink_core::ticks::coalesce_position_ticks(live, self.last_ticks);
         if let Ok(p) = mpv.paused().await {
             self.paused = p;
         }
@@ -529,7 +530,7 @@ impl Runtime {
     ) -> color_eyre::Result<()> {
         // Re-read mpv_args on every spawn so edits apply to the next play
         // without restarting the daemon.
-        let mpv_args = crate::app::config::MpvArgs::load(&self.paths)
+        let mpv_args = jellysink_core::config::MpvArgs::load(&self.paths)
             .inspect_err(|e| {
                 tracing::warn!("mpv_args unreadable; spawning without extra args: {e:#}");
             })
@@ -582,7 +583,7 @@ impl Runtime {
     pub(super) async fn stop_playback(&mut self, report: bool) {
         tracing::info!(
             item = %self.item_id.as_deref().unwrap_or("?"),
-            position_s = crate::ticks::ticks_to_seconds(self.last_ticks),
+            position_s = jellysink_core::ticks::ticks_to_seconds(self.last_ticks),
             "stopping playback"
         );
         self.stopping = true;
@@ -598,7 +599,7 @@ impl Runtime {
             None
         };
         // A teardown sample can fail or read 0 (window closed, IPC gone).
-        self.last_ticks = crate::ticks::coalesce_position_ticks(live, self.last_ticks);
+        self.last_ticks = jellysink_core::ticks::coalesce_position_ticks(live, self.last_ticks);
         if report {
             self.send_stopped();
         }
@@ -676,7 +677,7 @@ fn stream_url_with_token(api: &Api, item_id: &str, prep: &PreparedPlay) -> Strin
     if prep.url.contains("ApiKey=") {
         prep.url.clone()
     } else {
-        crate::jellyfin::url::direct_stream_url(
+        jellysink_core::jellyfin::url::direct_stream_url(
             &api.server,
             item_id,
             &prep.media_source_id,

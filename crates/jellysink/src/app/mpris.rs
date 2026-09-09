@@ -7,8 +7,8 @@
 //! not a fatal error.
 
 use crate::app::signal::Signal;
-use crate::cast::CastEvent;
-use crate::runtime::PlayerStatus;
+use jellysink_core::cast::CastEvent;
+use jellysink_core::status::PlayerStatus;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};

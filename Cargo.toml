@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/jellysink"]
+members = ["crates/core", "crates/jellysink"]
 
 [workspace.package]
 version = "0.8.0"
