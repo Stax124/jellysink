@@ -1,3 +1,4 @@
+use super::player::seek_target;
 use super::*;
 use jellysink_core::config::{Credentials, Paths};
 use jellysink_core::status::NowPlaying;

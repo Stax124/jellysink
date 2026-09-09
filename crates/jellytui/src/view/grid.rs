@@ -1,9 +1,9 @@
 //! The cover grid: how many tiles fit, which of them are on screen, and the
 //! tiles themselves.
 
-use super::cover::{self, CoverKey, Covers};
-use super::rail;
-use super::ui::{ACCENT, DIM, to_width};
+use super::{ACCENT, DIM, to_width};
+use crate::cover::{self, CoverKey, Covers};
+use crate::view::rail;
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
@@ -59,25 +59,25 @@ fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize) -> u16 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Metrics {
-    pub(super) columns: usize,
-    pub(super) rows: usize,
+pub(crate) struct Metrics {
+    pub(crate) columns: usize,
+    pub(crate) rows: usize,
     tile: Size,
     cover: Size,
 }
 
 impl Metrics {
-    pub(super) fn cover_size(&self) -> Size {
+    pub(crate) fn cover_size(&self) -> Size {
         self.cover
     }
 
-    pub(super) fn page(&self) -> usize {
+    pub(crate) fn page(&self) -> usize {
         self.columns * self.rows
     }
 }
 
 /// Tile geometry for the grid's *inner* area — see [`inner`].
-pub(super) fn metrics(area: Rect, aspect: f32, font_size: FontSize) -> Metrics {
+pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize) -> Metrics {
     let preferred = preferred_tile_width(area, aspect, font_size);
     let columns = (area.width.saturating_add(GAP) / preferred.saturating_add(GAP)).max(1);
     let tile_width = ((area.width.saturating_sub(GAP * (columns - 1))) / columns).max(1);
@@ -104,7 +104,7 @@ pub(super) fn metrics(area: Rect, aspect: f32, font_size: FontSize) -> Metrics {
 
 /// Scrolls by the least that brings the selection back on screen, which is
 /// what stops the grid jumping a whole page when the cursor moves up one row.
-pub(super) fn scroll_to(offset: usize, selected: usize, metrics: &Metrics) -> usize {
+pub(crate) fn scroll_to(offset: usize, selected: usize, metrics: &Metrics) -> usize {
     let row = selected / metrics.columns;
     if row < offset {
         row
@@ -115,7 +115,7 @@ pub(super) fn scroll_to(offset: usize, selected: usize, metrics: &Metrics) -> us
     }
 }
 
-pub(super) fn inner(area: Rect) -> Rect {
+pub(crate) fn inner(area: Rect) -> Rect {
     block(Line::default()).inner(area)
 }
 
@@ -127,7 +127,7 @@ fn block(title: Line<'_>) -> Block<'_> {
         .title(title)
 }
 
-pub(super) fn render(
+pub(crate) fn render(
     frame: &mut Frame,
     area: Rect,
     title: Line<'_>,

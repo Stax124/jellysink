@@ -1,5 +1,6 @@
-use super::super::nav::{Level, Source};
 use super::*;
+use crate::nav::{Level, Source};
+use jellysink_core::jellyfin::model::Item;
 use jellysink_core::status::NowPlaying;
 use jellysink_core::status::PlayerStatus;
 use ratatui::Terminal;

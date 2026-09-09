@@ -6,12 +6,11 @@
 
 mod app;
 mod cover;
-mod grid;
+
 mod keys;
 mod nav;
-mod playing;
-mod rail;
-mod ui;
+
+mod view;
 
 use clap::Parser;
 use color_eyre::eyre::Result;

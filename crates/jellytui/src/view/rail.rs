@@ -1,6 +1,6 @@
 //! The detail rail: cover and metadata for whichever row holds the cursor.
 
-use super::cover::{self, CoverKey, Covers};
+use crate::cover::{self, CoverKey, Covers};
 use jellysink_core::jellyfin::model::Item;
 use jellysink_core::ticks::ticks_to_seconds;
 use ratatui::Frame;
@@ -17,7 +17,7 @@ const WIDTH: u16 = 38;
 const MIN_BODY_WIDTH: u16 = 90;
 
 /// Splits a body area into the list and the rail beside it.
-pub(super) fn split(body: Rect) -> (Rect, Option<Rect>) {
+pub(crate) fn split(body: Rect) -> (Rect, Option<Rect>) {
     if body.width < MIN_BODY_WIDTH {
         return (body, None);
     }
@@ -29,7 +29,7 @@ pub(super) fn split(body: Rect) -> (Rect, Option<Rect>) {
 /// The box the cover occupies inside the rail. Height is capped at three
 /// fifths so a 2:3 poster leaves room for the text under it; a 16:9 still is
 /// bounded by the width first anyway.
-pub(super) fn cover_rect(rail: Rect, item: &Item, font_size: FontSize) -> Rect {
+pub(crate) fn cover_rect(rail: Rect, item: &Item, font_size: FontSize) -> Rect {
     let inner = block().inner(rail);
     cover::fit(
         inner,
@@ -42,7 +42,7 @@ pub(super) fn cover_rect(rail: Rect, item: &Item, font_size: FontSize) -> Rect {
 /// The size a rail cover is encoded for, or `None` when this body has no rail.
 /// The fetch and the renderer both come through [`cover_rect`], so what is
 /// downloaded is the size it is drawn at.
-pub(super) fn cover_size(body: Rect, item: &Item, font_size: FontSize) -> Option<Size> {
+pub(crate) fn cover_size(body: Rect, item: &Item, font_size: FontSize) -> Option<Size> {
     Some(cover_rect(split(body).1?, item, font_size).as_size())
 }
 
@@ -53,7 +53,7 @@ fn block() -> Block<'static> {
         .title(" Details ")
 }
 
-pub(super) fn render(frame: &mut Frame, rail: Rect, item: Option<&Item>, covers: &Covers) {
+pub(crate) fn render(frame: &mut Frame, rail: Rect, item: Option<&Item>, covers: &Covers) {
     let block = block();
     let inner = block.inner(rail);
     frame.render_widget(block, rail);
@@ -86,22 +86,19 @@ fn lines(item: &Item) -> Vec<Line<'static>> {
             item.label(),
             Style::default().add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            meta(item),
-            Style::default().fg(super::ui::DIM),
-        )),
+        Line::from(Span::styled(meta(item), Style::default().fg(super::DIM))),
     ];
     if let Some(rating) = item.community_rating {
         lines.push(Line::from(Span::styled(
             format!("★ {rating:.1}"),
-            Style::default().fg(super::ui::ACCENT),
+            Style::default().fg(super::ACCENT),
         )));
     }
     lines.push(Line::default());
     if let Some(overview) = &item.overview {
         lines.push(Line::from(Span::styled(
             overview.clone(),
-            Style::default().fg(super::ui::DIM),
+            Style::default().fg(super::DIM),
         )));
     }
     lines
@@ -109,7 +106,7 @@ fn lines(item: &Item) -> Vec<Line<'static>> {
 
 /// The one-line `series · year · runtime · certificate` under the title,
 /// skipping whatever the server did not send.
-pub(super) fn meta(item: &Item) -> String {
+pub(crate) fn meta(item: &Item) -> String {
     let runtime = item
         .run_time_ticks
         .filter(|ticks| *ticks > 0)
