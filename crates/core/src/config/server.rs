@@ -2,8 +2,6 @@ use crate::APP_NAME;
 use crate::usage_err;
 use color_eyre::eyre::WrapErr;
 
-/// Bare host → `http://host:8096`. Existing scheme/port/path are kept.
-/// Trailing slashes are stripped.
 pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
     let trimmed = input.trim().trim_end_matches('/');
     if trimmed.is_empty() {
@@ -31,6 +29,13 @@ pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
     let url = reqwest::Url::parse(&with_scheme)
         .wrap_err_with(|| format!("invalid server URL {input:?}"))?;
 
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(usage_err(format!(
+            "unsupported scheme {:?} — expected 'http' or 'https'",
+            url.scheme()
+        )));
+    }
+
     let host = url
         .host_str()
         .ok_or_else(|| usage_err("server URL has no host"))?;
@@ -42,14 +47,6 @@ pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
 
     let port_part = match url.port() {
         Some(p) => format!(":{p}"),
-        None if explicit_port(trimmed) => {
-            // `Url::port()` hides 80/443, but the user wrote it on purpose.
-            match url.port_or_known_default() {
-                Some(p) => format!(":{p}"),
-                None => String::new(),
-            }
-        }
-        None if url.scheme() == "http" => ":8096".to_string(),
         None => String::new(),
     };
 
@@ -61,18 +58,6 @@ pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
     };
 
     Ok(format!("{}://{}{}{}", url.scheme(), host, port_part, path))
-}
-
-fn explicit_port(input: &str) -> bool {
-    let rest = match input.split_once("://") {
-        Some((_, r)) => r,
-        None => input,
-    };
-    if let Some(end) = rest.find(']') {
-        return rest[end + 1..].starts_with(':');
-    }
-    let hostport = rest.split('/').next().unwrap_or(rest);
-    hostport.contains(':')
 }
 
 pub fn device_name() -> String {

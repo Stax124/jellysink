@@ -146,8 +146,6 @@ jellysink config set autoplay false
 jellysink logout
 ```
 
-Bare host names become `http://host:8096`. Write `:80` if you really want port 80.
-
 ## Configuration
 
 | Key                | Default   | Notes                                                                                                 |
