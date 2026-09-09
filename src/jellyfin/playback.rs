@@ -58,17 +58,6 @@ impl Api {
         resp.json().await.wrap_err("decoding PlaybackInfo")
     }
 
-    /// The whole series in aired order. No `StartItemId`: it is a forward-only
-    /// `SkipWhile`, so the caller splits the listing itself.
-    pub(crate) async fn episodes_all(&self, series_id: &str) -> color_eyre::Result<Value> {
-        let path = format!(
-            "/Shows/{series_id}/Episodes?userId={}&Limit=500",
-            encode_query_value(&self.user_id)
-        );
-        tracing::debug!(path, "GET all episodes");
-        self.get_json(&path).await
-    }
-
     pub(crate) async fn get_item(&self, item_id: &str) -> color_eyre::Result<Value> {
         let path = format!(
             "/Items/{item_id}?userId={}",
@@ -82,15 +71,6 @@ impl Api {
                 self.get_json(&legacy).await
             }
         }
-    }
-
-    async fn get_json(&self, path: &str) -> color_eyre::Result<Value> {
-        let resp = self
-            .get(path)
-            .await?
-            .error_for_status()
-            .wrap_err_with(|| format!("GET {path}"))?;
-        resp.json().await.wrap_err("decoding JSON")
     }
 
     pub(crate) async fn playing(&self, state: &PlayingState) -> color_eyre::Result<()> {

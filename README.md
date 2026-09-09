@@ -19,6 +19,8 @@
 
 jellysink registers as a remote player, receives Play commands from the web or mobile apps, and DirectPlays the stream in your installed **mpv** — including whatever shaders and upscalers you already have in `~/.config/mpv/mpv.conf`.
 
+It ships with **`jellytui`**, a terminal frontend, so you can browse your library and start playback without reaching for a phone or a browser.
+
 Configuration is CLI-only. You will probably only use it once, to log in.
 
 ## Motivation
@@ -37,6 +39,7 @@ This project is not trying to be a full replacement for jellyfin-mpv-shim. It is
 | Progress reporting back to Jellyfin       | ✅         | ✅                 |
 | MPV playlist integration                  | ✅         | ❌                 |
 | Respects your MPV configuration           | ✅         | ❌                 |
+| Terminal frontend (browse and play)       | ✅         | ❌                 |
 | GUI for configuration                     | ❌         | ✅                 |
 | Quick Connect                             | ❌         | ✅                 |
 | Transcoding                               | ❌         | ✅                 |
@@ -46,6 +49,7 @@ This project is not trying to be a full replacement for jellyfin-mpv-shim. It is
 ## Features
 
 - Appears as a remote player in the Jellyfin web, Android, and iOS apps
+- `jellytui`: browse, search and play from the terminal — Continue Watching, Next Up, and the whole library tree
 - DirectPlay / DirectStream only — the original stream reaches mpv
 - Uses your installed mpv and your existing config; never sets `vo`, `hwdec`, `scale`, or `glsl-shaders`, and never passes `--no-config`
 - Series autoplay in aired order, across seasons, until the last episode or Stop
@@ -63,7 +67,7 @@ Linux (x86_64 or aarch64). Requires [`mpv`](https://mpv.io/) **0.38 or newer** �
 curl -fsSL https://raw.githubusercontent.com/Stax124/jellysink/main/install.sh | sh
 ```
 
-This installs a musl binary to `~/.local/bin/jellysink` and a user systemd unit. Then:
+This installs musl binaries to `~/.local/bin/jellysink` and `~/.local/bin/jellytui`, plus a user systemd unit. Then:
 
 ```sh
 jellysink login
@@ -89,6 +93,7 @@ git clone https://github.com/Stax124/jellysink.git
 cd jellysink
 cargo build --release
 install -Dm755 target/x86_64-unknown-linux-musl/release/jellysink ~/.local/bin/jellysink
+install -Dm755 target/x86_64-unknown-linux-musl/release/jellytui ~/.local/bin/jellytui
 install -Dm644 systemd/jellysink.service ~/.config/systemd/user/jellysink.service
 ```
 
@@ -111,6 +116,8 @@ jellysink stop           # ask a running instance to quit
 jellysink status         # show what a running instance is doing
 jellysink update         # install the latest GitHub release
 jellysink update --check # print whether a newer release exists
+
+jellytui                 # browse and play from the terminal
 ```
 
 Cast a movie or episode to **jellysink** from the Jellyfin web/Android/iOS app. mpv opens with your normal config. Pause, seek, volume, mute, fullscreen, audio, and subtitles work from the controlling app. A series episode continues into the next one (aired order, across seasons) until the last episode or Stop, carrying the audio and subtitle tracks you last picked with it — picked in the controlling app, or with `#` and `j` in the mpv window.
@@ -118,6 +125,17 @@ Cast a movie or episode to **jellysink** from the Jellyfin web/Android/iOS app. 
 When you cast an episode, the episodes that aired before it are loaded into mpv's playlist too, so the playlist selector (and Previous) can reach the whole series rather than only what follows. Set `prepend_previous` to `false` to only look for next episodes.
 
 Quit with the tray icon, `jellysink stop`, SIGTERM, or SIGINT.
+
+## Terminal frontend
+
+`jellytui` is a Jellyfin client, not a second player: it asks the running jellysink to
+play, exactly as the web app does. So the daemon must be running, and everything it
+already does — DirectPlay, series autoplay, remembered tracks, progress reporting —
+applies unchanged. It logs in with the credentials `jellysink login` already stored.
+
+Quitting `jellytui` does not stop playback — it is only a remote.
+
+## Configuration commands
 
 ```bash
 jellysink config path
@@ -171,6 +189,8 @@ Design notes for the trickier subsystems live in [`specs/`](specs/):
 
 - [`specs/playlist.md`](specs/playlist.md) — how the queue is built, when
   episode data is fetched, and how entries reach mpv's playlist.
+- [`specs/tui.md`](specs/tui.md) — how `jellytui` drives the daemon, and why it
+  is a remote-control client rather than a second player.
 
 ### Requirements
 

@@ -125,11 +125,19 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           mv jellysink ../../../jellysink-${{ matrix.target }}
+          mv jellytui ../../../jellytui-${{ matrix.target }}
           cd -
-      - name: Upload artifact
+      - name: Upload Jellysink artifact
         if: inputs.package
         uses: actions/upload-artifact@v7
         with:
           name: jellysink-${{ matrix.target }}
           path: jellysink-${{ matrix.target }}
+          if-no-files-found: error
+      - name: Upload Jellytui artifact
+        if: inputs.package
+        uses: actions/upload-artifact@v7
+        with:
+          name: jellytui-${{ matrix.target }}
+          path: jellytui-${{ matrix.target }}
           if-no-files-found: error

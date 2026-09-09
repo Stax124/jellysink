@@ -140,7 +140,7 @@ pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
             );
             println!(
                 "position: {}",
-                format_hms(crate::ticks::ticks_to_seconds(now_playing.position_ticks))
+                crate::ticks::format_hms(now_playing.position_ticks)
             );
             println!(
                 "queue:    {}/{}",
@@ -151,16 +151,6 @@ pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
         None => println!("playing:  nothing"),
     }
     Ok(())
-}
-
-fn format_hms(seconds: f64) -> String {
-    let total = seconds.max(0.0).round() as u64;
-    let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
-    if h > 0 {
-        format!("{h:02}:{m:02}:{s:02}")
-    } else {
-        format!("{m:02}:{s:02}")
-    }
 }
 
 pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {

@@ -137,6 +137,21 @@ impl Api {
         self.send(self.http.post(&url).json(body), "POST", &url)
             .await
     }
+
+    /// A POST whose parameters all live in the query string.
+    pub(crate) async fn post(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
+        let url = format!("{}{path}", self.server);
+        self.send(self.http.post(&url), "POST", &url).await
+    }
+
+    pub(crate) async fn get_json(&self, path: &str) -> color_eyre::Result<serde_json::Value> {
+        let resp = self
+            .get(path)
+            .await?
+            .error_for_status()
+            .wrap_err_with(|| format!("GET {path}"))?;
+        resp.json().await.wrap_err("decoding JSON")
+    }
 }
 
 /// The one place an HTTP client is built; `login` has no `Api` to go through.

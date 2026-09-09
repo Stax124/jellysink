@@ -8,6 +8,7 @@ pub(crate) mod mpv;
 pub(crate) mod report;
 pub(crate) mod runtime;
 pub(crate) mod ticks;
+pub mod tui;
 
 pub(crate) const APP_NAME: &str = "jellysink";
 pub(crate) const CLIENT_NAME: &str = "jellysink";

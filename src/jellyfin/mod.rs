@@ -1,7 +1,10 @@
 pub(crate) mod auth;
+pub(crate) mod browse;
 pub(crate) mod encode;
+pub(crate) mod model;
 pub(crate) mod playback;
 pub(crate) mod profile;
+pub(crate) mod remote;
 pub(crate) mod session;
 pub(crate) mod url;
 

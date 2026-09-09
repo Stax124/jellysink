@@ -33,6 +33,7 @@ directories = "6"
 futures-util = { version = "0.3", features = ["sink"] }
 ico = "0.5"
 ksni = "0.3"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "std"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls-no-provider",

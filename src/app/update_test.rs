@@ -40,3 +40,41 @@ fn restart_command_targets_the_given_path_not_current_exe() {
         .collect();
     assert_eq!(args, ["run", "--config", "/tmp/j"]);
 }
+
+/// The asset list of a real release, in the order the release workflow
+/// uploads it — `jellytui-*` and the checksum files all carry the target too.
+fn release_assets() -> Vec<self_update::ReleaseAsset> {
+    [
+        "jellysink-aarch64-unknown-linux-musl",
+        "jellysink-aarch64-unknown-linux-musl.sha256",
+        "jellysink-x86_64-unknown-linux-musl",
+        "jellysink-x86_64-unknown-linux-musl.sha256",
+        "jellytui-aarch64-unknown-linux-musl",
+        "jellytui-x86_64-unknown-linux-musl",
+    ]
+    .iter()
+    .map(|name| self_update::ReleaseAsset::new(*name, format!("https://host/{name}")))
+    .collect()
+}
+
+#[test]
+fn the_updater_picks_the_daemon_binary_not_the_tui_or_a_checksum() {
+    let asset = match_asset(&release_assets(), "x86_64-unknown-linux-musl").unwrap();
+    assert_eq!(asset.name(), "jellysink-x86_64-unknown-linux-musl");
+}
+
+/// The ordering that matters: in upload order a substring match happens to
+/// pick the daemon anyway, so only this one fails if the matcher is dropped.
+#[test]
+fn a_release_that_lists_the_tui_first_still_updates_the_daemon() {
+    let mut assets = release_assets();
+    assets.reverse();
+    let asset = match_asset(&assets, "x86_64-unknown-linux-musl").unwrap();
+    assert_eq!(asset.name(), "jellysink-x86_64-unknown-linux-musl");
+}
+
+#[test]
+fn an_arch_the_release_has_no_binary_for_matches_nothing() {
+    // Better than silently installing the wrong architecture's binary.
+    assert!(match_asset(&release_assets(), "riscv64gc-unknown-linux-musl").is_none());
+}

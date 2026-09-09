@@ -1,6 +1,7 @@
 //! GitHub-release self-update: check, download, and replace this binary.
 
 use color_eyre::eyre::{WrapErr, eyre};
+use self_update::ReleaseAsset;
 use self_update::backends::github;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,15 @@ pub(crate) struct UpdateOffer {
     pub(crate) version: String,
 }
 
+/// The asset holding this binary. `self_update`'s default is a substring
+/// match on the target, which every asset of that release carries — the
+/// `jellytui-*` binary and the `.sha256` files included — so it would take
+/// whichever GitHub happens to list first.
+fn match_asset(assets: &[ReleaseAsset], target: &str) -> Option<ReleaseAsset> {
+    let wanted = format!("{BIN_NAME}-{target}");
+    assets.iter().find(|asset| asset.name() == wanted).cloned()
+}
+
 /// `progress` is the download bar only. `self_update`'s own commentary stays
 /// off: its "*NOT* compatible" line fires on every 0.x minor bump.
 fn updater(progress: bool) -> color_eyre::Result<github::AsyncUpdate> {
@@ -41,7 +51,8 @@ fn updater(progress: bool) -> color_eyre::Result<github::AsyncUpdate> {
         .no_confirm(true)
         .show_output(false)
         .show_download_progress(progress)
-        .check_install_path_writable(true);
+        .check_install_path_writable(true)
+        .asset_matcher(move |assets| match_asset(assets, target));
     builder.build_async().wrap_err("configuring GitHub updater")
 }
 

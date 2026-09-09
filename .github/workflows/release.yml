@@ -54,7 +54,7 @@ jobs:
       - name: Checksums
         run: |
           cd artifacts
-          for f in jellysink-*; do
+          for f in jellysink-* jellytui-*; do
             [ -f "$f" ] || continue
             sha256sum "$f" > "${f}.sha256"
           done
