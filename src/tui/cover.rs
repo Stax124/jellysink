@@ -7,7 +7,7 @@ use color_eyre::eyre::{Result, WrapErr};
 use ratatui::layout::{Rect, Size};
 use ratatui_image::FontSize;
 use ratatui_image::Resize;
-use ratatui_image::picker::Picker;
+use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -39,6 +39,7 @@ impl CoverKey {
 
 pub(super) struct Covers {
     picker: Picker,
+    scale: f32,
     ready: HashMap<CoverKey, Protocol>,
     order: VecDeque<CoverKey>,
     in_flight: HashSet<CoverKey>,
@@ -49,9 +50,18 @@ pub(super) struct Covers {
 }
 
 impl Covers {
-    pub(super) fn new(picker: Picker) -> Self {
+    pub(super) fn new(picker: Picker, image_scale: f32) -> Self {
+        // Halfblocks are ordinary cells, so there is no pixel grid to be out
+        // of step with — and an over-encoded halfblocks image is cropped to
+        // the area rather than drawn sharper.
+        let scale = if picker.protocol_type() == ProtocolType::Halfblocks {
+            1.0
+        } else {
+            image_scale
+        };
         Self {
             picker,
+            scale,
             ready: HashMap::new(),
             order: VecDeque::new(),
             in_flight: HashSet::new(),
@@ -105,6 +115,23 @@ impl Covers {
     pub(super) fn font_size(&self) -> FontSize {
         self.picker.font_size()
     }
+
+    pub(super) fn scale(&self) -> f32 {
+        self.scale
+    }
+}
+
+/// The cell box an image is fetched and encoded for, which is not always the
+/// box it is drawn in. Kitty sizes a placement by dividing the image's pixels
+/// by the terminal's *real* cell size, while `ratatui-image` lays out the
+/// placeholder cells using the size the terminal *reports* — and on a HiDPI
+/// display those differ by the display's scale factor, so a cover encoded for
+/// the reported grid covers a fraction of the box we reserved for it. Asking
+/// for `scale` times the pixels puts the factor back; the widget clamps the
+/// cells it draws to its area, so the surplus costs pixels, not layout.
+fn encoded_size(size: Size, scale: f32) -> Size {
+    let grow = |cells: u16| ((f32::from(cells) * scale).round() as u16).max(1);
+    Size::new(grow(size.width), grow(size.height))
 }
 
 /// The shape of an item's primary image, as width ÷ height. Jellyfin gives an
@@ -161,17 +188,22 @@ pub(super) fn detect_picker() -> Picker {
 /// lesson `specs/tui.md` records about `/Sessions`, at a smaller scale.
 /// `Ok(None)` for an item the server has no artwork for. Decode and encode are
 /// real CPU work on the thread that draws, so they go to `spawn_blocking`.
-pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<Option<Protocol>> {
+pub(super) async fn fetch(
+    api: &Api,
+    picker: Picker,
+    scale: f32,
+    key: &CoverKey,
+) -> Result<Option<Protocol>> {
     let font_size = picker.font_size();
-    let width = u32::from(key.size.width) * u32::from(font_size.width);
-    let height = u32::from(key.size.height) * u32::from(font_size.height);
+    let size = encoded_size(key.size, scale);
+    let width = u32::from(size.width) * u32::from(font_size.width);
+    let height = u32::from(size.height) * u32::from(font_size.height);
     let Some(bytes) = api
         .primary_image(&key.item_id, &key.image_tag, width, height)
         .await?
     else {
         return Ok(None);
     };
-    let size = key.size;
     tokio::task::spawn_blocking(move || {
         let image = image::load_from_memory(&bytes).wrap_err("decoding cover")?;
         picker

@@ -10,7 +10,7 @@ mod playing;
 mod rail;
 mod ui;
 
-use crate::app::config::{Credentials, Paths};
+use crate::app::config::{Config, Credentials, Paths};
 use crate::jellyfin::auth::Api;
 use crate::usage_err;
 use color_eyre::eyre::Result;
@@ -22,5 +22,6 @@ pub async fn run(paths: Paths) -> Result<()> {
     // Before the alternate screen is taken: the protocol query writes to
     // stdout and reads the terminal's answer back off stdin.
     let picker = cover::detect_picker();
-    app::App::new(api, paths, picker).run().await
+    let image_scale = Config::load(&paths)?.image_scale;
+    app::App::new(api, paths, picker, image_scale).run().await
 }

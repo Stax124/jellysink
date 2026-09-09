@@ -14,7 +14,7 @@ fn key(id: &str) -> CoverKey {
 }
 
 fn covers() -> Covers {
-    Covers::new(Picker::halfblocks())
+    Covers::new(Picker::halfblocks(), 1.0)
 }
 
 fn protocol() -> Protocol {
@@ -89,4 +89,20 @@ fn the_cache_drops_its_oldest_covers_rather_than_growing_with_the_library() {
             .protocol(&key(&format!("s{}", CACHE_CAPACITY + 7)))
             .is_some()
     );
+}
+
+#[test]
+fn a_hidpi_scale_buys_pixels_without_moving_the_cell_box() {
+    // The box the grid reserved is unchanged; only the image inside it grows,
+    // because kitty measures the placement against the real pixel grid.
+    let box_ = Size::new(32, 24);
+    assert_eq!(encoded_size(box_, 1.0), box_);
+    assert_eq!(encoded_size(box_, 2.0), Size::new(64, 48));
+    assert_eq!(encoded_size(box_, 1.5), Size::new(48, 36));
+}
+
+#[test]
+fn halfblocks_ignore_the_scale_because_an_over_encoded_one_is_cropped() {
+    let covers = Covers::new(Picker::halfblocks(), 2.0);
+    assert_eq!(covers.scale(), 1.0);
 }

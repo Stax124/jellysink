@@ -23,6 +23,7 @@ fn app() -> App {
         crate::app::config::Paths::from_override(Some(std::path::PathBuf::from("/nonexistent")))
             .unwrap(),
         ratatui_image::picker::Picker::halfblocks(),
+        1.0,
     )
 }
 

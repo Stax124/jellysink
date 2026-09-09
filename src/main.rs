@@ -61,7 +61,8 @@ enum ConfigCmd {
     Path,
     /// Print one key, or the whole file
     Get { key: Option<String> },
-    /// Set a key (mpv_path, mpv_args, log_level, autoplay, prepend_previous)
+    /// Set a key (mpv_path, mpv_args, log_level, autoplay, prepend_previous,
+    /// image_scale)
     Set {
         key: String,
         /// Values may start with `-` (e.g. `mpv_args --fullscreen`). `mpv_args`

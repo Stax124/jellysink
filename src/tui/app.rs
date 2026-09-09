@@ -128,7 +128,7 @@ pub(super) struct App {
 }
 
 impl App {
-    pub(super) fn new(api: Api, paths: Paths, picker: Picker) -> Self {
+    pub(super) fn new(api: Api, paths: Paths, picker: Picker, image_scale: f32) -> Self {
         let (tx, rx) = unbounded_channel();
         Self {
             api,
@@ -149,7 +149,7 @@ impl App {
             playing_item: None,
             playing_episodes: Level::loading("Episodes", Source::Libraries),
             session_id: None,
-            covers: Covers::new(picker),
+            covers: Covers::new(picker, image_scale),
             viewport: Size::default(),
             cover_due: None,
             wanted_covers: Vec::new(),
@@ -636,9 +636,10 @@ impl App {
             if !self.covers.claim(&key) {
                 continue;
             }
-            let (api, tx, picker) = (self.api.clone(), self.tx.clone(), self.covers.picker());
+            let (api, tx) = (self.api.clone(), self.tx.clone());
+            let (picker, scale) = (self.covers.picker(), self.covers.scale());
             tokio::spawn(async move {
-                let msg = match cover::fetch(&api, picker, &key).await {
+                let msg = match cover::fetch(&api, picker, scale, &key).await {
                     Ok(protocol) => Msg::Cover {
                         key,
                         protocol: protocol.map(Box::new),

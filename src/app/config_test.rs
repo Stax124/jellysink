@@ -283,3 +283,18 @@ fn credentials_debug_never_prints_the_access_token() {
     assert!(!rendered.contains("sekrit"), "{rendered}");
     assert!(rendered.contains("<redacted>"), "{rendered}");
 }
+
+#[test]
+fn an_image_scale_that_is_not_a_sane_number_is_rejected_at_set_time() {
+    let mut cfg = Config::default();
+    for bad in ["banana", "0", "8"] {
+        let err = cfg.set(Field::ImageScale, bad).unwrap_err();
+        assert!(
+            err.downcast_ref::<crate::UsageError>().is_some(),
+            "expected UsageError for {bad:?}, got {err:?}"
+        );
+    }
+    assert_eq!(cfg.image_scale, 1.0, "a bad value must not be stored");
+    cfg.set(Field::ImageScale, "2").unwrap();
+    assert_eq!(cfg.image_scale, 2.0);
+}

@@ -217,6 +217,30 @@ Three things are worth stating because getting them wrong is invisible:
   the episode's own still, which is what the rail beside a season already
   showed.
 
+### HiDPI: `image_scale`
+
+Kitty is told an image's **pixel** dimensions (`s=`/`v=` in the transmit) and no
+column or row count, so it works out how many cells the placement covers by
+dividing those pixels by the terminal's *real* cell size. `ratatui-image`,
+meanwhile, lays out the placeholder cells using the cell size the terminal
+*reported* over `CSI 16 t`. On a HiDPI display where that report is the scaled
+size rather than the physical one, the two disagree by the display's scale
+factor and every cover lands in the top-left corner of its box at 1/scale of
+the size — the box, caption and progress rule stay where the grid put them.
+
+`image_scale` in `config.toml` (jellytui only, default `1`) multiplies the cell
+box a cover is *fetched and encoded* for, so 2 on a 2× display asks the server
+for twice the pixels and hands kitty an image that measures out to the full box.
+Nothing about the layout changes: `Image` clamps the placeholder cells it draws
+to the area it is given, so the surplus is spent on pixels rather than cells.
+
+Two things this is not. It is not a sharpness setting for its own sake — above
+the true factor the extra pixels are thrown away by the clamp. And it never
+applies to **halfblocks**, which draw ordinary cells with no pixel grid to be
+out of step with: `render_halfblocks` skips cells outside the area, so an
+over-encoded halfblocks cover would be cropped to its top-left quarter rather
+than sharpened. `Covers::new` drops the scale to 1 for that protocol.
+
 Decode and encode run in `spawn_blocking` — jellytui is a `current_thread`
 runtime and both are real CPU work on the thread that draws. The finished
 `Protocol` comes back over the existing `Msg` channel, so no `select!` arm was
