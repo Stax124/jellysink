@@ -115,9 +115,17 @@ stale — invisible at ten-second steps.
 ## Where a complaint goes
 
 The bottom row is the key bindings and nothing else. `App::message` — a failed
-request, a command sent before the session id landed — is drawn right-aligned in
-the **header**, elided by `ui::to_width` to whatever the tabs leave, and retired
-by the next keypress. It lived on the hint row until it was noticed that a
+request, a command sent before the session id landed — is drawn in the
+**header**, between the tabs and the daemon dot, elided by `ui::to_width` to
+whatever those two leave, and retired by the next keypress.
+
+The dot itself (`ui::daemon_status`) is the far right of the header and answers
+the one question the whole frontend rests on: did the status socket reply.
+Green for a daemon that answered, red for one that did not, and **grey until
+the first poll returns** — the frontend starts with `player_polled` false, and
+showing red for that first second would be a lie about a daemon that is fine.
+The three states are the same three the footer spells out in words; the dot is
+the version you can read without looking. It lived on the hint row until it was noticed that a
 message there hides every binding the user might need to recover with, and that
 the commonest one, `Playing …`, only repeated what the footer says a poll later
 in the daemon's own wording. So the frontend no longer announces a play at all:

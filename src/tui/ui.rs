@@ -20,6 +20,8 @@ pub(super) const ACCENT: Color = Color::Cyan;
 pub(super) const DIM: Color = Color::DarkGray;
 /// Complaints only. In `ACCENT` they would read as another piece of chrome.
 pub(super) const WARN: Color = Color::Yellow;
+const OK: Color = Color::Green;
+const BAD: Color = Color::Red;
 
 /// Enters the alternate screen and makes sure a panic cannot leave the user
 /// in it — color_eyre's hook prints over a raw-mode terminal otherwise.
@@ -97,19 +99,44 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
         segment("3 Playing", app.screen == Screen::Playing),
         segment("/ Search", app.screen == Screen::Search),
     ]);
+    let status = daemon_status(app);
     // The message rides here rather than on the hint row: the bindings are
-    // worth more than any complaint, and a complaint has to fit what is left.
-    let room = area.width.saturating_sub(width_of(&tabs));
+    // worth more than any complaint, and a complaint has to fit what is left
+    // between the tabs and the dot.
+    let room = area
+        .width
+        .saturating_sub(width_of(&tabs) + width_of(&status));
     let wanted = u16::try_from(app.message.chars().count()).unwrap_or(u16::MAX);
     let message = Line::from(Span::styled(
         to_width(&app.message, room.min(wanted)),
         Style::default().fg(WARN),
     ));
-    let [tabs_area, message_area] =
-        Layout::horizontal([Constraint::Fill(1), Constraint::Length(width_of(&message))])
-            .areas(area);
+    let [tabs_area, message_area, status_area] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(width_of(&message)),
+        Constraint::Length(width_of(&status)),
+    ])
+    .areas(area);
     frame.render_widget(Paragraph::new(tabs), tabs_area);
     frame.render_widget(Paragraph::new(message), message_area);
+    frame.render_widget(Paragraph::new(status), status_area);
+}
+
+/// Whether the daemon answered its status socket, which is the one thing the
+/// whole frontend depends on. Before the first poll the answer is not yet
+/// known, and saying "absent" then would be a lie for the first second.
+fn daemon_status(app: &App) -> Line<'static> {
+    let colour = match (app.player_polled, app.player.is_some()) {
+        (false, _) => DIM,
+        (true, true) => OK,
+        (true, false) => BAD,
+    };
+    Line::from(vec![
+        // The leading space is the gutter that keeps a full-width message off
+        // the dot; it is invisible when there is no message.
+        Span::styled(" ●", Style::default().fg(colour)),
+        Span::styled(" jellysink ", Style::default().fg(DIM)),
+    ])
 }
 
 /// One grid at a time, with Tab swapping which list feeds it — two stacked

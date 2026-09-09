@@ -116,6 +116,22 @@ fn the_search_screen_advertises_the_quit_key_that_actually_works_there() {
 }
 
 #[test]
+fn the_daemon_dot_tells_the_three_states_apart() {
+    // The glyph is the same in all three, so the colour carries the whole
+    // signal — and "not asked yet" must not read as "gone".
+    fn dot(app: &App) -> Option<Color> {
+        daemon_status(app).spans.first()?.style.fg
+    }
+
+    let mut app = app();
+    assert_eq!(dot(&app), Some(DIM));
+    app.player_polled = true;
+    assert_eq!(dot(&app), Some(BAD));
+    app.player = Some(PlayerStatus::idle("s".into(), "u".into()));
+    assert_eq!(dot(&app), Some(OK));
+}
+
+#[test]
 fn a_complaint_goes_to_the_header_and_leaves_the_bindings_alone() {
     let mut app = app();
     app.message = "jellysink not connected".into();
