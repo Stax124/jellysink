@@ -32,8 +32,13 @@ dialoguer = { version = "0.12.0", default-features = false, features = [
 directories = "6"
 futures-util = { version = "0.3", features = ["sink"] }
 ico = "0.5"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 ksni = "0.3"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "std"] }
+# Defaults are wrong here twice over: `chafa-dyn` links libchafa through
+# pkg-config, which the all-musl build has no C library for, and
+# `image-defaults` pulls in every decoder when the server sends us JPEG.
+ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls-no-provider",

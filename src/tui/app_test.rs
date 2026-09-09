@@ -15,6 +15,7 @@ fn app() -> App {
     App::new(
         Api::from_credentials(&credentials).unwrap(),
         Paths::from_override(Some(std::path::PathBuf::from("/nonexistent"))).unwrap(),
+        ratatui_image::picker::Picker::halfblocks(),
     )
 }
 
@@ -100,6 +101,26 @@ async fn seeking_while_nothing_plays_is_a_no_op() {
     app.on_player(Some(PlayerStatus::idle("s".into(), "u".into())));
     app.apply(Intent::SeekBy(10));
     assert!(app.message.is_empty());
+}
+
+#[tokio::test]
+async fn an_item_lookup_that_lands_after_playback_moved_on_is_dropped() {
+    // The reply describes the episode it was asked for, not the one playing
+    // now, and the Playing screen must not caption the wrong thing.
+    let mut app = app();
+    app.on_player(Some(playing_status()));
+
+    app.on_msg(Msg::PlayingItem {
+        item_id: "e0".to_string(),
+        item: Box::new(episode("e0")),
+    });
+    assert!(app.current_item().is_none());
+
+    app.on_msg(Msg::PlayingItem {
+        item_id: "e1".to_string(),
+        item: Box::new(episode("e1")),
+    });
+    assert_eq!(app.current_item().map(|item| item.id.as_str()), Some("e1"));
 }
 
 #[tokio::test]

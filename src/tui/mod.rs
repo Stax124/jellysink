@@ -2,8 +2,12 @@
 //! jellysink. See `specs/tui.md`.
 
 mod app;
+mod cover;
+mod grid;
 mod keys;
 mod nav;
+mod playing;
+mod rail;
 mod ui;
 
 use crate::app::config::{Credentials, Paths};
@@ -15,5 +19,8 @@ pub async fn run(paths: Paths) -> Result<()> {
     let credentials = Credentials::load(&paths)?
         .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
     let api = Api::from_credentials(&credentials)?;
-    app::App::new(api, paths).run().await
+    // Before the alternate screen is taken: the protocol query writes to
+    // stdout and reads the terminal's answer back off stdin.
+    let picker = cover::detect_picker();
+    app::App::new(api, paths, picker).run().await
 }

@@ -15,6 +15,7 @@ pub(crate) struct Item {
     pub(crate) kind: Option<String>,
     pub(crate) collection_type: Option<String>,
     pub(crate) series_id: Option<String>,
+    pub(crate) season_id: Option<String>,
     pub(crate) series_name: Option<String>,
     pub(crate) index_number: Option<i64>,
     pub(crate) parent_index_number: Option<i64>,
@@ -22,6 +23,21 @@ pub(crate) struct Item {
     pub(crate) run_time_ticks: Option<i64>,
     pub(crate) is_folder: bool,
     pub(crate) user_data: Option<UserData>,
+    pub(crate) overview: Option<String>,
+    pub(crate) community_rating: Option<f64>,
+    pub(crate) official_rating: Option<String>,
+    pub(crate) image_tags: ImageTags,
+    /// Set on episodes, which is what makes a series poster reachable without
+    /// a second lookup.
+    pub(crate) series_primary_image_tag: Option<String>,
+}
+
+/// Jellyfin sends these unasked, keyed by image kind. Only the one the
+/// frontend draws is modelled.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub(crate) struct ImageTags {
+    pub(crate) primary: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
@@ -56,6 +72,10 @@ impl Item {
         self.user_data
             .as_ref()
             .map_or(0, |user_data| user_data.playback_position_ticks)
+    }
+
+    pub(crate) fn primary_image_tag(&self) -> Option<&str> {
+        self.image_tags.primary.as_deref()
     }
 
     pub(crate) fn played(&self) -> bool {

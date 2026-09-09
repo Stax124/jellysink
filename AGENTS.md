@@ -52,11 +52,12 @@ Design notes for the trickier subsystems live in `specs/`:
   counter gates look interchangeable and are not.
 - `specs/tui.md` — why `jellytui` is a remote-control client rather than a
   second player, why its footer polls the daemon's status socket instead of
-  `GET /Sessions` (that response is megabytes and cannot be trimmed), and the
-  staleness rules (search generations, level depths, duration keyed by item id)
-  that keep async responses from landing on the wrong screen. **Read this
-  before touching `src/tui/` or `src/jellyfin/remote.rs`**, and before adding
-  anything to the once-a-second poll.
+  `GET /Sessions` (that response is megabytes and cannot be trimmed), the
+  staleness rules (search generations, level depths, duration and cover keys
+  tied to an item id) that keep async responses from landing on the wrong
+  screen, and where the cover art comes from. **Read this before touching
+  `src/tui/` or `src/jellyfin/remote.rs`**, and before adding anything to the
+  once-a-second poll.
 - `specs/session.md` — the daemon loop: task and channel ownership, reconnect
   backoff, keepalive, report ordering, mpv generations, the latching `Signal`,
   and the `transitioning` / `stopping` contract behind `end_file_action`.
@@ -74,7 +75,7 @@ One crate, two thin binaries over it (see **Commands**). `src/main.rs` parses th
 - `mpv/` — `mod.rs`: `MpvSession`, spawns mpv with `--input-ipc-server`, `--force-window=yes`, `--idle=yes` (never `vo`/`hwdec`/`scale`/`glsl-shaders`, never `--no-config`), speaks JSON IPC over the Unix socket, exposes typed helpers (`loadfile`, `pause`, `seek_absolute`, …) and `MpvEvent`. `observe_subtitle_track` and `observe_audio_track` register the two `observe_property` calls we make; `MpvEvent::SubtitleTrackChanged` and `MpvEvent::AudioTrackChanged` deliberately carry no value, because property changes are handled long after they are emitted and `Runtime` re-reads `sid`/`aid` instead (`TrackState::settled` is what separates a user's pick from mpv's own auto-selection). `mod_test.rs` is the ordinary unit-test sibling; `integration_test.rs` is the real-mpv suite, see below.
 - `runtime/` — the daemon loop: `mod.rs` reconnect/backoff — one `Runtime` is built in `run` and outlives every WebSocket session, so a reconnect is non-destructive: mpv keeps playing, the queue, volume and remembered tracks stay put, and only the socket, its reader and the keepalive are per-session (`run_session` re-announces the current play once reconnected). `playback.rs` applies `CastEvent`s to mpv and reports state back — audio and subtitles go through one `TrackKind`-parameterised path (`apply_track`, `adopt_mpv_track`, `remember_track`, `settle_track`) rather than two copies of it, `queue.rs` series autoplay (next episode in aired order, appended to mpv's playlist), `window.rs` the `PlaylistWindow` invariant (queue + how much of it mpv holds) plus the mpv playlist semantics that go with it — `Queue`, `end_file_action`, `playlist_eof`, `queue_index_at`, `ignore_stop_for_playlist`.
 - `report.rs` — reports playback state back to the Jellyfin session.
-- `tui/` — `jellytui`, the terminal frontend. It is a *Jellyfin remote-control client*, not a second player: it never builds a `Runtime`, never spawns mpv and never takes `instance.lock`, so it runs happily alongside the daemon. Enter on a row becomes `POST /Sessions/{id}/Playing`, which reaches the daemon over its existing WebSocket and lands in `cast.rs` exactly as a cast from the web app does — which is why adding it needed no change to `runtime/`, `mpv/` or `report.rs`. `app.rs` (state, the `select!` loop, one spawned task per request so HTTP never blocks a keystroke), `nav.rs` (the browse stack), `keys.rs` (key → `Intent`, a pure mapping so bindings are testable), `ui.rs` (render, plus the panic hook that restores the terminal). It deliberately never calls `init_tracing`: that writes to stdout and would paint over the alternate screen.
+- `tui/` — `jellytui`, the terminal frontend. It is a *Jellyfin remote-control client*, not a second player: it never builds a `Runtime`, never spawns mpv and never takes `instance.lock`, so it runs happily alongside the daemon. Enter on a row becomes `POST /Sessions/{id}/Playing`, which reaches the daemon over its existing WebSocket and lands in `cast.rs` exactly as a cast from the web app does — which is why adding it needed no change to `runtime/`, `mpv/` or `report.rs`. `app.rs` (state, the `select!` loop, one spawned task per request so HTTP never blocks a keystroke), `nav.rs` (the browse stack, plus `is_grid` — which view a level's rows get), `keys.rs` (key → `Intent`, a pure mapping so bindings are testable; `Left`/`Right` stay unresolved here because what they mean depends on the focused view), `ui.rs` (chrome, the list view, and the panic hook that restores the terminal), `cover.rs` (the `Picker`, the bounded cover cache, and the shared cell-vs-pixel geometry), `grid.rs` (the tile wall), `rail.rs` (the detail rail beside a list), `playing.rs` (the `3 Playing` screen). It deliberately never calls `init_tracing`: that writes to stdout and would paint over the alternate screen.
 
 Also in the tree (not a Rust module): `systemd/jellysink.service` — user unit (`WantedBy=graphical-session.target`); `ExecStart=%h/.local/bin/jellysink`.
 

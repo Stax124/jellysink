@@ -112,6 +112,86 @@ app, not only from jellytui.
 Seeking is computed from the last polled position, so it can be up to a second
 stale — invisible at ten-second steps.
 
+## Two view modes
+
+A level is drawn as a grid of covers or as a list with a detail rail, and the
+choice comes from **item kind, not from `Source`** (`nav::is_grid`): `Series`,
+`Season`, `Movie` and `BoxSet` are poster-shaped and get the grid, everything
+else stays a list. Deciding by kind means a folder full of movies gets the
+grid whichever route reached it, and it is one function to test rather than a
+table that has to be kept in step with the browse stack.
+
+Two screens override it. **Search** is always a list: its rows are mixed kinds,
+so a grid would be tiles of three different shapes. **Home** is always a grid,
+showing one list at a time with Tab swapping Continue Watching and Next Up in
+place — two stacked grids would leave each a single row of tiles, and a
+side-by-side carousel would need a horizontal scroll offset of its own.
+
+Because a grid has a second axis, `h`/`j`/`k`/`l` and all four arrows move the
+cursor while one is focused, and `Esc`/`Backspace` is the only way back.
+`keys.rs` stays a pure mapping: it emits `Intent::Left` and `Intent::Right`,
+and `App::apply` resolves them against the focused view. Up and down move by a
+whole row, so `App` needs the column count outside a draw — which is why it
+stores the terminal size each iteration and both sides call `grid::metrics`.
+
+A grid tile has no room for the `64%` a list row shows, so the shelf rule under
+each cover *is* the progress bar and the caption only says when something is
+finished. Selection is carried by the caption's highlight, which leaves the
+rule free to mean one thing.
+
+## Where the artwork comes from
+
+`ratatui-image` draws the covers, with `Picker::from_query_stdio()` deciding
+between kitty, sixel, iTerm2 and halfblocks. That query **has to run before
+`ui::enter()`**: it writes an escape sequence to stdout and reads the answer
+back off stdin, which the alternate screen would swallow. When it fails —
+tmux without passthrough, a plain xterm — `Picker::halfblocks()` is the
+fallback, so every terminal gets a picture rather than a hole.
+
+Images are fetched through `Api::primary_image`, which goes through `Api::get`
+and so carries the cached auth header. `jellyfin::url::image_url` is *not* used
+here: that one puts the token in the query string because MPRIS hands the URL
+to a desktop widget to fetch itself.
+
+Three things are worth stating because getting them wrong is invisible:
+
+- **The server does the resizing**, bounded to the cell box the cover will be
+  drawn in. `maxWidth`/`maxHeight` keep the aspect ratio and cap both sides;
+  `fillWidth`/`fillHeight` do neither and hand back a full-height poster
+  however short the box is. This is the `/Sessions` lesson above at a smaller
+  scale — a rail cover is about 40 KB rather than a megabyte.
+- **A cover's size is part of its identity.** A `Protocol` is encoded against
+  one rect, so after a terminal resize the cached one is the *wrong* encoding,
+  not a stale one. `CoverKey` is `(item id, image tag, size)`, and because
+  `visible_covers` is recomputed every loop iteration, a resize asks for the
+  new size without anything having to notice the resize.
+- **An episode's `Primary` is a 16:9 still, not a poster.** The rail and the
+  Home grid want that still; the Playing screen's poster column wants the
+  *series* poster, reachable from `SeriesPrimaryImageTag` without a second
+  lookup. `CoverKey::primary` and `cover::poster_key` are the two sides of it.
+
+Decode and encode run in `spawn_blocking` — jellytui is a `current_thread`
+runtime and both are real CPU work on the thread that draws. The finished
+`Protocol` comes back over the existing `Msg` channel, so no `select!` arm was
+added. Fetches are debounced 120 ms after the visible set settles, or holding
+`j` through a 218-item library would fire 218 requests, and `Covers::claim`
+keeps a resting cursor to one. The cache is bounded and evicts oldest-first;
+items the server has no image for are remembered as absent, because otherwise
+an artless row is re-requested on every poll.
+
+## The Playing screen
+
+`3` opens a screen for whatever the daemon is on: the series poster at full
+column height, the synopsis, and the rest of the season with the playing
+episode accented and `Enter` free to jump to another one.
+
+The status socket carries a title and a position, not a synopsis or a season,
+so this screen makes two requests of its own — `/Items/{id}`, then that
+episode's season. Both are keyed by the item id they were asked for and dropped
+if playback has moved on, the same rule search generations and level depths
+follow. Until they land the daemon's `display_title` holds the screen, so it is
+never blank.
+
 ## Terminal ownership
 
 mpv is a separate process with its own window and all three stdio handles on

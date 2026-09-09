@@ -1,7 +1,11 @@
 //! App state and the event loop.
 
+use super::cover::{self, CoverKey, Covers};
+use super::grid;
 use super::keys::{self, Intent};
 use super::nav::{self, End, Level, Source};
+use super::playing;
+use super::rail;
 use super::ui;
 use crate::app::config::Paths;
 use crate::app::instance;
@@ -13,6 +17,9 @@ use crate::runtime::PlayerStatus;
 use crate::ticks::seconds_to_ticks;
 use color_eyre::eyre::Result;
 use ratatui::crossterm::event::{Event, KeyEventKind};
+use ratatui::layout::{Rect, Size};
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::Protocol;
 use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
@@ -24,6 +31,9 @@ const PAGE_JUMP: isize = 10;
 /// Long enough that typing a word is one request, short enough to feel live.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// Long enough that holding `j` through a library does not fetch a cover per
+/// row, short enough that resting on one shows its art at once.
+const COVER_DEBOUNCE: Duration = Duration::from_millis(120);
 const SEARCH_TYPES: &str = "Movie,Series,Episode";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +41,7 @@ pub(super) enum Screen {
     Home,
     Browse,
     Search,
+    Playing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +63,27 @@ enum Msg {
         item_id: String,
         ticks: i64,
     },
+    /// Both carry the item id they were asked for, so a reply that arrives
+    /// after playback moved on is dropped rather than describing the wrong
+    /// episode — the rule `specs/tui.md` already sets for search and levels.
+    PlayingItem {
+        item_id: String,
+        item: Box<Item>,
+    },
+    PlayingEpisodes {
+        item_id: String,
+        items: Vec<Item>,
+    },
+    /// `None` when the server has no artwork for the item — quiet and common.
+    Cover {
+        key: CoverKey,
+        protocol: Option<Box<Protocol>>,
+    },
+    /// The request failed rather than answered, so the item keeps its claim to
+    /// a cover and is asked for again next time it is on screen.
+    CoverFailed {
+        key: CoverKey,
+    },
     Error(String),
 }
 
@@ -64,6 +96,7 @@ pub(super) struct App {
     pub(super) resume: Vec<Item>,
     pub(super) next_up: Vec<Item>,
     pub(super) home_selected: usize,
+    pub(super) home_offset: usize,
     pub(super) stack: Vec<Level>,
     pub(super) query: String,
     pub(super) results: Level,
@@ -74,9 +107,19 @@ pub(super) struct App {
     /// The playing item's duration, which the status socket does not carry.
     /// Keyed by item id so a stale total never labels a new episode.
     pub(super) runtime_ticks: Option<(String, i64)>,
+    /// The playing item and the rest of its season, both keyed by the item id
+    /// they describe.
+    pub(super) playing_item: Option<(String, Item)>,
+    pub(super) playing_episodes: Level,
     /// Needed only to address commands, and `/Sessions` is expensive, so it is
     /// fetched once in the background rather than polled.
     session_id: Option<String>,
+    pub(super) covers: Covers,
+    /// The last size the terminal reported, so a cover box can be worked out
+    /// between frames rather than only while one is being drawn.
+    viewport: Size,
+    cover_due: Option<tokio::time::Instant>,
+    wanted_covers: Vec<CoverKey>,
     paths: Paths,
     pub(super) message: String,
     search_generation: u64,
@@ -85,7 +128,7 @@ pub(super) struct App {
 }
 
 impl App {
-    pub(super) fn new(api: Api, paths: Paths) -> Self {
+    pub(super) fn new(api: Api, paths: Paths, picker: Picker) -> Self {
         let (tx, rx) = unbounded_channel();
         Self {
             api,
@@ -96,13 +139,20 @@ impl App {
             resume: Vec::new(),
             next_up: Vec::new(),
             home_selected: 0,
+            home_offset: 0,
             stack: Vec::new(),
             query: String::new(),
             results: Level::loading("Search", Source::Libraries),
             player: None,
             player_polled: false,
             runtime_ticks: None,
+            playing_item: None,
+            playing_episodes: Level::loading("Episodes", Source::Libraries),
             session_id: None,
+            covers: Covers::new(picker),
+            viewport: Size::default(),
+            cover_due: None,
+            wanted_covers: Vec::new(),
             paths,
             message: String::new(),
             search_generation: 0,
@@ -122,10 +172,14 @@ impl App {
         self.load_session_id();
 
         let result = loop {
+            if let Ok(viewport) = terminal.size() {
+                self.viewport = viewport;
+            }
+            self.tick_covers();
             if let Err(e) = terminal.draw(|frame| ui::render(&self, frame)) {
                 break Err(e.into());
             }
-            let search_deadline = self.search_due;
+            let (search_deadline, cover_deadline) = (self.search_due, self.cover_due);
             tokio::select! {
                 event = input.recv() => match event {
                     Some(event) => self.on_event(event),
@@ -136,6 +190,10 @@ impl App {
                 _ = sleep_until(search_deadline) => {
                     self.search_due = None;
                     self.run_search();
+                }
+                _ = sleep_until(cover_deadline) => {
+                    self.cover_due = None;
+                    self.request_covers();
                 }
             }
             if self.quit {
@@ -166,14 +224,31 @@ impl App {
             Intent::Quit => self.quit = true,
             Intent::Home => self.screen = Screen::Home,
             Intent::Libraries => self.open_libraries(),
+            Intent::Playing => self.screen = Screen::Playing,
             Intent::StartSearch => {
                 self.screen = Screen::Search;
                 self.message.clear();
             }
-            Intent::Up => self.move_by(-1),
-            Intent::Down => self.move_by(1),
-            Intent::PageUp => self.move_by(-PAGE_JUMP),
-            Intent::PageDown => self.move_by(PAGE_JUMP),
+            Intent::Up => self.move_by(-self.row_step()),
+            Intent::Down => self.move_by(self.row_step()),
+            Intent::PageUp => self.move_by(-self.page_step()),
+            Intent::PageDown => self.move_by(self.page_step()),
+            // A grid has a second axis to move along; a list does not, and
+            // keeps these as back and open.
+            Intent::Left => {
+                if self.grid_metrics().is_some() {
+                    self.move_by(-1);
+                } else {
+                    self.back();
+                }
+            }
+            Intent::Right => {
+                if self.grid_metrics().is_some() {
+                    self.move_by(1);
+                } else {
+                    self.enter();
+                }
+            }
             Intent::Top => self.move_to_end(End::Top),
             Intent::Bottom => self.move_to_end(End::Bottom),
             Intent::NextPane => self.toggle_home_pane(),
@@ -217,6 +292,33 @@ impl App {
             Msg::Player(player) => self.on_player(player.map(|boxed| *boxed)),
             Msg::SessionId(session_id) => self.session_id = Some(session_id),
             Msg::Runtime { item_id, ticks } => self.runtime_ticks = Some((item_id, ticks)),
+            Msg::PlayingItem { item_id, item } => {
+                if self.is_current(&item_id) {
+                    if let Some((series_id, season_id)) =
+                        item.series_id.clone().zip(item.season_id.clone())
+                    {
+                        self.load_playing_episodes(item_id.clone(), series_id, season_id);
+                    }
+                    self.playing_item = Some((item_id, *item));
+                }
+            }
+            Msg::PlayingEpisodes { item_id, items } => {
+                if self.is_current(&item_id) {
+                    self.playing_episodes.fill(items);
+                    if let Some(index) = self
+                        .playing_episodes
+                        .items
+                        .iter()
+                        .position(|episode| episode.id == item_id)
+                    {
+                        self.playing_episodes.selected = index;
+                    }
+                }
+            }
+            Msg::Cover { key, protocol } => {
+                self.covers.store(key, protocol.map(|boxed| *boxed));
+            }
+            Msg::CoverFailed { key } => self.covers.release(&key),
             Msg::Error(message) => self.message = message,
         }
     }
@@ -226,6 +328,7 @@ impl App {
             Screen::Home => self.home_rows(),
             Screen::Browse => self.stack.last().map_or(&[], |level| &level.items),
             Screen::Search => &self.results.items,
+            Screen::Playing => &self.playing_episodes.items,
         }
     }
 
@@ -241,7 +344,17 @@ impl App {
             Screen::Home => self.home_selected,
             Screen::Browse => self.stack.last().map_or(0, |level| level.selected),
             Screen::Search => self.results.selected,
+            Screen::Playing => self.playing_episodes.selected,
         }
+    }
+
+    /// The looked-up item, only while it still describes what is playing.
+    pub(super) fn current_item(&self) -> Option<&Item> {
+        let now_playing = self.now_playing()?;
+        self.playing_item
+            .as_ref()
+            .filter(|(item_id, _)| *item_id == now_playing.item_id)
+            .map(|(_, item)| item)
     }
 
     fn selected_item(&self) -> Option<&Item> {
@@ -264,7 +377,9 @@ impl App {
                 }
             }
             Screen::Search => self.results.move_by(delta),
+            Screen::Playing => self.playing_episodes.move_by(delta),
         }
+        self.rescroll();
     }
 
     fn move_to_end(&mut self, end: End) {
@@ -281,6 +396,70 @@ impl App {
                 }
             }
             Screen::Search => self.results.move_to_end(end),
+            Screen::Playing => self.playing_episodes.move_to_end(end),
+        }
+        self.rescroll();
+    }
+
+    /// How far one press of up or down travels: a whole row in a grid.
+    fn row_step(&self) -> isize {
+        self.grid_metrics()
+            .and_then(|metrics| isize::try_from(metrics.columns).ok())
+            .unwrap_or(1)
+    }
+
+    fn page_step(&self) -> isize {
+        self.grid_metrics()
+            .and_then(|metrics| isize::try_from(metrics.page()).ok())
+            .unwrap_or(PAGE_JUMP)
+    }
+
+    /// The grid the focused screen is drawing, if it is drawing one. Search
+    /// stays a list whatever it turned up, because its rows are mixed kinds.
+    pub(super) fn grid_metrics(&self) -> Option<grid::Metrics> {
+        let shows_grid = match self.screen {
+            Screen::Home => true,
+            Screen::Browse => nav::is_grid(self.rows()),
+            // Search rows are mixed kinds, and the Playing screen draws one
+            // poster of its own.
+            Screen::Search | Screen::Playing => false,
+        };
+        let first = self.rows().first()?;
+        shows_grid.then(|| {
+            grid::metrics(
+                grid::inner(self.body_area()),
+                cover::primary_aspect(first),
+                self.covers.font_size(),
+            )
+        })
+    }
+
+    fn body_area(&self) -> Rect {
+        ui::panes(Rect::new(0, 0, self.viewport.width, self.viewport.height)).body
+    }
+
+    pub(super) fn grid_offset(&self) -> usize {
+        match self.screen {
+            Screen::Home => self.home_offset,
+            Screen::Browse => self.stack.last().map_or(0, |level| level.offset),
+            Screen::Search | Screen::Playing => 0,
+        }
+    }
+
+    /// Scrolls the grid the least that brings the cursor back on screen.
+    fn rescroll(&mut self) {
+        let Some(metrics) = self.grid_metrics() else {
+            return;
+        };
+        let offset = grid::scroll_to(self.grid_offset(), self.selected(), &metrics);
+        match self.screen {
+            Screen::Home => self.home_offset = offset,
+            Screen::Browse => {
+                if let Some(level) = self.stack.last_mut() {
+                    level.offset = offset;
+                }
+            }
+            Screen::Search | Screen::Playing => {}
         }
     }
 
@@ -293,6 +472,7 @@ impl App {
             HomePane::NextUp => HomePane::Resume,
         };
         self.home_selected = 0;
+        self.home_offset = 0;
     }
 
     fn enter(&mut self) {
@@ -320,6 +500,7 @@ impl App {
                     self.screen = Screen::Home;
                 }
             }
+            Screen::Playing => self.screen = Screen::Home,
             Screen::Home => {}
         }
     }
@@ -348,6 +529,11 @@ impl App {
                 }
             }
             Screen::Search => self.run_search(),
+            Screen::Playing => {
+                if let Some(item_id) = self.now_playing().map(|np| np.item_id.clone()) {
+                    self.load_playing(item_id);
+                }
+            }
         }
         self.poll_player();
     }
@@ -400,6 +586,73 @@ impl App {
             },
             move |items| Msg::Level(depth, items),
         );
+    }
+
+    /// The item whose art the rail is showing. Home has no rail.
+    fn rail_item(&self) -> Option<&Item> {
+        match self.screen {
+            Screen::Browse | Screen::Search => self.selected_item(),
+            Screen::Home | Screen::Playing => None,
+        }
+    }
+
+    /// Every cover the current screen wants. Recomputed each iteration, which
+    /// is what makes a terminal resize ask for the new size without anything
+    /// having to notice the resize itself.
+    fn visible_covers(&self) -> Vec<CoverKey> {
+        if self.screen == Screen::Playing {
+            let size = playing::poster_size(self.body_area(), self.covers.font_size());
+            return self
+                .current_item()
+                .and_then(|item| cover::poster_key(item, size))
+                .into_iter()
+                .collect();
+        }
+        if let Some(metrics) = self.grid_metrics() {
+            let size = metrics.cover_size();
+            return self
+                .rows()
+                .iter()
+                .skip(self.grid_offset() * metrics.columns)
+                .take(metrics.page())
+                .filter_map(|item| CoverKey::primary(item, size))
+                .collect();
+        }
+        let (body, font_size) = (self.body_area(), self.covers.font_size());
+        self.rail_item()
+            .and_then(|item| rail::cover_size(body, item, font_size).zip(Some(item)))
+            .and_then(|(size, item)| CoverKey::primary(item, size))
+            .into_iter()
+            .collect()
+    }
+
+    fn tick_covers(&mut self) {
+        let wanted = self.visible_covers();
+        if wanted != self.wanted_covers {
+            self.wanted_covers = wanted;
+            self.cover_due = Some(tokio::time::Instant::now() + COVER_DEBOUNCE);
+        }
+    }
+
+    /// The trailing edge of the debounce. `Covers::claim` is what keeps a
+    /// resting cursor, and a second visit to the same row, to one request.
+    fn request_covers(&mut self) {
+        for key in self.wanted_covers.clone() {
+            if !self.covers.claim(&key) {
+                continue;
+            }
+            let (api, tx, picker) = (self.api.clone(), self.tx.clone(), self.covers.picker());
+            tokio::spawn(async move {
+                let msg = match cover::fetch(&api, picker, &key).await {
+                    Ok(protocol) => Msg::Cover {
+                        key,
+                        protocol: protocol.map(Box::new),
+                    },
+                    Err(_) => Msg::CoverFailed { key },
+                };
+                let _ = tx.send(msg);
+            });
+        }
     }
 
     fn schedule_search(&mut self) {
@@ -465,6 +718,7 @@ impl App {
         self.player = player;
         let Some(item_id) = item_id else {
             self.runtime_ticks = None;
+            self.playing_item = None;
             return;
         };
         if self
@@ -472,8 +726,46 @@ impl App {
             .as_ref()
             .is_none_or(|(id, _)| *id != item_id)
         {
-            self.load_runtime_ticks(item_id);
+            self.load_runtime_ticks(item_id.clone());
+            self.load_playing(item_id);
         }
+    }
+
+    fn is_current(&self, item_id: &str) -> bool {
+        self.now_playing()
+            .is_some_and(|now_playing| now_playing.item_id == item_id)
+    }
+
+    /// The Playing screen's own lookup: the status socket carries a title and
+    /// a position, not a synopsis or a season.
+    fn load_playing(&mut self, item_id: String) {
+        self.playing_item = None;
+        self.playing_episodes = Level::loading("Episodes", Source::Libraries);
+        let (api, tx) = (self.api.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let msg = match api.get_item(&item_id).await {
+                Ok(value) => match Item::deserialize(&value) {
+                    Ok(item) => Msg::PlayingItem {
+                        item_id,
+                        item: Box::new(item),
+                    },
+                    Err(e) => Msg::Error(format!("decoding item: {e}")),
+                },
+                Err(e) => Msg::Error(format!("{e:#}")),
+            };
+            let _ = tx.send(msg);
+        });
+    }
+
+    fn load_playing_episodes(&self, item_id: String, series_id: String, season_id: String) {
+        let api = self.api.clone();
+        self.spawn(
+            async move {
+                api.episodes(&series_id, Some(&season_id), EPISODE_LIMIT)
+                    .await
+            },
+            move |items| Msg::PlayingEpisodes { item_id, items },
+        );
     }
 
     /// One small request per item change, rather than a duration in every

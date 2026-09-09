@@ -18,6 +18,7 @@ fn app() -> App {
         crate::jellyfin::auth::Api::from_credentials(&credentials).unwrap(),
         crate::app::config::Paths::from_override(Some(std::path::PathBuf::from("/nonexistent")))
             .unwrap(),
+        ratatui_image::picker::Picker::halfblocks(),
     )
 }
 
@@ -82,7 +83,7 @@ fn the_footer_names_the_paused_item_with_its_position_and_volume() {
     );
     assert!(screen.contains("15:17 / 23:42"), "{screen}");
     assert!(screen.contains("vol 70"), "{screen}");
-    assert!(screen.contains("[3/103]"), "{screen}");
+    assert!(screen.contains("queue 3/103"), "{screen}");
     assert!(screen.contains('⏸'), "{screen}");
 }
 
@@ -115,6 +116,28 @@ fn the_search_screen_advertises_the_quit_key_that_actually_works_there() {
 }
 
 #[test]
+fn the_rail_describes_the_row_under_the_cursor() {
+    let mut app = app();
+    let mut level = Level::loading("Season 2", Source::Libraries);
+    let mut second = episode();
+    second.id = "e2".into();
+    second.name = Some("Rimuru's Rout".into());
+    second.overview = Some("The federation musters at the western gate.".into());
+    let mut first = episode();
+    first.overview = Some("Nothing about this episode is on screen.".into());
+    level.fill(vec![first, second]);
+    level.selected = 1;
+    app.stack.push(level);
+    app.screen = Screen::Browse;
+
+    let screen = drawn(&app);
+    assert!(screen.contains("Details"), "{screen}");
+    assert!(screen.contains("Rimuru's Rout"), "{screen}");
+    assert!(screen.contains("federation musters"), "{screen}");
+    assert!(!screen.contains("Nothing about this"), "{screen}");
+}
+
+#[test]
 fn an_empty_library_says_so_rather_than_drawing_a_blank_box() {
     let mut app = app();
     let mut level = Level::loading("Movies", Source::Libraries);
@@ -124,25 +147,39 @@ fn an_empty_library_says_so_rather_than_drawing_a_blank_box() {
     assert!(drawn(&app).contains("nothing here"));
 }
 
-#[test]
-fn a_watched_row_is_ticked_and_a_partly_watched_one_shows_its_percentage() {
-    let mut app = app();
-    let mut watched = episode();
-    watched.user_data = Some(crate::jellyfin::model::UserData {
-        played: true,
-        playback_position_ticks: 0,
+fn watched(mut item: Item, played: bool, position_ticks: i64) -> Item {
+    item.user_data = Some(crate::jellyfin::model::UserData {
+        played,
+        playback_position_ticks: position_ticks,
         played_percentage: None,
     });
-    let mut partial = episode();
-    partial.user_data = Some(crate::jellyfin::model::UserData {
-        played: false,
-        playback_position_ticks: 9_167_070_000,
-        played_percentage: Some(64.0),
-    });
-    app.resume = vec![watched, partial];
+    item
+}
+
+#[test]
+fn a_watched_row_is_ticked_and_a_partly_watched_one_shows_its_percentage() {
+    // Episode levels are lists, which have the width for a percentage.
+    let mut app = app();
+    let mut level = Level::loading("Season 2", Source::Libraries);
+    level.fill(vec![
+        watched(episode(), true, 0),
+        watched(episode(), false, 9_167_070_000),
+    ]);
+    app.stack.push(level);
+    app.screen = Screen::Browse;
+
     let screen = drawn(&app);
     assert!(screen.contains('✓'), "{screen}");
     assert!(screen.contains("64%"), "{screen}");
+}
+
+#[test]
+fn a_finished_tile_is_ticked_even_though_a_tile_has_no_room_for_a_percentage() {
+    // Home is a grid: progress is the bar under the cover, and the caption
+    // only has to say when something is done with.
+    let mut app = app();
+    app.resume = vec![watched(episode(), true, 0)];
+    assert!(drawn(&app).contains('✓'));
 }
 
 #[test]

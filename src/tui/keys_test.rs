@@ -21,6 +21,9 @@ fn letters_are_commands_while_browsing_and_text_while_searching() {
     // 'q' would otherwise quit mid-query.
     assert_eq!(map(press('q'), false), Some(Intent::Quit));
     assert_eq!(map(press('q'), true), Some(Intent::Type('q')));
+    // And a year typed into the search box must not switch tabs.
+    assert_eq!(map(press('3'), false), Some(Intent::Playing));
+    assert_eq!(map(press('3'), true), Some(Intent::Type('3')));
 }
 
 #[test]
@@ -45,13 +48,15 @@ fn navigation_keys_keep_working_inside_the_search_box() {
 
 #[test]
 fn arrows_navigate_bare_and_seek_with_shift() {
+    // Bare arrows are movement; what left and right *mean* is the focused
+    // view's business, not this mapping's.
     assert_eq!(
         map(key(KeyCode::Left, KeyModifiers::NONE), false),
-        Some(Intent::Back)
+        Some(Intent::Left)
     );
     assert_eq!(
         map(key(KeyCode::Right, KeyModifiers::NONE), false),
-        Some(Intent::Enter)
+        Some(Intent::Right)
     );
     assert_eq!(
         map(key(KeyCode::Left, KeyModifiers::SHIFT), false),

@@ -111,11 +111,32 @@ impl Api {
         self.get_json(&path).await
     }
 
+    /// One season, for a frontend that shows a synopsis. `/Shows/…/Episodes`
+    /// omits `Overview` unless asked, and asking costs a few hundred bytes an
+    /// episode — worth it here, not in [`Api::episodes_all`].
     pub(crate) async fn episodes(
         &self,
         series_id: &str,
         season_id: Option<&str>,
         limit: u32,
+    ) -> Result<Value> {
+        self.episodes_listing(series_id, season_id, limit, true)
+            .await
+    }
+
+    /// The whole series in aired order. No `StartItemId`: it is a forward-only
+    /// `SkipWhile`, so the caller splits the listing itself.
+    pub(crate) async fn episodes_all(&self, series_id: &str) -> Result<Value> {
+        self.episodes_listing(series_id, None, EPISODE_LIMIT, false)
+            .await
+    }
+
+    async fn episodes_listing(
+        &self,
+        series_id: &str,
+        season_id: Option<&str>,
+        limit: u32,
+        with_overview: bool,
     ) -> Result<Value> {
         let mut path = format!(
             "/Shows/{series_id}/Episodes?userId={}&Limit={limit}",
@@ -125,14 +146,45 @@ impl Api {
             path.push_str("&seasonId=");
             path.push_str(&encode_query_value(season_id));
         }
+        if with_overview {
+            path.push_str("&Fields=Overview");
+        }
         tracing::debug!(path, "GET episodes");
         self.get_json(&path).await
     }
 
-    /// The whole series in aired order. No `StartItemId`: it is a forward-only
-    /// `SkipWhile`, so the caller splits the listing itself.
-    pub(crate) async fn episodes_all(&self, series_id: &str) -> Result<Value> {
-        self.episodes(series_id, None, EPISODE_LIMIT).await
+    /// The item's primary image, bounded to the box it will be drawn in.
+    /// `maxWidth`/`maxHeight` cap both sides and keep the aspect ratio;
+    /// `fillWidth`/`fillHeight` do neither, and hand back a full-height poster
+    /// however narrow the box is.
+    ///
+    /// `Ok(None)` means the server has no such image, which is ordinary and
+    /// permanent; an `Err` is worth retrying when the item is looked at again.
+    pub(crate) async fn primary_image(
+        &self,
+        item_id: &str,
+        image_tag: &str,
+        max_width: u32,
+        max_height: u32,
+    ) -> Result<Option<Vec<u8>>> {
+        let path = format!(
+            "/Items/{item_id}/Images/Primary?maxWidth={max_width}&maxHeight={max_height}&format=Jpg&tag={}",
+            encode_query_value(image_tag)
+        );
+        let response = self.get(&path).await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = response
+            .error_for_status()
+            .wrap_err_with(|| format!("GET {path}"))?;
+        Ok(Some(
+            response
+                .bytes()
+                .await
+                .wrap_err("reading image bytes")?
+                .to_vec(),
+        ))
     }
 
     pub(crate) async fn next_up(&self, limit: u32) -> Result<Value> {

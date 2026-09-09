@@ -10,6 +10,9 @@ pub(super) struct Level {
     pub(super) source: Source,
     pub(super) items: Vec<Item>,
     pub(super) selected: usize,
+    /// First visible row when this level is drawn as a grid. A list keeps its
+    /// own scroll inside `ListState`, which is why only the grid needs it.
+    pub(super) offset: usize,
     pub(super) loading: bool,
 }
 
@@ -32,12 +35,14 @@ impl Level {
             source,
             items: Vec::new(),
             selected: 0,
+            offset: 0,
             loading: true,
         }
     }
 
     pub(super) fn fill(&mut self, items: Vec<Item>) {
         self.selected = self.selected.min(items.len().saturating_sub(1));
+        self.offset = 0;
         self.items = items;
         self.loading = false;
     }
@@ -63,6 +68,15 @@ impl Level {
 pub(super) enum End {
     Top,
     Bottom,
+}
+
+/// Whether a level's rows are poster-shaped enough to be worth a grid.
+/// Decided by kind rather than by [`Source`], so a folder full of movies gets
+/// the grid whichever route reached it.
+pub(super) fn is_grid(items: &[Item]) -> bool {
+    items
+        .first()
+        .is_some_and(|item| matches!(item.kind(), "Series" | "Season" | "Movie" | "BoxSet"))
 }
 
 /// The level Enter on `item` should push, if it is not something to play.
