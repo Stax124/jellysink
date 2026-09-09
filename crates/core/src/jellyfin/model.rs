@@ -26,6 +26,9 @@ pub struct Item {
     pub overview: Option<String>,
     pub community_rating: Option<f64>,
     pub official_rating: Option<String>,
+    /// Width ÷ height, as the server measured the primary image. Not every
+    /// endpoint sends it: `/UserViews` does, `/Items` only when asked.
+    pub primary_image_aspect_ratio: Option<f64>,
     pub image_tags: ImageTags,
 }
 

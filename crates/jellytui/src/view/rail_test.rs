@@ -31,44 +31,36 @@ fn a_narrow_terminal_keeps_the_whole_body_for_the_list() {
 }
 
 #[test]
-fn the_rail_grows_with_the_terminal_without_taking_the_larger_half() {
-    let mut previous = 0;
-    for body_width in [90, 120, 160, 220, 400] {
+fn the_rail_takes_half_the_body_and_grows_with_it() {
+    for body_width in [90, 120, 161, 220, 400] {
         let (list, rail) = split(Rect::new(0, 0, body_width, 24));
         let rail = rail.expect("a wide terminal has a rail").width;
+        assert_eq!(list.width + rail, body_width, "at {body_width}");
         assert!(
-            rail >= previous,
-            "{rail} at {body_width} is narrower than {previous}"
+            list.width.abs_diff(rail) <= 1,
+            "{list:?} and {rail} at {body_width}"
         );
-        assert!(
-            (MIN_WIDTH..=MAX_WIDTH).contains(&rail),
-            "{rail} at {body_width}"
-        );
-        assert!(
-            list.width > rail,
-            "the list is the smaller half at {body_width}"
-        );
-        assert_eq!(list.width + rail, body_width);
-        previous = rail;
     }
 }
 
 #[test]
-fn an_episode_still_is_wide_and_a_series_poster_is_tall() {
+fn a_still_is_wider_than_a_poster_and_neither_crowds_out_the_text() {
     let rail = split(Rect::new(0, 0, 120, 26)).1.unwrap();
     let still = cover_rect(rail, &episode(), FONT_SIZE);
     let poster = cover_rect(rail, &series(), FONT_SIZE);
-
-    // 16:9 is bounded by the rail's width; 2:3 has to give width up to stay
-    // short enough to leave room for the text under it.
     assert!(still.width > poster.width, "{still:?} {poster:?}");
-    assert!(poster.height > still.height, "{poster:?} {still:?}");
 
+    // Half a body is wide enough that the height cap binds both shapes, and
+    // it is what leaves the synopsis somewhere to go.
     let inner = block().inner(rail);
     for cover in [still, poster] {
         assert!(
             cover.width <= inner.width && cover.height <= inner.height,
             "{cover:?} escapes {inner:?}"
+        );
+        assert!(
+            cover.height * 5 <= inner.height * 3,
+            "{cover:?} takes the rail the text needs"
         );
     }
 }

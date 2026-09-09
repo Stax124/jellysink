@@ -229,13 +229,18 @@ Three things are worth stating because getting them wrong is invisible:
   not a stale one. `CoverKey` is `(item id, image tag, size)`, and because
   `visible_covers` is recomputed every loop iteration, a resize asks for the
   new size without anything having to notice the resize.
-- **An episode's `Primary` is a 16:9 still, not a poster.** Every cover the
-  frontend draws is `CoverKey::primary`, so a row's shape follows the item:
-  `cover::primary_aspect` answers 16:9 for an episode and 2:3 for everything
-  else, and `cover::fit` sizes the box around that. The Playing screen used to
-  ask for the *series* poster instead (`SeriesPrimaryImageTag`); it now shows
-  the episode's own still, which is what the rail beside a season already
-  showed.
+- **An item's `Primary` is not always a poster.** Every cover the frontend
+  draws is `CoverKey::primary`, so a row's shape follows the item, and
+  `cover::fit` sizes the box around what `cover::primary_aspect` answers: the
+  server's own `PrimaryImageAspectRatio` where it sent one, otherwise 16:9 for
+  an episode's still and 2:3 for a poster. Guessing is not enough on its own —
+  a library's primary image is a 16:9 banner although a `CollectionFolder`
+  looks like a poster by kind, and the box reserved for the wrong shape shows
+  up as a gap between the picture and the text under it. `/UserViews` sends the
+  ratio, `/Items` only when asked, which is why the guess stays. The Playing
+  screen used to ask for the *series* poster instead
+  (`SeriesPrimaryImageTag`); it now shows the episode's own still, which is
+  what the rail beside a season already showed.
 
 ### HiDPI: `image_scale`
 

@@ -11,31 +11,18 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui_image::FontSize;
 use ratatui_image::Image;
 
-/// The share of the body the rail takes, as a percentage, and the bounds on
-/// it: narrower than [`MIN_WIDTH`] there is no room for the cover and the
-/// synopsis, and past [`MAX_WIDTH`] a wide terminal is only eliding the list
-/// to grow a preview that is already large.
-const SHARE: u16 = 38;
-const MIN_WIDTH: u16 = 38;
-const MAX_WIDTH: u16 = 72;
 /// Below this the rail would leave the list too narrow to read, so the screen
 /// stays the full-width list it is today.
 const MIN_BODY_WIDTH: u16 = 90;
 
-fn width(body: Rect) -> u16 {
-    let share = u32::from(body.width) * u32::from(SHARE) / 100;
-    u16::try_from(share)
-        .unwrap_or(MAX_WIDTH)
-        .clamp(MIN_WIDTH, MAX_WIDTH)
-}
-
-/// Splits a body area into the list and the rail beside it.
+/// Splits a body area into the list and the rail beside it. Half each: a row
+/// is a line of text and elides gracefully, while the cover beside it is the
+/// thing worth the width.
 pub(crate) fn split(body: Rect) -> (Rect, Option<Rect>) {
     if body.width < MIN_BODY_WIDTH {
         return (body, None);
     }
-    let [list, rail] =
-        Layout::horizontal([Constraint::Fill(1), Constraint::Length(width(body))]).areas(body);
+    let [list, rail] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(body);
     (list, Some(rail))
 }
 

@@ -26,8 +26,6 @@ pub(super) struct CoverKey {
 }
 
 impl CoverKey {
-    /// The item's own primary image: a 2:3 poster for a series, season or
-    /// movie, a 16:9 still for an episode.
     pub(super) fn primary(item: &Item, size: Size) -> Option<Self> {
         Some(Self {
             item_id: item.id.clone(),
@@ -134,14 +132,20 @@ fn encoded_size(size: Size, scale: f32) -> Size {
     Size::new(grow(size.width), grow(size.height))
 }
 
-/// The shape of an item's primary image, as width ÷ height. Jellyfin gives an
-/// episode a 16:9 still and everything else a 2:3 poster.
+/// The shape of an item's primary image, as width ÷ height. The server's own
+/// measurement wins where it sent one: a library's primary image is a 16:9
+/// banner, and a box reserved for the 2:3 poster its kind suggests is drawn as
+/// a gap between the picture and the text under it. Where it sent none, an
+/// episode has a 16:9 still and everything else a poster.
 pub(super) fn primary_aspect(item: &Item) -> f32 {
-    if item.kind() == "Episode" {
-        16.0 / 9.0
-    } else {
-        2.0 / 3.0
-    }
+    item.primary_image_aspect_ratio
+        .map(|ratio| ratio as f32)
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+        .unwrap_or(if item.kind() == "Episode" {
+            16.0 / 9.0
+        } else {
+            2.0 / 3.0
+        })
 }
 
 /// How many rows a cover `width` cells wide needs to hold `aspect`. A cell is
