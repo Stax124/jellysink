@@ -15,6 +15,9 @@ fn app() -> App {
         access_token: "t1".into(),
         device_id: "d1".into(),
     };
+    // `main` installs it; a test that builds an `Api` without one panics
+    // inside reqwest, because this rustls build has no default provider.
+    jellysink_core::install_crypto_provider();
     App::new(
         jellysink_core::jellyfin::auth::Api::from_credentials(&credentials).unwrap(),
         jellysink_core::config::Paths::from_override(Some(std::path::PathBuf::from(
@@ -225,8 +228,18 @@ fn a_finished_tile_is_ticked_even_though_a_tile_has_no_room_for_a_percentage() {
     // Home is a grid: progress is the bar under the cover, and the caption
     // only has to say when something is done with.
     let mut app = app();
-    app.resume = vec![watched(episode(), true, 0)];
+    app.resume.fill(vec![watched(episode(), true, 0)]);
     assert!(drawn(&app).contains('✓'));
+}
+
+#[test]
+fn home_shows_both_shelves_at_once_rather_than_one_behind_a_key() {
+    let mut app = app();
+    app.resume.fill(vec![episode()]);
+    app.next_up.fill(vec![episode()]);
+    let screen = drawn(&app);
+    assert!(screen.contains("Continue Watching"), "{screen}");
+    assert!(screen.contains("Next Up"), "{screen}");
 }
 
 #[test]

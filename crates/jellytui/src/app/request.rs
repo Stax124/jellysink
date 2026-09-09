@@ -49,6 +49,26 @@ impl App {
                 .into_iter()
                 .collect();
         }
+        // Home draws both shelves, so the unfocused one's covers are on
+        // screen too — `grid_metrics` only knows about the focused one.
+        if self.screen == Screen::Home {
+            let mut keys = Vec::new();
+            for pane in HomePane::ALL {
+                let Some(metrics) = self.shelf_metrics(pane) else {
+                    continue;
+                };
+                let shelf = self.shelf(pane);
+                keys.extend(
+                    shelf
+                        .items
+                        .iter()
+                        .skip(shelf.offset * metrics.columns)
+                        .take(metrics.page())
+                        .filter_map(|item| CoverKey::primary(item, metrics.cover_size())),
+                );
+            }
+            return keys;
+        }
         if let Some(metrics) = self.grid_metrics() {
             let size = metrics.cover_size();
             return self

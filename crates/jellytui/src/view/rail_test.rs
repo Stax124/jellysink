@@ -28,10 +28,29 @@ fn a_narrow_terminal_keeps_the_whole_body_for_the_list() {
     let (list, rail) = split(Rect::new(0, 0, 80, 24));
     assert_eq!(list.width, 80);
     assert!(rail.is_none());
+}
 
-    let (list, rail) = split(Rect::new(0, 0, 120, 24));
-    assert_eq!(rail.expect("a wide terminal has a rail").width, WIDTH);
-    assert_eq!(list.width, 120 - WIDTH);
+#[test]
+fn the_rail_grows_with_the_terminal_without_taking_the_larger_half() {
+    let mut previous = 0;
+    for body_width in [90, 120, 160, 220, 400] {
+        let (list, rail) = split(Rect::new(0, 0, body_width, 24));
+        let rail = rail.expect("a wide terminal has a rail").width;
+        assert!(
+            rail >= previous,
+            "{rail} at {body_width} is narrower than {previous}"
+        );
+        assert!(
+            (MIN_WIDTH..=MAX_WIDTH).contains(&rail),
+            "{rail} at {body_width}"
+        );
+        assert!(
+            list.width > rail,
+            "the list is the smaller half at {body_width}"
+        );
+        assert_eq!(list.width + rail, body_width);
+        previous = rail;
+    }
 }
 
 #[test]

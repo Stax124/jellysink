@@ -13,6 +13,9 @@ fn app() -> App {
         access_token: "t1".into(),
         device_id: "d1".into(),
     };
+    // `main` installs it; a test that builds an `Api` without one panics
+    // inside reqwest, because this rustls build has no default provider.
+    jellysink_core::install_crypto_provider();
     App::new(
         Api::from_credentials(&credentials).unwrap(),
         Paths::from_override(Some(std::path::PathBuf::from("/nonexistent"))).unwrap(),
@@ -61,15 +64,31 @@ fn leaving_the_search_screen_clears_the_query_so_it_does_not_reappear() {
 }
 
 #[test]
-fn switching_home_panes_resets_the_cursor_into_the_other_list() {
+fn up_and_down_move_between_the_home_shelves_and_each_keeps_its_cursor() {
     let mut app = app();
-    app.resume = vec![episode("a"), episode("b"), episode("c")];
-    app.next_up = vec![episode("z")];
+    app.resume
+        .fill(vec![episode("a"), episode("b"), episode("c")]);
+    app.next_up.fill(vec![episode("z")]);
     app.apply(Intent::Bottom);
     assert_eq!(app.selected(), 2);
-    app.apply(Intent::NextPane);
-    // Keeping 2 here would select past the end of a one-row list.
+
+    // A shelf is a single row, so down leaves it rather than moving along it.
+    app.apply(Intent::Down);
     assert_eq!(app.home_pane, HomePane::NextUp);
+    assert_eq!(app.selected(), 0);
+
+    app.apply(Intent::Up);
+    assert_eq!(app.home_pane, HomePane::Resume);
+    assert_eq!(app.selected(), 2, "the shelf forgot where it was left");
+}
+
+#[test]
+fn a_shelf_that_arrives_shorter_than_the_cursor_pulls_it_back_into_range() {
+    let mut app = app();
+    app.resume
+        .fill(vec![episode("a"), episode("b"), episode("c")]);
+    app.apply(Intent::Bottom);
+    app.on_msg(Msg::Home(HomePane::Resume, vec![episode("a")]));
     assert_eq!(app.selected(), 0);
 }
 

@@ -42,8 +42,7 @@ pub(super) enum Msg {
 impl App {
     pub(super) fn on_msg(&mut self, msg: Msg) {
         match msg {
-            Msg::Home(HomePane::Resume, items) => self.resume = items,
-            Msg::Home(HomePane::NextUp, items) => self.next_up = items,
+            Msg::Home(pane, items) => self.shelf_mut(pane).fill(items),
             Msg::Level(depth, items) => {
                 if let Some(level) = self.stack.get_mut(depth) {
                     level.fill(items);

@@ -18,6 +18,9 @@ fn app() -> App {
         access_token: "t1".into(),
         device_id: "d1".into(),
     };
+    // `main` installs it; a test that builds an `Api` without one panics
+    // inside reqwest, because this rustls build has no default provider.
+    jellysink_core::install_crypto_provider();
     App::new(
         jellysink_core::jellyfin::auth::Api::from_credentials(&credentials).unwrap(),
         jellysink_core::config::Paths::from_override(Some(std::path::PathBuf::from(

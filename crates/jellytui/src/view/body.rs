@@ -1,7 +1,7 @@
-//! The three screen bodies: the Home tile wall, a browse level and search
+//! The three screen bodies: the Home shelves, a browse level and search
 //! results.
 
-use super::{ACCENT, DIM, segment};
+use super::{ACCENT, DIM};
 use crate::app::{App, HomePane};
 use crate::view::{grid, rail};
 use jellysink_core::jellyfin::model::Item;
@@ -11,22 +11,37 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 
-/// One grid at a time, with Tab swapping which list feeds it — two stacked
-/// grids would leave each a single row of tiles.
+/// The two Home shelves, one above the other. Each is a single row of tiles,
+/// which is all half the body has the height for.
+pub(super) fn shelves(body: Rect) -> [Rect; 2] {
+    Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(body)
+}
+
+pub(crate) fn shelf_rect(body: Rect, pane: HomePane) -> Rect {
+    let [resume, next_up] = shelves(body);
+    match pane {
+        HomePane::Resume => resume,
+        HomePane::NextUp => next_up,
+    }
+}
+
 pub(super) fn render_home(app: &App, frame: &mut Frame, area: Rect) {
-    let title = Line::from(vec![
-        segment("Continue Watching", app.home_pane == HomePane::Resume),
-        segment("Next Up", app.home_pane == HomePane::NextUp),
-    ]);
-    grid::render(
-        frame,
-        area,
-        title,
-        app.home_rows(),
-        app.home_selected,
-        app.grid_offset(),
-        &app.covers,
-    );
+    for (pane, rect) in HomePane::ALL.into_iter().zip(shelves(area)) {
+        let shelf = app.shelf(pane);
+        grid::render(
+            frame,
+            rect,
+            Line::from(format!(" {} ", pane.title())),
+            grid::View {
+                items: &shelf.items,
+                selected: shelf.selected,
+                offset: shelf.offset,
+                rows: grid::SHELF_ROWS,
+                focused: app.home_pane == pane,
+            },
+            &app.covers,
+        );
+    }
 }
 
 pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
@@ -49,9 +64,13 @@ pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
             frame,
             area,
             Line::from(format!(" {title} ")),
-            &level.items,
-            level.selected,
-            level.offset,
+            grid::View {
+                items: &level.items,
+                selected: level.selected,
+                offset: level.offset,
+                rows: grid::TARGET_ROWS,
+                focused: true,
+            },
             &app.covers,
         );
         return;

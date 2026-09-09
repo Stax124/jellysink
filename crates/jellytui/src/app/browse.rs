@@ -3,26 +3,50 @@
 
 use super::*;
 
+/// One Home shelf: a row of tiles and the cursor in it, which it keeps while
+/// the other shelf has focus.
+#[derive(Debug, Default)]
+pub(crate) struct Shelf {
+    pub(crate) items: Vec<Item>,
+    pub(crate) selected: usize,
+    pub(crate) offset: usize,
+}
+
+impl Shelf {
+    pub(crate) fn fill(&mut self, items: Vec<Item>) {
+        self.selected = self.selected.min(items.len().saturating_sub(1));
+        self.offset = 0;
+        self.items = items;
+    }
+}
+
 impl App {
     pub(super) fn rows(&self) -> &[Item] {
         match self.screen {
-            Screen::Home => self.home_rows(),
+            Screen::Home => &self.shelf(self.home_pane).items,
             Screen::Browse => self.stack.last().map_or(&[], |level| &level.items),
             Screen::Search => &self.results.items,
             Screen::Playing => &self.playing_episodes.items,
         }
     }
 
-    pub(crate) fn home_rows(&self) -> &[Item] {
-        match self.home_pane {
+    pub(crate) fn shelf(&self, pane: HomePane) -> &Shelf {
+        match pane {
             HomePane::Resume => &self.resume,
             HomePane::NextUp => &self.next_up,
         }
     }
 
+    pub(super) fn shelf_mut(&mut self, pane: HomePane) -> &mut Shelf {
+        match pane {
+            HomePane::Resume => &mut self.resume,
+            HomePane::NextUp => &mut self.next_up,
+        }
+    }
+
     pub(crate) fn selected(&self) -> usize {
         match self.screen {
-            Screen::Home => self.home_selected,
+            Screen::Home => self.shelf(self.home_pane).selected,
             Screen::Browse => self.stack.last().map_or(0, |level| level.selected),
             Screen::Search => self.results.selected,
             Screen::Playing => self.playing_episodes.selected,
@@ -45,12 +69,9 @@ impl App {
     pub(super) fn move_by(&mut self, delta: isize) {
         match self.screen {
             Screen::Home => {
-                let len = self.home_rows().len();
-                self.home_selected = if len == 0 {
-                    0
-                } else {
-                    self.home_selected.saturating_add_signed(delta).min(len - 1)
-                };
+                let shelf = self.shelf_mut(self.home_pane);
+                let last = shelf.items.len().saturating_sub(1);
+                shelf.selected = shelf.selected.saturating_add_signed(delta).min(last);
             }
             Screen::Browse => {
                 if let Some(level) = self.stack.last_mut() {
@@ -74,10 +95,11 @@ impl App {
     pub(super) fn move_to_end(&mut self, end: End) {
         match self.screen {
             Screen::Home => {
-                self.home_selected = match end {
+                let shelf = self.shelf_mut(self.home_pane);
+                shelf.selected = match end {
                     End::Top => 0,
-                    End::Bottom => self.home_rows().len().saturating_sub(1),
-                }
+                    End::Bottom => shelf.items.len().saturating_sub(1),
+                };
             }
             Screen::Browse => {
                 if let Some(level) = self.stack.last_mut() {
@@ -88,6 +110,16 @@ impl App {
             Screen::Playing => self.playing_episodes.move_to_end(end),
         }
         self.rescroll();
+    }
+
+    /// Up and down. A Home shelf is a single row, so there they change which
+    /// shelf has focus rather than moving along one.
+    pub(super) fn move_vertically(&mut self, direction: isize) {
+        if self.screen == Screen::Home {
+            self.focus_shelf(direction);
+            return;
+        }
+        self.move_by(direction * self.row_step());
     }
 
     /// How far one press of up or down travels: a whole row in a grid.
@@ -104,23 +136,36 @@ impl App {
     }
 
     /// The grid the focused screen is drawing, if it is drawing one. Search
-    /// stays a list whatever it turned up, because its rows are mixed kinds.
+    /// stays a list whatever it turned up, because its rows are mixed kinds,
+    /// and the Playing screen draws one still of its own.
     pub(crate) fn grid_metrics(&self) -> Option<grid::Metrics> {
-        let shows_grid = match self.screen {
-            Screen::Home => true,
-            Screen::Browse => nav::is_grid(self.rows()),
-            // Search rows are mixed kinds, and the Playing screen draws one
-            // still of its own.
-            Screen::Search | Screen::Playing => false,
-        };
-        let first = self.rows().first()?;
-        shows_grid.then(|| {
-            grid::metrics(
-                grid::inner(self.body_area()),
-                cover::primary_aspect(first),
-                self.covers.font_size(),
-            )
-        })
+        match self.screen {
+            Screen::Home => self.shelf_metrics(self.home_pane),
+            Screen::Browse => {
+                let first = self.rows().first()?;
+                nav::is_grid(self.rows()).then(|| {
+                    grid::metrics(
+                        grid::inner(self.body_area()),
+                        cover::primary_aspect(first),
+                        self.covers.font_size(),
+                        grid::TARGET_ROWS,
+                    )
+                })
+            }
+            Screen::Search | Screen::Playing => None,
+        }
+    }
+
+    /// A shelf's tiles whether or not it has focus: the covers in the other
+    /// one are on screen too and still have to be asked for.
+    pub(crate) fn shelf_metrics(&self, pane: HomePane) -> Option<grid::Metrics> {
+        let first = self.shelf(pane).items.first()?;
+        Some(grid::metrics(
+            grid::inner(view::body::shelf_rect(self.body_area(), pane)),
+            cover::primary_aspect(first),
+            self.covers.font_size(),
+            grid::SHELF_ROWS,
+        ))
     }
 
     pub(super) fn body_area(&self) -> Rect {
@@ -129,7 +174,7 @@ impl App {
 
     pub(crate) fn grid_offset(&self) -> usize {
         match self.screen {
-            Screen::Home => self.home_offset,
+            Screen::Home => self.shelf(self.home_pane).offset,
             Screen::Browse => self.stack.last().map_or(0, |level| level.offset),
             Screen::Search | Screen::Playing => 0,
         }
@@ -142,7 +187,7 @@ impl App {
         };
         let offset = grid::scroll_to(self.grid_offset(), self.selected(), &metrics);
         match self.screen {
-            Screen::Home => self.home_offset = offset,
+            Screen::Home => self.shelf_mut(self.home_pane).offset = offset,
             Screen::Browse => {
                 if let Some(level) = self.stack.last_mut() {
                     level.offset = offset;
@@ -152,16 +197,25 @@ impl App {
         }
     }
 
-    pub(super) fn toggle_home_pane(&mut self) {
+    /// Moves the focus between the shelves. Each keeps its own cursor, so
+    /// coming back lands where it was left.
+    pub(super) fn focus_shelf(&mut self, direction: isize) {
         if self.screen != Screen::Home {
             return;
         }
-        self.home_pane = match self.home_pane {
-            HomePane::Resume => HomePane::NextUp,
-            HomePane::NextUp => HomePane::Resume,
+        self.home_pane = match (self.home_pane, direction) {
+            (HomePane::Resume, 1) => HomePane::NextUp,
+            (HomePane::NextUp, -1) => HomePane::Resume,
+            (pane, _) => pane,
         };
-        self.home_selected = 0;
-        self.home_offset = 0;
+    }
+
+    pub(super) fn toggle_shelf(&mut self) {
+        self.focus_shelf(if self.home_pane == HomePane::Resume {
+            1
+        } else {
+            -1
+        });
     }
 
     pub(super) fn enter(&mut self) {

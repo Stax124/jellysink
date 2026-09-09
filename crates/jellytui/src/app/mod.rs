@@ -5,6 +5,7 @@ mod msg;
 mod player;
 mod request;
 
+pub(crate) use browse::Shelf;
 use msg::Msg;
 
 use crate::cover::{self, CoverKey, Covers};
@@ -50,10 +51,22 @@ pub(crate) enum Screen {
     Playing,
 }
 
+/// Which of the two Home shelves has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HomePane {
     Resume,
     NextUp,
+}
+
+impl HomePane {
+    pub(crate) const ALL: [Self; 2] = [Self::Resume, Self::NextUp];
+
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Resume => "Continue Watching",
+            Self::NextUp => "Next Up",
+        }
+    }
 }
 
 pub(crate) struct App {
@@ -62,10 +75,8 @@ pub(crate) struct App {
     rx: UnboundedReceiver<Msg>,
     pub(crate) screen: Screen,
     pub(crate) home_pane: HomePane,
-    pub(crate) resume: Vec<Item>,
-    pub(crate) next_up: Vec<Item>,
-    pub(crate) home_selected: usize,
-    pub(crate) home_offset: usize,
+    pub(crate) resume: Shelf,
+    pub(crate) next_up: Shelf,
     pub(crate) stack: Vec<Level>,
     pub(crate) query: String,
     pub(crate) results: Level,
@@ -105,10 +116,8 @@ impl App {
             rx,
             screen: Screen::Home,
             home_pane: HomePane::Resume,
-            resume: Vec::new(),
-            next_up: Vec::new(),
-            home_selected: 0,
-            home_offset: 0,
+            resume: Shelf::default(),
+            next_up: Shelf::default(),
             stack: Vec::new(),
             query: String::new(),
             results: Level::loading("Search", Source::Libraries),
@@ -198,15 +207,15 @@ impl App {
                 self.screen = Screen::Search;
                 self.message.clear();
             }
-            Intent::Up => self.move_by(-self.row_step()),
-            Intent::Down => self.move_by(self.row_step()),
+            Intent::Up => self.move_vertically(-1),
+            Intent::Down => self.move_vertically(1),
             Intent::PageUp => self.move_by(-self.page_step()),
             Intent::PageDown => self.move_by(self.page_step()),
             Intent::Left => self.move_in_grid(-1),
             Intent::Right => self.move_in_grid(1),
             Intent::Top => self.move_to_end(End::Top),
             Intent::Bottom => self.move_to_end(End::Bottom),
-            Intent::NextPane => self.toggle_home_pane(),
+            Intent::NextPane => self.toggle_shelf(),
             Intent::Enter => self.enter(),
             Intent::Back => self.back(),
             Intent::Refresh => self.refresh(),

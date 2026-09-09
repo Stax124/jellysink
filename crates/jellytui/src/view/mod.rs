@@ -1,7 +1,7 @@
 //! Rendering: the terminal setup that has to be undone on the way out, the
 //! layout every screen shares, and the chrome around the body.
 
-mod body;
+pub(super) mod body;
 pub(super) mod grid;
 pub(super) mod playing;
 pub(super) mod rail;
@@ -79,27 +79,34 @@ pub(super) fn render(app: &App, frame: &mut Frame) {
     render_hint(app, frame, panes.hint);
 }
 
-/// One highlighted-when-active label, shared by the header's tabs and the
-/// pair of pane names in the Home grid's title.
-pub(super) fn segment(label: &str, active: bool) -> Span<'static> {
-    Span::styled(
-        format!(" {label} "),
-        if active {
-            Style::default().fg(Color::Black).bg(ACCENT)
-        } else {
-            Style::default().fg(DIM)
-        },
-    )
+/// One highlighted-when-active tab. The key is a span of its own so that it
+/// alone is bold — it is what the label is there to be reached by.
+fn segment(key: &str, label: &str, active: bool) -> [Span<'static>; 2] {
+    let style = if active {
+        Style::default().fg(Color::Black).bg(ACCENT)
+    } else {
+        Style::default().fg(DIM)
+    };
+    [
+        Span::styled(format!(" {key}"), style.add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {label} "), style),
+    ]
 }
 
 fn render_header(app: &App, frame: &mut Frame, area: Rect) {
-    let tabs = Line::from(vec![
-        Span::styled(" jellytui ", Style::default().add_modifier(Modifier::BOLD)),
-        segment("1 Home", app.screen == Screen::Home),
-        segment("2 Libraries", app.screen == Screen::Browse),
-        segment("3 Playing", app.screen == Screen::Playing),
-        segment("/ Search", app.screen == Screen::Search),
-    ]);
+    let mut spans = vec![Span::styled(
+        " jellytui ",
+        Style::default().add_modifier(Modifier::BOLD),
+    )];
+    for (key, label, active) in [
+        ("1", "Home", app.screen == Screen::Home),
+        ("2", "Libraries", app.screen == Screen::Browse),
+        ("3", "Playing", app.screen == Screen::Playing),
+        ("/", "Search", app.screen == Screen::Search),
+    ] {
+        spans.extend(segment(key, label, active));
+    }
+    let tabs = Line::from(spans);
     let status = daemon_status(app);
     // The message rides here rather than on the hint row: the bindings are
     // worth more than any complaint, and a complaint has to fit what is left
@@ -226,6 +233,10 @@ fn width_of(line: &Line) -> u16 {
 fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
     // `q` is a character in the search box, so the quit key differs there.
     let keys = match app.screen {
+        // A shelf is one row, so up and down move between the two of them.
+        Screen::Home => {
+            "h/l move · j/k shelf · Enter play · / search · space pause · ⇧←/⇧→ seek · +/- vol · q quit"
+        }
         Screen::Playing => {
             "j/k episode · Enter play · Esc back · space pause · ⇧←/⇧→ seek · n/p track · +/- vol · m mute · q quit"
         }

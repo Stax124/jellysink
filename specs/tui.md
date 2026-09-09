@@ -141,15 +141,30 @@ grid whichever route reached it, and it is one function to test rather than a
 table that has to be kept in step with the browse stack.
 
 Two screens override it. **Search** is always a list: its rows are mixed kinds,
-so a grid would be tiles of three different shapes. **Home** is always a grid,
-showing one list at a time with Tab swapping Continue Watching and Next Up in
-place — two stacked grids would leave each a single row of tiles, and a
-side-by-side carousel would need a horizontal scroll offset of its own.
+so a grid would be tiles of three different shapes. **Home** is two grids,
+Continue Watching above Next Up, each owning half the body and each holding a
+single row of tiles — which is all half a body has the height for, and is why
+`grid::metrics` takes the rows it is being asked to fill rather than assuming
+`TARGET_ROWS`.
+
+A shelf scrolls horizontally, so the same `offset` that scrolls a level by rows
+scrolls a shelf by screenfuls of one. Both shelves are drawn whether or not
+they have focus, which the border colour and the caption highlight carry, and
+`App::visible_covers` asks for the tiles in both — `grid_metrics` answers for
+the focused one only, so Home does not go through it.
+
+The list beside a rail is split by share rather than by a fixed width
+(`rail::width`): 38% of the body, floored at 38 columns so the cover and the
+synopsis still fit and capped at 72 so a very wide terminal stops eliding list
+rows to grow a preview that is already large.
 
 Because a grid has a second axis, `h`/`j`/`k`/`l` and all four arrows move the
 cursor while one is focused, and `Esc` is the only way back. Up and down move by
 a whole row, so `App` needs the column count outside a draw — which is why it
-stores the terminal size each iteration and both sides call `grid::metrics`.
+stores the terminal size each iteration and both sides call `grid::metrics`. On
+Home there is no row to move down to, so up and down move between the shelves
+instead (`App::move_vertically`), each keeping the cursor it was left on; `Tab`
+still toggles.
 
 Left and right mean *only* that. `keys.rs` stays a pure mapping — it emits
 `Intent::Left`/`Right` and `App::apply` drops them unless `grid_metrics()` says
@@ -178,7 +193,12 @@ honest:
   rows only shrinks the one row that does fit, so a small terminal keeps the
   tiles it has.
 
-The last one is why the budget is an `Option`. The cover is then `cover::fit`
+The last one is why the budget is an `Option` — and why a shelf, asked for one
+row, never takes it: a tile taller than its area is skipped by `render`, so an
+uncapped shelf would draw nothing rather than something small. A shelf drops
+the width floor for the same reason it keeps the cap. Height is what binds it,
+so its cover is already as large as it can be and a tile widened to
+`minimum_tile_width` would hold the same cover while fitting fewer of them. The cover is then `cover::fit`
 against both the tile's width and that budget, because evening the tiles out
 across the area hands each one a few columns more than it asked for and a
 poster obeying its aspect would grow out of the height with them.
