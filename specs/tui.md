@@ -162,6 +162,27 @@ each cover *is* the progress bar and the caption only says when something is
 finished. Selection is carried by the caption's highlight, which leaves the
 rule free to mean one thing.
 
+Tiles are sized by the **height**, not by a fixed width. `grid::metrics`
+divides the body into `TARGET_ROWS` rows and takes the cover width from that,
+so a big monitor spends its extra height on bigger covers and captions that
+elide less, rather than on a fifth row of thumbnails. Three bounds keep that
+honest:
+
+- never narrower than `minimum_tile_width` — 18 cells for a 2:3 poster, 26 for
+  a 16:9 still, below which the artwork stops being worth drawing;
+- never so wide that a row holds fewer than `MIN_COLUMNS`, which is what stops
+  a still (nearly three times the width of a poster at the same height) from
+  taking a third of a wide screen on its own;
+- and **no budget at all** when the area is too short to reach `TARGET_ROWS`
+  even at the minimum width. Capping a cover that was never going to fit two
+  rows only shrinks the one row that does fit, so a small terminal keeps the
+  tiles it has.
+
+The last one is why the budget is an `Option`. The cover is then `cover::fit`
+against both the tile's width and that budget, because evening the tiles out
+across the area hands each one a few columns more than it asked for and a
+poster obeying its aspect would grow out of the height with them.
+
 ## Where the artwork comes from
 
 `ratatui-image` draws the covers, with `Picker::from_query_stdio()` deciding

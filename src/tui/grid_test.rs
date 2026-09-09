@@ -59,3 +59,37 @@ fn scrolling_moves_by_the_least_that_brings_the_cursor_back_on_screen() {
         "moving up lands on the row itself"
     );
 }
+
+#[test]
+fn a_tall_area_spends_its_height_on_bigger_tiles_rather_than_more_rows() {
+    let short = metrics(Rect::new(0, 0, 158, 20), 2.0 / 3.0, FONT_SIZE);
+    let tall = metrics(Rect::new(0, 0, 158, 54), 2.0 / 3.0, FONT_SIZE);
+
+    assert_eq!(tall.rows, usize::from(TARGET_ROWS), "{tall:?}");
+    assert!(
+        tall.cover.width > short.cover.width,
+        "{tall:?} vs {short:?}"
+    );
+    assert!(tall.columns < short.columns, "{tall:?} vs {short:?}");
+}
+
+#[test]
+fn a_short_area_keeps_its_tiles_rather_than_shrinking_them_for_a_second_row() {
+    // Two rows are out of reach at eighteen rows high, and capping the cover
+    // to chase them would only make the one row that does fit smaller.
+    let aspect = 2.0 / 3.0;
+    let grid = metrics(Rect::new(0, 0, 88, 18), aspect, FONT_SIZE);
+
+    assert_eq!(grid.rows, 1, "{grid:?}");
+    assert_eq!(
+        grid.cover.height,
+        cover::rows_for(grid.cover.width, aspect, FONT_SIZE),
+        "{grid:?} is capped below its own aspect"
+    );
+}
+
+#[test]
+fn a_wide_area_keeps_a_row_of_stills_rather_than_a_couple_of_huge_ones() {
+    let grid = metrics(Rect::new(0, 0, 238, 54), 16.0 / 9.0, FONT_SIZE);
+    assert!(grid.columns >= usize::from(MIN_COLUMNS), "{grid:?}");
+}

@@ -21,10 +21,41 @@ const TRACK: &str = "▀";
 /// Under every cover: the shelf rule, the name, and the year/runtime line.
 const LABEL_HEIGHT: u16 = 3;
 
-/// What a tile would like to be before the columns are evened out across the
-/// area. A 2:3 poster stays legible narrow; a 16:9 still does not.
-fn preferred_tile_width(aspect: f32) -> u16 {
+/// Rows of tiles a grid aims to fill the height with. Height is what a big
+/// monitor has most of, so spending it on bigger covers and longer captions
+/// reads better than stacking five rows of thumbnails.
+const TARGET_ROWS: u16 = 2;
+/// The floor under that: a tile is never sized so generously that a row holds
+/// fewer than this, which is what stops a 16:9 still from taking a third of a
+/// wide screen on its own.
+const MIN_COLUMNS: u16 = 4;
+
+/// The narrowest a tile may be, whatever the height says. A 2:3 poster stays
+/// legible narrow; a 16:9 still does not.
+fn minimum_tile_width(aspect: f32) -> u16 {
     if aspect > 1.0 { 26 } else { 18 }
+}
+
+/// The tallest a cover may be if [`TARGET_ROWS`] of them are to fit, or `None`
+/// when the area is too short for that many at the minimum tile width. Capping
+/// a cover that was never going to reach two rows would only shrink it, so a
+/// short terminal keeps the tiles it has.
+fn cover_height_budget(area: Rect, aspect: f32, font_size: FontSize) -> Option<u16> {
+    let budget = (area.height / TARGET_ROWS).saturating_sub(LABEL_HEIGHT);
+    let floor = cover::rows_for(minimum_tile_width(aspect) - 2, aspect, font_size);
+    (budget >= floor).then_some(budget)
+}
+
+/// What a tile would like to be before the columns are evened out across the
+/// area: whatever the height budget affords, bounded by both [`MIN_COLUMNS`]
+/// and [`minimum_tile_width`].
+fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize) -> u16 {
+    let minimum = minimum_tile_width(aspect);
+    let Some(budget) = cover_height_budget(area, aspect, font_size) else {
+        return minimum;
+    };
+    let widest = (area.width.saturating_sub(GAP * (MIN_COLUMNS - 1)) / MIN_COLUMNS).max(minimum);
+    (cover::columns_for(budget, aspect, font_size) + 2).clamp(minimum, widest)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,17 +78,27 @@ impl Metrics {
 
 /// Tile geometry for the grid's *inner* area — see [`inner`].
 pub(super) fn metrics(area: Rect, aspect: f32, font_size: FontSize) -> Metrics {
-    let preferred = preferred_tile_width(aspect);
+    let preferred = preferred_tile_width(area, aspect, font_size);
     let columns = (area.width.saturating_add(GAP) / preferred.saturating_add(GAP)).max(1);
     let tile_width = ((area.width.saturating_sub(GAP * (columns - 1))) / columns).max(1);
+    // Evening the tiles out across the width can hand a tile more columns than
+    // it asked for, and a poster obeying its aspect would grow out of the
+    // height budget with them — so the cover is fitted to both.
     let cover_width = tile_width.saturating_sub(2).max(1);
-    let cover_height = cover::rows_for(cover_width, aspect, font_size);
-    let tile_height = cover_height + LABEL_HEIGHT;
+    let max_rows = cover_height_budget(area, aspect, font_size)
+        .unwrap_or_else(|| cover::rows_for(cover_width, aspect, font_size));
+    let cover = cover::fit(
+        Rect::new(0, 0, cover_width, max_rows),
+        aspect,
+        font_size,
+        max_rows,
+    );
+    let tile_height = cover.height + LABEL_HEIGHT;
     Metrics {
         columns: usize::from(columns),
         rows: usize::from((area.height / tile_height).max(1)),
         tile: Size::new(tile_width, tile_height),
-        cover: Size::new(cover_width, cover_height),
+        cover: cover.as_size(),
     }
 }
 
@@ -133,8 +174,11 @@ fn render_tile(
     selected: bool,
     covers: &Covers,
 ) {
+    // A cover can come out narrower than the tile it sits in, because the
+    // height budget bounds it before the width does. Centring it centres the
+    // caption with it, since both are drawn against this rect.
     let cover = Rect {
-        x: tile.x + 1,
+        x: tile.x + 1 + (tile.width.saturating_sub(2 + metrics.cover.width)) / 2,
         y: tile.y,
         width: metrics.cover.width,
         height: metrics.cover.height,

@@ -124,6 +124,12 @@ pub(super) fn rows_for(width: u16, aspect: f32, font_size: FontSize) -> u16 {
     ((pixels / f32::from(font_size.height)).ceil() as u16).max(1)
 }
 
+/// The inverse of [`rows_for`]: how wide a cover `rows` tall comes out.
+pub(super) fn columns_for(rows: u16, aspect: f32, font_size: FontSize) -> u16 {
+    let pixels = f32::from(rows) * f32::from(font_size.height) * aspect;
+    ((pixels / f32::from(font_size.width)).floor() as u16).max(1)
+}
+
 /// The largest box of `aspect` (width ÷ height) that fits inside both `area`
 /// and `max_rows`, centred horizontally.
 pub(super) fn fit(area: Rect, aspect: f32, font_size: FontSize, max_rows: u16) -> Rect {
@@ -132,8 +138,7 @@ pub(super) fn fit(area: Rect, aspect: f32, font_size: FontSize, max_rows: u16) -
     let (width, height) = if rows_at_full_width <= max_rows {
         (area.width, rows_at_full_width)
     } else {
-        let cell = (f32::from(font_size.width), f32::from(font_size.height));
-        let width = (f32::from(max_rows) * cell.1 * aspect / cell.0).floor() as u16;
+        let width = columns_for(max_rows, aspect, font_size);
         (width.clamp(1, area.width.max(1)), max_rows)
     };
     Rect {
