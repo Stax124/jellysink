@@ -7,8 +7,10 @@ use color_eyre::eyre::{Result, WrapErr};
 use serde_json::Value;
 
 /// Requested on every listing, so a row can be rendered without a second
-/// round trip. `UserData` is not here: the server returns it unasked.
-const ITEM_FIELDS: &str = "Overview,ProductionYear";
+/// round trip. `UserData` is not here: the server returns it unasked — but it
+/// leaves `PlayedPercentage` null unless `RecursiveItemCount` was asked for,
+/// and that percentage is the only progress a folder has.
+const ITEM_FIELDS: &str = "Overview,ProductionYear,RecursiveItemCount";
 
 /// Jellyfin pages `/Shows/{id}/Episodes` without this; 500 covers a long
 /// running series in one request.
@@ -103,9 +105,11 @@ impl Api {
         self.get_json(&path).await
     }
 
+    /// `Fields` for the same reason [`ITEM_FIELDS`] carries it: a season's
+    /// `PlayedPercentage` is null without it.
     pub async fn seasons(&self, series_id: &str) -> Result<Value> {
         let path = format!(
-            "/Shows/{series_id}/Seasons?userId={}",
+            "/Shows/{series_id}/Seasons?userId={}&Fields=RecursiveItemCount",
             encode_query_value(&self.user_id)
         );
         self.get_json(&path).await
