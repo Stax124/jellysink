@@ -1,11 +1,11 @@
-mod app;
+mod cli;
+mod daemon;
 mod jellyfin;
 mod media;
 mod mpv;
 mod report;
 mod runtime;
 
-use app::cli;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use jellysink_core::UsageError;

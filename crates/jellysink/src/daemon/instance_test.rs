@@ -1,5 +1,5 @@
 use super::listen_stop;
-use crate::app::signal::Signal;
+use crate::daemon::signal::Signal;
 use jellysink_core::config::Paths;
 use jellysink_core::instance::request_status;
 use jellysink_core::status::PlayerStatus;

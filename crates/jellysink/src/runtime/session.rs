@@ -2,7 +2,7 @@
 
 use super::state::Runtime;
 use super::task::AbortOnDrop;
-use crate::app::signal::Signal;
+use crate::daemon::signal::Signal;
 use crate::jellyfin;
 use crate::mpv::MpvEvent;
 use crate::report::Report;

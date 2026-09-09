@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixListener;
 
-use crate::app::signal::Signal;
+use crate::daemon::signal::Signal;
 
 pub(crate) async fn listen_stop(
     paths: &Paths,

@@ -6,7 +6,7 @@
 //! path already uses. Fail-open like the tray: no session bus is a warning,
 //! not a fatal error.
 
-use crate::app::signal::Signal;
+use crate::daemon::signal::Signal;
 use jellysink_core::cast::CastEvent;
 use jellysink_core::status::PlayerStatus;
 use std::collections::HashMap;
