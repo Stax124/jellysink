@@ -17,7 +17,7 @@ const GAP: u16 = 1;
 /// The per-tile progress track. An eighth block (`▔`) is a hairline at any
 /// font size; an upper half block is four times the height and still sits
 /// against the cover above it rather than floating in its own row.
-const TRACK: &str = "▀";
+const TRACK: &str = "🮂";
 /// Under every cover: the shelf rule, the name, and the year/runtime line.
 const LABEL_HEIGHT: u16 = 3;
 
