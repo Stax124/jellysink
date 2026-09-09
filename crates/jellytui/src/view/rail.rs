@@ -88,6 +88,12 @@ fn lines(item: &Item) -> Vec<Line<'static>> {
         )),
         Line::from(Span::styled(meta(item), Style::default().fg(super::DIM))),
     ];
+    if !item.genres.is_empty() {
+        lines.push(Line::from(Span::styled(
+            item.genres.join(" · "),
+            Style::default().fg(super::DIM),
+        )));
+    }
     if let Some(rating) = item.community_rating {
         lines.push(Line::from(Span::styled(
             format!("★ {rating:.1}"),
@@ -104,23 +110,40 @@ fn lines(item: &Item) -> Vec<Line<'static>> {
     lines
 }
 
-/// The one-line `series · year · runtime · certificate` under the title,
-/// skipping whatever the server did not send.
+/// The one line under the title, skipping whatever the server did not send.
+/// A folder counts its children where a playable item gives its runtime: a
+/// series' `RunTimeTicks` is the nominal length of one episode, so printing it
+/// beside a season list claims the whole show is over in twenty-four minutes.
 pub(crate) fn meta(item: &Item) -> String {
-    let runtime = item
-        .run_time_ticks
-        .filter(|ticks| *ticks > 0)
-        .map(|ticks| format!("{} min", (ticks_to_seconds(ticks) / 60.0).round() as i64));
-    [
-        item.series_name.clone(),
-        item.production_year.map(|year| year.to_string()),
-        runtime,
-        item.official_rating.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ")
+    let year = item.production_year.map(|year| year.to_string());
+    let left = item.unplayed_count().map(|count| format!("{count} left"));
+    let episodes = item
+        .recursive_item_count
+        .map(|count| counted(count, "episode"));
+    let parts = match item.kind() {
+        "Series" => vec![
+            year,
+            item.child_count.map(|count| counted(count, "season")),
+            episodes,
+            left,
+            item.official_rating.clone(),
+        ],
+        "Season" => vec![item.series_name.clone(), year, episodes, left],
+        _ => vec![
+            item.series_name.clone(),
+            year,
+            item.run_time_ticks
+                .filter(|ticks| *ticks > 0)
+                .map(|ticks| format!("{} min", (ticks_to_seconds(ticks) / 60.0).round() as i64)),
+            item.official_rating.clone(),
+        ],
+    };
+    parts.into_iter().flatten().collect::<Vec<_>>().join(" · ")
+}
+
+fn counted(count: i64, noun: &str) -> String {
+    let plural = if count == 1 { "" } else { "s" };
+    format!("{count} {noun}{plural}")
 }
 
 #[cfg(test)]

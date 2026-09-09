@@ -10,7 +10,7 @@ use serde_json::Value;
 /// round trip. `UserData` is not here: the server returns it unasked — but it
 /// leaves `PlayedPercentage` null unless `RecursiveItemCount` was asked for,
 /// and that percentage is the only progress a folder has.
-const ITEM_FIELDS: &str = "Overview,ProductionYear,RecursiveItemCount";
+const ITEM_FIELDS: &str = "Overview,ProductionYear,RecursiveItemCount,ChildCount,Genres";
 
 /// Jellyfin pages `/Shows/{id}/Episodes` without this; 500 covers a long
 /// running series in one request.

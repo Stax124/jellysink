@@ -181,12 +181,25 @@ than showing a zero, so nothing needs a tick to repeat what the full rule
 already says. Selection is carried by the caption's highlight, which leaves the
 rule free to mean one thing.
 
+`rail::meta` — the line under the title in the rail and on the Playing screen —
+splits on `kind()` for the same reason. A playable item gives its runtime; a
+series or a season counts its children instead (`2018 · 5 seasons · 103
+episodes · 46 left · TV-14`), because a series' own `RunTimeTicks` is the
+nominal length of one episode and reads as a claim about the whole show. The
+year is `ProductionYear`, which on a long-running series is the year of its
+first season — `Status` and `EndDate` describe season one too and are worse:
+Jellyfin reports Slime as `Ended` while its fourth season is dated 2026, so
+neither is shown. Genres get their own line when the response carried any,
+which is why the episode listings, which do not ask for them, show none.
+
 That rule is why `ITEM_FIELDS` asks for `RecursiveItemCount` and `seasons()`
 passes it too. A series or a season has a `PlaybackPositionTicks` of 0, so its
 progress can only come from `UserData.PlayedPercentage` — and the server
 leaves that null unless the count was requested. Without it every folder drew
 an empty rule while its `RunTimeTicks` reported the nominal length of one
-episode.
+episode. `ChildCount` and `Genres` ride along on the same listing: together
+they cost about 10 KB on a hundred rows, which is the price of the rail
+knowing how many seasons a show has.
 
 Tiles are sized by the **height**, not by a fixed width. `grid::metrics`
 divides the body into `TARGET_ROWS` rows and takes the cover width from that,

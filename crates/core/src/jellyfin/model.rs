@@ -21,6 +21,11 @@ pub struct Item {
     pub parent_index_number: Option<i64>,
     pub production_year: Option<i64>,
     pub run_time_ticks: Option<i64>,
+    /// Seasons, for a series. Episodes, for a season.
+    pub child_count: Option<i64>,
+    /// Episodes all the way down, so a series counts them across its seasons.
+    pub recursive_item_count: Option<i64>,
+    pub genres: Vec<String>,
     pub is_folder: bool,
     pub user_data: Option<UserData>,
     pub overview: Option<String>,
