@@ -23,7 +23,7 @@ it points at the wrong track, and for a release that splits one language into
 Everything the rest of the code speaks — `PlayRequest`, the `PlayingState`
 reports, `CastEvent::SetAudio` / `SetSubtitle` — is a Jellyfin stream index.
 mpv only ever sees a track id. The four maps in `StreamMaps`
-(`src/media/streams.rs`) are the whole translation layer:
+(`crates/jellysink/src/media/streams.rs`) are the whole translation layer:
 
 | Field                              | Direction                                        |
 | ----------------------------------- | ------------------------------------------------ |
@@ -83,10 +83,10 @@ server default.
 Stream indexes are per-file. The next episode can order its streams
 differently, or come from a different provider, so "index 3" is not the same
 track twice. A choice is therefore stored as an *identity* — `TrackId`
-(`src/media/track.rs`) — and re-matched against whatever the next item offers.
+(`crates/jellysink/src/media/track.rs`) — and re-matched against whatever the next item offers.
 
 `TrackId` is one struct used for both kinds; `SubtitleId` and `AudioId`
-(`src/media/streams.rs`) are aliases of it, and only which `Runtime` field a
+(`crates/jellysink/src/media/streams.rs`) are aliases of it, and only which `Runtime` field a
 value ends up in keeps the two memories apart. `is_forced` and `is_external`
 are subtitle notions and are always `false` for audio, so their weights add the
 same constant to every audio candidate and cannot change a ranking.
@@ -145,7 +145,7 @@ an item with no streams of that kind at all.
 
 ### Precedence
 
-`resolve_track_index` (`src/media/track.rs`), highest first:
+`resolve_track_index` (`crates/jellysink/src/media/track.rs`), highest first:
 
 | Rank | Source                       | Why                                                                            |
 | ---- | ----------------------------- | ------------------------------------------------------------------------------|
@@ -166,7 +166,7 @@ track into "no audio".
 
 ### The one place it happens
 
-`prepare_item` (`src/runtime/queue.rs`) is the only producer of a
+`prepare_item` (`crates/jellysink/src/runtime/queue/mod.rs`) is the only producer of a
 `PreparedPlay`, so it is also the only place the memory is applied
 (`with_remembered_tracks`). Both `start_current` and `adopt_playlist_pos` come
 through it — which is what lets a remembered track reach a playlist jump and
@@ -197,7 +197,7 @@ mpv's own — its config's default track, or the last `sub-add`ed one.
 A Jellyfin client is not the only way to change tracks. `j` and `#` in the mpv
 window are, and in practice they are the usual way. mpv reports both as a
 property change on `sid` / `aid`, registered by `observe_subtitle_track` and
-`observe_audio_track` (`src/mpv/mod.rs`).
+`observe_audio_track` (`crates/jellysink/src/mpv/command.rs`).
 
 ### Why the event carries no value
 
@@ -212,7 +212,7 @@ last settled on, which turns every stale event into a no-op.
 ### One `TrackState` per kind, not two copies of the code
 
 Audio and subtitles used to be handled by separate functions per kind; they are
-now one `TrackKind`-parameterised path. `TrackState` (`src/runtime/state.rs`)
+now one `TrackKind`-parameterised path. `TrackState` (`crates/jellysink/src/runtime/state.rs`)
 holds both halves of the per-kind memory:
 
 ```rust
@@ -223,7 +223,7 @@ struct TrackState {
 ```
 
 `Runtime` holds one `TrackState` for `audio` and one for `subtitle`;
-`track_state(kind)` / `track_state_mut(kind)` (`src/runtime/playback.rs`) are
+`track_state(kind)` / `track_state_mut(kind)` (`crates/jellysink/src/runtime/playback/tracks.rs`) are
 the only places that match on `kind` to pick between them. Everything else —
 `apply_track`, `adopt_mpv_track`, `remember_track`, `settle_track` — takes a
 `TrackKind` and runs the same code for either.
@@ -234,7 +234,7 @@ the only places that match on `kind` to pick between them. Everything else —
 mpv back). A property change reporting anything else is the user reaching for
 the track menu.
 
-`SelectedTrack` (`src/mpv/mod.rs`) is a tri-state, because mpv's answer is not just
+`SelectedTrack` (`crates/jellysink/src/mpv/event.rs`) is a tri-state, because mpv's answer is not just
 a number:
 
 | mpv answers      | `SelectedTrack` | Meaning                                  |
@@ -246,7 +246,7 @@ a number:
 Collapsing `Off` and `Unresolved` into "no track" would read a file that is
 still loading as the user switching subtitles off.
 
-### `adopt_mpv_track` (`src/runtime/playback.rs`)
+### `adopt_mpv_track` (`crates/jellysink/src/runtime/playback/tracks.rs`)
 
 1. Return early while `transitioning` or `stopping`, or with no current item —
    a file that is still loading reports the selection of neither the old file
@@ -269,7 +269,7 @@ above the embedded numbering and the two cannot collide.
 
 ## Lifetime of the memory
 
-`Runtime` (`src/runtime/state.rs`) is built once in `runtime::run` and reused
+`Runtime` (`crates/jellysink/src/runtime/state.rs`) is built once in `runtime::run` and reused
 across every WebSocket reconnect for the life of the daemon (see
 `specs/session.md`), so `TrackState.remembered` needs no separate home of its
 own — it survives a reconnect simply because it lives on the same `Runtime`
@@ -321,7 +321,7 @@ Encoded in the code and its comments rather than re-derived at each call site:
 
 ## Tests
 
-Matching and memory (`src/media/track_test.rs`):
+Matching and memory (`crates/jellysink/src/media/track_test.rs`):
 
 - `the_right_language_outranks_the_right_track_name_in_the_wrong_language`
 - `the_display_title_matches_when_the_provider_supplies_no_track_title`
@@ -335,7 +335,7 @@ Matching and memory (`src/media/track_test.rs`):
 - `off_is_a_decision_even_when_the_item_has_no_such_streams_at_all`
 - `the_lowest_index_wins_between_two_indistinguishable_tracks`
 
-The index maps (`src/media/streams_test.rs`) — the two counter gates above are
+The index maps (`crates/jellysink/src/media/streams_test.rs`) — the two counter gates above are
 what these pin:
 
 - `an_external_audio_stream_does_not_steal_the_next_embedded_track_id`
@@ -349,15 +349,15 @@ what these pin:
 - `an_audio_identity_carries_the_raw_track_title_not_only_the_display_title`,
   `a_subtitle_identity_carries_the_raw_track_title_not_only_the_display_title`
 
-Resolution precedence, once per side (`src/media/subtitle_test.rs`,
-`src/media/audio_test.rs`) — `the_servers_signs_and_songs_default_loses_to_the_remembered_dialogue_track`,
+Resolution precedence, once per side (`crates/jellysink/src/media/subtitle_test.rs`,
+`crates/jellysink/src/media/audio_test.rs`) — `the_servers_signs_and_songs_default_loses_to_the_remembered_dialogue_track`,
 `the_servers_default_dub_loses_to_the_remembered_original_track`,
 `an_explicit_index_from_the_remote_beats_the_remembered_track`,
 `off_is_remembered_and_forces_minus_one_over_a_server_default`,
 `a_language_the_next_episode_does_not_have_falls_back_to_the_server_default`,
 `a_commentary_track_is_not_confused_with_the_feature_audio`.
 
-The mpv side (`src/mpv/mod_test.rs`): `a_track_property_tells_off_apart_from_not_yet_decided`,
+The mpv side (`crates/jellysink/src/mpv/event_test.rs`): `a_track_property_tells_off_apart_from_not_yet_decided`,
 `only_the_observed_track_properties_become_events`,
 `observe_property_sends_an_id_and_the_property_name`,
 `max_subtitle_track_id_from_track_list_picks_the_highest_sub_id`.

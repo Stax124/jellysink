@@ -15,8 +15,8 @@ in sync is most of the complexity.
 
 | Structure        | Lives in                    | Meaning                                                                     |
 | ---------------- | --------------------------- | --------------------------------------------------------------------------- |
-| `Queue`          | `src/runtime/window.rs`     | The authoritative ordered list of item ids, plus `index` (the current one). |
-| `PlaylistWindow` | `src/runtime/window.rs`     | Owns the `Queue` **and** how much of it mpv holds. All the arithmetic below. |
+| `Queue`          | `crates/jellysink/src/runtime/window.rs`     | The authoritative ordered list of item ids, plus `index` (the current one). |
+| `PlaylistWindow` | `crates/jellysink/src/runtime/window.rs`     | Owns the `Queue` **and** how much of it mpv holds. All the arithmetic below. |
 | mpv's playlist   | the mpv process             | What the user actually sees in the playlist selector.                       |
 | `titles`         | `Runtime`                   | Item id → display title, filled from the series listing.                    |
 | `prepared`       | `Runtime`                   | Cache of item id → `PreparedPlay` for items that have actually started.     |
@@ -70,7 +70,7 @@ after it* — casting episode 6 of 20 sends 6..20 (15 items).
 
 `CastEvent::PlayNow` → `queue.replace(item_ids, start_index)`.
 
-### 2. `start_current` (`src/runtime/playback.rs`)
+### 2. `start_current` (`crates/jellysink/src/runtime/playback/mod.rs`)
 
 Resets the window (`PlaylistWindow::reset_to_current`), clears the `prepared`
 and `titles` caches, then:
@@ -94,7 +94,7 @@ Fetches the **whole series** in one request and splits it at the current item:
 GET /Shows/{seriesId}/Episodes?userId=…&Limit=500
 ```
 
-`split_episode_ids` (`src/runtime/queue.rs`) returns `(previous, remaining)`.
+`split_episode_ids` (`crates/jellysink/src/runtime/queue/expand.rs`) returns `(previous, remaining)`.
 
 **Why the whole series and not a cursor.** `StartItemId` is implemented as
 `SkipWhile(i => i.Id != X)` — a forward-only cursor. It can never return
@@ -114,13 +114,13 @@ Sharing one gate meant the prepend never ran in the common case — casting
 episode 6 produced only 6..20. The gates also differ on `autoplay`: it governs
 continuing *forward*, not what the playlist selector can reach.
 
-**Idempotency.** `ids_missing_from` (`src/runtime/queue.rs`) filters out ids already in the queue, so
+**Idempotency.** `ids_missing_from` (`crates/jellysink/src/runtime/queue/expand.rs`) filters out ids already in the queue, so
 advancing e6 → e7 (which leaves e1..e6 already queued ahead of e7) adds
 nothing on re-expansion.
 
 **Titles.** The listing is fetched for any episode, even when both queue
 gates skip (Jellyfin already sent 6..20, prepend off, …).
-`media::episode_titles` (`src/media/title.rs`) walks `Items` and stores `display_title` for every
+`media::episode_titles` (`crates/jellysink/src/media/title.rs`) walks `Items` and stores `display_title` for every
 id. That is what the selector shows.
 
 ### 4. Preparing an item (`fetch_prepared`)
@@ -233,7 +233,7 @@ is what emits `end-file` so the runtime can adopt the new item. `always`
 pauses on the last frame of every file without unloading it, so `end-file`
 never fires and autoplay stalls.
 
-### `playlist_eof` (`src/runtime/window.rs`)
+### `playlist_eof` (`crates/jellysink/src/runtime/window.rs`)
 
 Decides what to do at end-of-file. `expected_pos` is `queue.index - origin`.
 
@@ -264,7 +264,7 @@ instead of dead-ending at the queue start.
 
 ## Reporting back to Jellyfin
 
-`NowPlayingQueue` (`src/report.rs`) sends the **entire** `queue.items` with
+`NowPlayingQueue` (`crates/jellysink/src/report.rs`) sends the **entire** `queue.items` with
 `PlaylistItemId: playlistItem{i}`. With prepending enabled this reports 1..20
 rather than 6..20, so Jellyfin's now-playing view shows the full series. This
 is a deliberate, visible behaviour change.
@@ -306,7 +306,7 @@ Checked live against mpv 0.41.0 and the Jellyfin server source, not inferred:
 ## Tests
 
 The window arithmetic is the risky part and is covered in
-`src/runtime/window_test.rs`, **against `PlaylistWindow` itself**. The tests
+`crates/jellysink/src/runtime/window_test.rs`, **against `PlaylistWindow` itself**. The tests
 used to run against a `Window` struct in the test module that reimplemented
 the arithmetic, so they could pass while the real code drifted:
 

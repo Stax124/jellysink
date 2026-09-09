@@ -9,7 +9,7 @@ per-second state comes from a Unix socket rather than the obvious HTTP call.
 
 The daemon already registers as a controllable Jellyfin session
 (`Api::post_capabilities` → `POST /Sessions/Capabilities/Full`, at the top of
-every `run_session`), and `src/cast.rs` already parses the whole remote-control
+every `run_session`), and `crates/core/src/cast.rs` already parses the whole remote-control
 vocabulary. So the frontend does not need any of the playback machinery — it
 sends the same commands the web app sends, and the server relays them over the
 WebSocket the daemon is already holding:
