@@ -89,7 +89,7 @@ async fn a_command_before_the_session_lookup_lands_says_so_rather_than_blaming_t
     app.on_player(Some(playing_status()));
     app.apply(Intent::PlayPause);
     assert!(
-        app.message.contains("still looking up"),
+        app.message.contains("looking up the session"),
         "got {:?}",
         app.message
     );
@@ -181,7 +181,7 @@ fn enter_on_an_empty_list_does_not_panic() {
 }
 
 #[tokio::test]
-async fn a_message_is_retired_by_the_next_keypress_so_the_key_hints_return() {
+async fn a_message_is_retired_by_the_next_keypress() {
     let mut app = app();
     app.apply(Intent::PlayPause);
     assert!(
@@ -191,6 +191,22 @@ async fn a_message_is_retired_by_the_next_keypress_so_the_key_hints_return() {
     app.apply(Intent::Down);
     assert!(
         app.message.is_empty(),
-        "it must not sit there hiding the hints"
+        "it must not sit in the header after the user has moved on"
     );
+}
+
+#[test]
+fn arrows_in_a_list_do_not_double_as_back_and_open() {
+    // Esc and Enter are the only way in and out; a list has no second axis for
+    // left and right to move along.
+    let mut app = app();
+    app.stack.push(Level::loading("Movies", Source::Libraries));
+    app.stack.last_mut().unwrap().fill(vec![episode("e1")]);
+    app.screen = Screen::Browse;
+
+    app.apply(Intent::Left);
+    assert_eq!(app.stack.len(), 1, "left must not pop the browse stack");
+    app.apply(Intent::Right);
+    assert_eq!(app.stack.len(), 1, "right must not open the row either");
+    assert_eq!(app.selected(), 0);
 }

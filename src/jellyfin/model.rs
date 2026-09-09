@@ -27,9 +27,6 @@ pub(crate) struct Item {
     pub(crate) community_rating: Option<f64>,
     pub(crate) official_rating: Option<String>,
     pub(crate) image_tags: ImageTags,
-    /// Set on episodes, which is what makes a series poster reachable without
-    /// a second lookup.
-    pub(crate) series_primary_image_tag: Option<String>,
 }
 
 /// Jellyfin sends these unasked, keyed by image kind. Only the one the

@@ -1,8 +1,8 @@
-//! The Playing screen: what the daemon is on, at the size the artwork
-//! deserves, with the rest of the season under it.
+//! The Playing screen: the episode's own still, what it is, and the rest of
+//! the season under it.
 
 use super::app::App;
-use super::cover;
+use super::cover::{self, CoverKey};
 use super::rail;
 use super::ui::{self, ACCENT, DIM};
 use crate::jellyfin::model::Item;
@@ -14,40 +14,50 @@ use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Pa
 use ratatui_image::FontSize;
 use ratatui_image::Image;
 
-const POSTER_WIDTH: u16 = 34;
-/// The poster column is always poster-shaped: an episode borrows its series'
-/// cover rather than showing its own 16:9 still.
-const POSTER_ASPECT: f32 = 2.0 / 3.0;
-/// Title, meta, rating, a blank, and four lines of synopsis.
-const DETAIL_HEIGHT: u16 = 8;
+const STILL_WIDTH: u16 = 34;
+/// Narrower than this and the synopsis beside the still has no measure left,
+/// so the screen becomes text only.
+const MIN_BANNER_WIDTH: u16 = 70;
+/// The gap between the still and the text beside it.
+const GUTTER: u16 = 2;
 
 fn block() -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
+        .title(" Playing ")
 }
 
-fn columns(body: Rect) -> (Rect, Rect) {
-    let [poster, detail] =
-        Layout::horizontal([Constraint::Length(POSTER_WIDTH), Constraint::Fill(1)]).areas(body);
-    (poster, detail)
+/// The still's box, or `None` when the body is too narrow to carry one. Half
+/// the height is the cap that leaves the season its own half; a 16:9 still is
+/// bounded by the width first anyway.
+fn still_rect(body: Rect, item: &Item, font_size: FontSize) -> Option<Rect> {
+    if body.width < MIN_BANNER_WIDTH {
+        return None;
+    }
+    let inner = block().inner(body);
+    let column = Rect {
+        width: STILL_WIDTH.min(inner.width),
+        ..inner
+    };
+    Some(cover::fit(
+        column,
+        cover::primary_aspect(item),
+        font_size,
+        (inner.height / 2).max(1),
+    ))
 }
 
-/// The poster's box, which is also the size it is encoded for — the fetch and
-/// the renderer both come through here.
-pub(super) fn poster_rect(body: Rect, font_size: FontSize) -> Rect {
-    let inner = block().inner(columns(body).0);
-    cover::fit(inner, POSTER_ASPECT, font_size, inner.height)
-}
-
-pub(super) fn poster_size(body: Rect, font_size: FontSize) -> Size {
-    poster_rect(body, font_size).as_size()
+/// The size the still is encoded for. The fetch and the renderer both come
+/// through [`still_rect`], so what is downloaded is the size it is drawn at.
+pub(super) fn still_size(body: Rect, item: &Item, font_size: FontSize) -> Option<Size> {
+    Some(still_rect(body, item, font_size)?.as_size())
 }
 
 pub(super) fn render(app: &App, frame: &mut Frame, area: Rect) {
-    let (poster_area, detail_area) = columns(area);
-    frame.render_widget(block(), poster_area);
-    frame.render_widget(block().title(" Playing "), detail_area);
+    let block = block();
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
     let Some(now_playing) = app.now_playing() else {
         frame.render_widget(
@@ -59,26 +69,38 @@ pub(super) fn render(app: &App, frame: &mut Frame, area: Rect) {
                 },
                 Style::default().fg(DIM),
             )),
-            block().inner(detail_area),
+            inner,
         );
         return;
     };
 
     let item = app.current_item();
-    if let Some(protocol) = item
-        .and_then(|item| cover::poster_key(item, poster_size(area, app.covers.font_size())))
-        .as_ref()
-        .and_then(|key| app.covers.protocol(key))
-    {
-        frame.render_widget(
-            Image::new(protocol),
-            poster_rect(area, app.covers.font_size()),
-        );
-    }
+    let font_size = app.covers.font_size();
+    let still = item.and_then(|item| still_rect(area, item, font_size));
+    let [banner, episodes] = Layout::vertical([
+        Constraint::Length(still.map_or(1, |rect| rect.height)),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
 
-    let inner = block().inner(detail_area);
-    let [detail, episodes] =
-        Layout::vertical([Constraint::Length(DETAIL_HEIGHT), Constraint::Fill(1)]).areas(inner);
+    let detail = match still {
+        Some(rect) => {
+            if let Some(protocol) = item
+                .and_then(|item| CoverKey::primary(item, rect.as_size()))
+                .as_ref()
+                .and_then(|key| app.covers.protocol(key))
+            {
+                frame.render_widget(Image::new(protocol), rect);
+            }
+            let [_, detail] = Layout::horizontal([
+                Constraint::Length(STILL_WIDTH + GUTTER),
+                Constraint::Fill(1),
+            ])
+            .areas(banner);
+            detail
+        }
+        None => banner,
+    };
     frame.render_widget(
         Paragraph::new(detail_lines(item, &now_playing.title)).wrap(Wrap { trim: true }),
         detail,
@@ -123,6 +145,12 @@ fn render_episodes(frame: &mut Frame, area: Rect, app: &App, playing_id: &str) {
     if level.items.is_empty() {
         return;
     }
+    // A rule rather than a box: the season belongs to the banner above it.
+    let rule = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(DIM));
+    let list_area = rule.inner(area);
+    frame.render_widget(rule, area);
     let rows: Vec<ListItem> = level
         .items
         .iter()
@@ -145,7 +173,7 @@ fn render_episodes(frame: &mut Frame, area: Rect, app: &App, playing_id: &str) {
                 .fg(ACCENT)
                 .add_modifier(Modifier::REVERSED | Modifier::BOLD),
         ),
-        area,
+        list_area,
         &mut state,
     );
 }

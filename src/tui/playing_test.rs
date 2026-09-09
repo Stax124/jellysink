@@ -73,15 +73,26 @@ fn episode(id: &str, number: i64, name: &str) -> Item {
 }
 
 #[test]
-fn the_poster_stays_inside_its_own_column() {
+fn the_still_leaves_the_season_room_under_it() {
     let body = Rect::new(0, 0, 100, 26);
-    let poster = poster_rect(body, FONT_SIZE);
-    let column = block().inner(columns(body).0);
+    let inner = block().inner(body);
+    let still = still_rect(body, &episode("e5", 5, "Optics"), FONT_SIZE).unwrap();
+    assert!(still.width > 1 && still.height > 1, "{still:?}");
+    assert!(still.width <= STILL_WIDTH, "{still:?}");
     assert!(
-        poster.width <= column.width && poster.height <= column.height,
-        "{poster:?} escapes {column:?}"
+        still.height * 2 <= inner.height,
+        "{still:?} takes more than half of {inner:?}"
     );
-    assert!(poster.width > 1 && poster.height > 1, "{poster:?}");
+}
+
+#[test]
+fn a_narrow_terminal_drops_the_still_rather_than_squeezing_the_synopsis() {
+    let item = episode("e5", 5, "Optics");
+    assert_eq!(
+        still_size(Rect::new(0, 0, MIN_BANNER_WIDTH - 1, 26), &item, FONT_SIZE),
+        None
+    );
+    assert!(still_size(Rect::new(0, 0, MIN_BANNER_WIDTH, 26), &item, FONT_SIZE).is_some());
 }
 
 #[test]

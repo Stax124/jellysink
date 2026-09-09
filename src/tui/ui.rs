@@ -18,6 +18,8 @@ use ratatui::{DefaultTerminal, Frame};
 
 pub(super) const ACCENT: Color = Color::Cyan;
 pub(super) const DIM: Color = Color::DarkGray;
+/// Complaints only. In `ACCENT` they would read as another piece of chrome.
+pub(super) const WARN: Color = Color::Yellow;
 
 /// Enters the alternate screen and makes sure a panic cannot leave the user
 /// in it — color_eyre's hook prints over a raw-mode terminal otherwise.
@@ -88,14 +90,26 @@ fn segment(label: &str, active: bool) -> Span<'static> {
 }
 
 fn render_header(app: &App, frame: &mut Frame, area: Rect) {
-    let line = Line::from(vec![
+    let tabs = Line::from(vec![
         Span::styled(" jellytui ", Style::default().add_modifier(Modifier::BOLD)),
         segment("1 Home", app.screen == Screen::Home),
         segment("2 Libraries", app.screen == Screen::Browse),
         segment("3 Playing", app.screen == Screen::Playing),
         segment("/ Search", app.screen == Screen::Search),
     ]);
-    frame.render_widget(Paragraph::new(line), area);
+    // The message rides here rather than on the hint row: the bindings are
+    // worth more than any complaint, and a complaint has to fit what is left.
+    let room = area.width.saturating_sub(width_of(&tabs));
+    let wanted = u16::try_from(app.message.chars().count()).unwrap_or(u16::MAX);
+    let message = Line::from(Span::styled(
+        to_width(&app.message, room.min(wanted)),
+        Style::default().fg(WARN),
+    ));
+    let [tabs_area, message_area] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(width_of(&message))])
+            .areas(area);
+    frame.render_widget(Paragraph::new(tabs), tabs_area);
+    frame.render_widget(Paragraph::new(message), message_area);
 }
 
 /// One grid at a time, with Tab swapping which list feeds it — two stacked
@@ -341,15 +355,24 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
             "j/k move · Enter play · Esc back · / search · space pause · ⇧←/⇧→ seek · n/p track · +/- vol · m mute · f full · q quit"
         }
     };
-    let text = if app.message.is_empty() {
-        keys
-    } else {
-        &app.message
-    };
     frame.render_widget(
-        Paragraph::new(Span::styled(text, Style::default().fg(DIM))),
+        Paragraph::new(Span::styled(keys, Style::default().fg(DIM))),
         area,
     );
+}
+
+/// Exactly `width` columns of text: elided if it overruns, padded if it falls
+/// short, for the places that draw into a box of a fixed width.
+pub(super) fn to_width(text: &str, width: u16) -> String {
+    let width = usize::from(width);
+    let mut fitted: String = text.chars().take(width).collect();
+    if fitted.chars().count() < text.chars().count() {
+        fitted.pop();
+        fitted.push('…');
+    }
+    let short = width.saturating_sub(Line::from(fitted.as_str()).width());
+    fitted.push_str(&" ".repeat(short));
+    fitted
 }
 
 #[cfg(test)]

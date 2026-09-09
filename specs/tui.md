@@ -112,6 +112,17 @@ app, not only from jellytui.
 Seeking is computed from the last polled position, so it can be up to a second
 stale — invisible at ten-second steps.
 
+## Where a complaint goes
+
+The bottom row is the key bindings and nothing else. `App::message` — a failed
+request, a command sent before the session id landed — is drawn right-aligned in
+the **header**, elided by `ui::to_width` to whatever the tabs leave, and retired
+by the next keypress. It lived on the hint row until it was noticed that a
+message there hides every binding the user might need to recover with, and that
+the commonest one, `Playing …`, only repeated what the footer says a poll later
+in the daemon's own wording. So the frontend no longer announces a play at all:
+the footer reporting it is the honest confirmation that the command arrived.
+
 ## Two view modes
 
 A level is drawn as a grid of covers or as a list with a detail rail, and the
@@ -128,11 +139,15 @@ place — two stacked grids would leave each a single row of tiles, and a
 side-by-side carousel would need a horizontal scroll offset of its own.
 
 Because a grid has a second axis, `h`/`j`/`k`/`l` and all four arrows move the
-cursor while one is focused, and `Esc`/`Backspace` is the only way back.
-`keys.rs` stays a pure mapping: it emits `Intent::Left` and `Intent::Right`,
-and `App::apply` resolves them against the focused view. Up and down move by a
-whole row, so `App` needs the column count outside a draw — which is why it
+cursor while one is focused, and `Esc` is the only way back. Up and down move by
+a whole row, so `App` needs the column count outside a draw — which is why it
 stores the terminal size each iteration and both sides call `grid::metrics`.
+
+Left and right mean *only* that. `keys.rs` stays a pure mapping — it emits
+`Intent::Left`/`Right` and `App::apply` drops them unless `grid_metrics()` says
+a grid is focused — so in a list the arrows do nothing and `Esc` and `Enter` are
+the single way back and in. They used to double as back and open there, which
+made `←` a second, unadvertised way to leave a level.
 
 A grid tile has no room for the `64%` a list row shows, so the shelf rule under
 each cover *is* the progress bar and the caption only says when something is
@@ -165,10 +180,13 @@ Three things are worth stating because getting them wrong is invisible:
   not a stale one. `CoverKey` is `(item id, image tag, size)`, and because
   `visible_covers` is recomputed every loop iteration, a resize asks for the
   new size without anything having to notice the resize.
-- **An episode's `Primary` is a 16:9 still, not a poster.** The rail and the
-  Home grid want that still; the Playing screen's poster column wants the
-  *series* poster, reachable from `SeriesPrimaryImageTag` without a second
-  lookup. `CoverKey::primary` and `cover::poster_key` are the two sides of it.
+- **An episode's `Primary` is a 16:9 still, not a poster.** Every cover the
+  frontend draws is `CoverKey::primary`, so a row's shape follows the item:
+  `cover::primary_aspect` answers 16:9 for an episode and 2:3 for everything
+  else, and `cover::fit` sizes the box around that. The Playing screen used to
+  ask for the *series* poster instead (`SeriesPrimaryImageTag`); it now shows
+  the episode's own still, which is what the rail beside a season already
+  showed.
 
 Decode and encode run in `spawn_blocking` — jellytui is a `current_thread`
 runtime and both are real CPU work on the thread that draws. The finished
@@ -181,9 +199,13 @@ an artless row is re-requested on every poll.
 
 ## The Playing screen
 
-`3` opens a screen for whatever the daemon is on: the series poster at full
-column height, the synopsis, and the rest of the season with the playing
-episode accented and `Enter` free to jump to another one.
+`3` opens a screen for whatever the daemon is on: a banner carrying the
+episode's own still with the title, meta, rating and synopsis beside it, then a
+rule, then the rest of the season with the playing episode accented and `Enter`
+free to jump to another one. Below `MIN_BANNER_WIDTH` the still is dropped and
+the text takes the whole width, the way the rail vanishes rather than crowding
+the list — `playing::still_rect` returns `None`, and `App::visible_covers` asks
+for nothing.
 
 The status socket carries a title and a position, not a synopsis or a season,
 so this screen makes two requests of its own — `/Items/{id}`, then that

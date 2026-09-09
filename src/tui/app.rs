@@ -233,22 +233,8 @@ impl App {
             Intent::Down => self.move_by(self.row_step()),
             Intent::PageUp => self.move_by(-self.page_step()),
             Intent::PageDown => self.move_by(self.page_step()),
-            // A grid has a second axis to move along; a list does not, and
-            // keeps these as back and open.
-            Intent::Left => {
-                if self.grid_metrics().is_some() {
-                    self.move_by(-1);
-                } else {
-                    self.back();
-                }
-            }
-            Intent::Right => {
-                if self.grid_metrics().is_some() {
-                    self.move_by(1);
-                } else {
-                    self.enter();
-                }
-            }
+            Intent::Left => self.move_in_grid(-1),
+            Intent::Right => self.move_in_grid(1),
             Intent::Top => self.move_to_end(End::Top),
             Intent::Bottom => self.move_to_end(End::Bottom),
             Intent::NextPane => self.toggle_home_pane(),
@@ -382,6 +368,14 @@ impl App {
         self.rescroll();
     }
 
+    /// Only a grid has a second axis. A list ignores these rather than making
+    /// the arrows a second, unadvertised way to do Esc and Enter.
+    fn move_in_grid(&mut self, delta: isize) {
+        if self.grid_metrics().is_some() {
+            self.move_by(delta);
+        }
+    }
+
     fn move_to_end(&mut self, end: End) {
         match self.screen {
             Screen::Home => {
@@ -421,7 +415,7 @@ impl App {
             Screen::Home => true,
             Screen::Browse => nav::is_grid(self.rows()),
             // Search rows are mixed kinds, and the Playing screen draws one
-            // poster of its own.
+            // still of its own.
             Screen::Search | Screen::Playing => false,
         };
         let first = self.rows().first()?;
@@ -601,10 +595,11 @@ impl App {
     /// having to notice the resize itself.
     fn visible_covers(&self) -> Vec<CoverKey> {
         if self.screen == Screen::Playing {
-            let size = playing::poster_size(self.body_area(), self.covers.font_size());
+            let (body, font_size) = (self.body_area(), self.covers.font_size());
             return self
                 .current_item()
-                .and_then(|item| cover::poster_key(item, size))
+                .and_then(|item| playing::still_size(body, item, font_size).zip(Some(item)))
+                .and_then(|(size, item)| CoverKey::primary(item, size))
                 .into_iter()
                 .collect();
         }
@@ -791,13 +786,14 @@ impl App {
         if let Some(session_id) = &self.session_id {
             return Some(session_id.clone());
         }
+        // These share the header with the tabs, so they have to stay short
+        // enough to survive `ui::to_width` on an 80-column terminal.
         self.message = if self.player.is_some() {
             // Connected, but the one-off lookup has not landed yet.
             self.load_session_id();
-            "still looking up the jellysink session — try again".to_string()
+            "looking up the session — try again".to_string()
         } else {
-            "jellysink is not connected — start it with `systemctl --user start jellysink`"
-                .to_string()
+            "jellysink not connected".to_string()
         };
         None
     }
@@ -808,7 +804,6 @@ impl App {
         };
         let (api, tx) = (self.api.clone(), self.tx.clone());
         let (item_id, start_ticks) = (item.id.clone(), item.resume_ticks());
-        self.message = format!("Playing {}", item.label());
         tokio::spawn(async move {
             if let Err(e) = api.play_now(&session_id, &item_id, start_ticks).await {
                 let _ = tx.send(Msg::Error(format!("{e:#}")));

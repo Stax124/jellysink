@@ -59,12 +59,3 @@ fn scrolling_moves_by_the_least_that_brings_the_cursor_back_on_screen() {
         "moving up lands on the row itself"
     );
 }
-
-#[test]
-fn a_caption_is_exactly_as_wide_as_the_cover_it_sits_under() {
-    // The selected tile's caption is a filled highlight bar, so a short name
-    // is padded and a long one elided rather than wrapped onto the next tile.
-    assert_eq!(to_width("Dune", 10), "Dune      ");
-    assert_eq!(to_width("Blade Runner 2049", 10), "Blade Run…");
-    assert_eq!(Line::from(to_width("Blade Runner 2049", 10)).width(), 10);
-}

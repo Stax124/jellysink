@@ -144,24 +144,6 @@ pub(super) fn fit(area: Rect, aspect: f32, font_size: FontSize, max_rows: u16) -
     }
 }
 
-/// A poster-shaped image for `item`: for an episode that is the series'
-/// poster, because its own primary image is a 16:9 still and would letterbox
-/// to a stripe in a poster column.
-pub(super) fn poster_key(item: &Item, size: Size) -> Option<CoverKey> {
-    match item
-        .series_id
-        .clone()
-        .zip(item.series_primary_image_tag.clone())
-    {
-        Some((item_id, image_tag)) => Some(CoverKey {
-            item_id,
-            image_tag,
-            size,
-        }),
-        None => CoverKey::primary(item, size),
-    }
-}
-
 /// Queries the terminal for its graphics protocol and cell size. Has to run
 /// before the alternate screen is taken: the query goes out on stdout and the
 /// answer comes back on stdin. Halfblocks are the fallback rather than a

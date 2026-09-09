@@ -116,6 +116,33 @@ fn the_search_screen_advertises_the_quit_key_that_actually_works_there() {
 }
 
 #[test]
+fn a_complaint_goes_to_the_header_and_leaves_the_bindings_alone() {
+    let mut app = app();
+    app.message = "jellysink not connected".into();
+    let screen = drawn(&app);
+    assert!(screen.contains("jellysink not connected"), "{screen}");
+    assert!(screen.contains("Enter play"), "{screen}");
+}
+
+#[test]
+fn a_message_too_long_for_the_header_is_elided_rather_than_pushing_the_tabs_off() {
+    let mut app = app();
+    app.message = "x".repeat(200);
+    let screen = drawn(&app);
+    assert!(screen.contains(" / Search "), "{screen}");
+    assert!(screen.contains('…'), "{screen}");
+}
+
+#[test]
+fn a_caption_is_exactly_as_wide_as_the_box_it_is_drawn_into() {
+    // A grid caption is a filled highlight bar and the header's message slot
+    // is a fixed width, so a short string is padded and a long one elided.
+    assert_eq!(to_width("Dune", 10), "Dune      ");
+    assert_eq!(to_width("Blade Runner 2049", 10), "Blade Run…");
+    assert_eq!(Line::from(to_width("Blade Runner 2049", 10)).width(), 10);
+}
+
+#[test]
 fn the_rail_describes_the_row_under_the_cursor() {
     let mut app = app();
     let mut level = Level::loading("Season 2", Source::Libraries);

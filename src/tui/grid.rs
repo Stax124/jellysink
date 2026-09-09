@@ -3,7 +3,7 @@
 
 use super::cover::{self, CoverKey, Covers};
 use super::rail;
-use super::ui::{ACCENT, DIM};
+use super::ui::{ACCENT, DIM, to_width};
 use crate::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
@@ -209,20 +209,6 @@ fn watched_rule(item: &Item, width: u16) -> Line<'static> {
 fn caption_meta(item: &Item) -> String {
     let tick = if item.played() { "✓ " } else { "" };
     format!("{tick}{}", rail::meta(item))
-}
-
-/// Exactly `width` columns of text: elided if it overruns, padded if it falls
-/// short, because the selected tile's caption is a filled highlight bar.
-fn to_width(text: &str, width: u16) -> String {
-    let width = usize::from(width);
-    let mut fitted: String = text.chars().take(width).collect();
-    if fitted.chars().count() < text.chars().count() {
-        fitted.pop();
-        fitted.push('…');
-    }
-    let short = width.saturating_sub(Line::from(fitted.as_str()).width());
-    fitted.push_str(&" ".repeat(short));
-    fitted
 }
 
 #[cfg(test)]

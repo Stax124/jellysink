@@ -16,8 +16,8 @@ pub(super) enum Intent {
     PageDown,
     Top,
     Bottom,
-    /// Resolved by the focused view: movement in a grid, back and open in a
-    /// list. Keeping that out of here leaves this a pure mapping.
+    /// Movement along a grid's second axis, and nothing at all in a list.
+    /// Which of the two a screen is stays `App`'s business, not this mapping's.
     Left,
     Right,
     NextPane,
