@@ -11,6 +11,7 @@ set -e
 
 REPO="Stax124/jellysink"
 BINARY="jellysink"
+TUI_BINARY="jellytui"
 INSTALL_DIR="${HOME}/.local/bin"
 UNIT_DIR="${HOME}/.config/systemd/user"
 INSTALL_UNIT="1"
@@ -113,27 +114,40 @@ verify_checksum() {
 
 # --- download and install ---
 
+# install_binary <name> [optional]
+# "optional" downgrades a missing asset to a warning: releases before 0.9.0
+# carry no jellytui, and the daemon alone is still a working install.
 install_binary() {
-    ASSET="${BINARY}-${PLATFORM}"
+    name="$1"
+    optional="${2:-}"
+    ASSET="${name}-${PLATFORM}"
     URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
 
-    workdir="$(mktemp -d)"
-    trap 'rm -rf "$workdir"' EXIT
+    if [ -z "${workdir:-}" ]; then
+        workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
+    fi
 
-    info "Downloading ${BINARY} ${TAG} for ${PLATFORM}..."
-    curl -fsSL "$URL" -o "${workdir}/${ASSET}" \
-        || err "Download failed. Asset '${ASSET}' may not exist for your platform.
+    info "Downloading ${name} ${TAG} for ${PLATFORM}..."
+    if ! curl -fsSL "$URL" -o "${workdir}/${ASSET}"; then
+        if [ -n "$optional" ]; then
+            warn "No ${name} in release ${TAG} — skipping"
+            return 0
+        fi
+        err "Download failed. Asset '${ASSET}' may not exist for your platform.
   Check: https://github.com/${REPO}/releases/tag/${TAG}"
+    fi
 
     verify_checksum
 
     chmod +x "${workdir}/${ASSET}"
 
     mkdir -p "$INSTALL_DIR"
-    info "Installing to ${INSTALL_DIR}..."
-    mv "${workdir}/${ASSET}" "${INSTALL_DIR}/${BINARY}"
-    info "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
+    mv "${workdir}/${ASSET}" "${INSTALL_DIR}/${name}"
+    info "Installed ${name} to ${INSTALL_DIR}/${name}"
+}
 
+warn_if_not_on_path() {
     case ":$PATH:" in
         *":${INSTALL_DIR}:"*) ;;
         *)
@@ -171,7 +185,9 @@ main() {
     info "jellysink installer"
     detect_platform
     fetch_latest_tag
-    install_binary
+    install_binary "$BINARY"
+    install_binary "$TUI_BINARY" optional
+    warn_if_not_on_path
     install_unit
 
     if ! command -v mpv >/dev/null 2>&1; then
@@ -187,6 +203,10 @@ main() {
     else
         echo "    jellysink run"
     fi
+    echo ""
+    echo "  Then browse and play from the terminal with:"
+    echo ""
+    echo "    jellytui"
     echo ""
 }
 

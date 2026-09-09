@@ -1,0 +1,214 @@
+use super::player::seek_target;
+use super::*;
+use crate::test_support::app;
+use jellysink_core::status::NowPlaying;
+use jellysink_core::status::PlayerStatus;
+use serde::Deserialize;
+
+fn playing_status() -> PlayerStatus {
+    PlayerStatus {
+        server: "s".into(),
+        username: "u".into(),
+        now_playing: Some(NowPlaying {
+            item_id: "e1".into(),
+            title: "Paradise, Once More".into(),
+            position_ticks: 600_000_000,
+            is_paused: false,
+            is_muted: false,
+            volume: 50,
+            has_next: true,
+            has_previous: false,
+            queue_index: 2,
+            queue_len: 103,
+            art_url: String::new(),
+        }),
+    }
+}
+
+fn episode(id: &str) -> Item {
+    Item::deserialize(serde_json::json!({
+        "Id": id, "Name": id, "Type": "Episode", "IndexNumber": 1, "ParentIndexNumber": 1
+    }))
+    .unwrap()
+}
+
+#[test]
+fn leaving_the_search_screen_clears_the_query_so_it_does_not_reappear() {
+    let mut app = app();
+    app.apply(Intent::StartSearch);
+    app.apply(Intent::Type('b'));
+    app.apply(Intent::Type('e'));
+    assert_eq!(app.query, "be");
+    app.apply(Intent::Back);
+    assert_eq!(app.screen, Screen::Home);
+    assert!(app.query.is_empty());
+}
+
+#[test]
+fn up_and_down_move_between_the_home_shelves_and_each_keeps_its_cursor() {
+    let mut app = app();
+    app.resume
+        .fill(vec![episode("a"), episode("b"), episode("c")]);
+    app.next_up.fill(vec![episode("z")]);
+    app.apply(Intent::Bottom);
+    assert_eq!(app.selected(), 2);
+
+    // A shelf is a single row, so down leaves it rather than moving along it.
+    app.apply(Intent::Down);
+    assert_eq!(app.home_pane, HomePane::NextUp);
+    assert_eq!(app.selected(), 0);
+
+    app.apply(Intent::Up);
+    assert_eq!(app.home_pane, HomePane::Resume);
+    assert_eq!(app.selected(), 2, "the shelf forgot where it was left");
+}
+
+#[test]
+fn a_shelf_that_arrives_shorter_than_the_cursor_pulls_it_back_into_range() {
+    let mut app = app();
+    app.resume
+        .fill(vec![episode("a"), episode("b"), episode("c")]);
+    app.apply(Intent::Bottom);
+    app.on_msg(Msg::Home(HomePane::Resume, vec![episode("a")]));
+    assert_eq!(app.selected(), 0);
+}
+
+#[tokio::test]
+async fn transport_keys_without_a_daemon_explain_themselves_instead_of_doing_nothing() {
+    let mut app = app();
+    assert!(app.player.is_none());
+    app.apply(Intent::PlayPause);
+    assert!(
+        app.message.contains("not connected"),
+        "got {:?}",
+        app.message
+    );
+}
+
+#[tokio::test]
+async fn a_command_before_the_session_lookup_lands_says_so_rather_than_blaming_the_daemon() {
+    let mut app = app();
+    app.on_player(Some(playing_status()));
+    app.apply(Intent::PlayPause);
+    assert!(
+        app.message.contains("looking up the session"),
+        "got {:?}",
+        app.message
+    );
+}
+
+#[tokio::test]
+async fn seeking_while_nothing_plays_is_a_no_op() {
+    let mut app = app();
+    app.on_player(Some(PlayerStatus::idle("s".into(), "u".into())));
+    app.apply(Intent::SeekBy(10));
+    assert!(app.message.is_empty());
+}
+
+#[tokio::test]
+async fn an_item_lookup_that_lands_after_playback_moved_on_is_dropped() {
+    // The reply describes the episode it was asked for, not the one playing
+    // now, and the Playing screen must not caption the wrong thing.
+    let mut app = app();
+    app.on_player(Some(playing_status()));
+
+    app.on_msg(Msg::PlayingItem {
+        item_id: "e0".to_string(),
+        item: Box::new(episode("e0")),
+    });
+    assert!(app.current_item().is_none());
+
+    app.on_msg(Msg::PlayingItem {
+        item_id: "e1".to_string(),
+        item: Box::new(episode("e1")),
+    });
+    assert_eq!(app.current_item().map(|item| item.id.as_str()), Some("e1"));
+}
+
+#[tokio::test]
+async fn a_new_item_drops_the_previous_items_duration() {
+    let mut app = app();
+    app.on_player(Some(playing_status()));
+    app.runtime_ticks = Some(("e1".to_string(), 14_220_809_999));
+    assert_eq!(app.total_ticks(), Some(14_220_809_999));
+
+    let mut next = playing_status();
+    if let Some(now_playing) = next.now_playing.as_mut() {
+        now_playing.item_id = "e2".into();
+    }
+    app.on_player(Some(next));
+    // A stale total would mislabel the new episode until its own arrives.
+    assert_eq!(app.total_ticks(), None);
+}
+
+#[test]
+fn a_seek_is_relative_to_the_last_polled_position() {
+    // The wire command is absolute, so this arithmetic is ours to get right.
+    assert_eq!(seek_target(600_000_000, 10), 700_000_000);
+    assert_eq!(seek_target(600_000_000, -10), 500_000_000);
+}
+
+#[test]
+fn seeking_back_past_the_start_lands_on_zero_not_a_negative_position() {
+    assert_eq!(seek_target(30_000_000, -10), 0);
+}
+
+#[test]
+fn a_search_result_that_arrives_after_a_newer_query_is_discarded() {
+    let mut app = app();
+    app.search_generation = 2;
+    app.on_msg(Msg::Search(1, vec![episode("stale")]));
+    assert!(
+        app.results.items.is_empty(),
+        "an older response overwrote a newer one"
+    );
+    app.on_msg(Msg::Search(2, vec![episode("fresh")]));
+    assert_eq!(app.results.items.len(), 1);
+}
+
+#[test]
+fn rows_for_a_level_the_user_already_left_are_dropped() {
+    let mut app = app();
+    app.apply(Intent::Home);
+    // Depth 3 does not exist; without the bounds check this indexes off the end.
+    app.on_msg(Msg::Level(3, vec![episode("ghost")]));
+    assert!(app.stack.is_empty());
+}
+
+#[test]
+fn enter_on_an_empty_list_does_not_panic() {
+    let mut app = app();
+    app.apply(Intent::Enter);
+    assert_eq!(app.screen, Screen::Home);
+}
+
+#[tokio::test]
+async fn a_message_is_retired_by_the_next_keypress() {
+    let mut app = app();
+    app.apply(Intent::PlayPause);
+    assert!(
+        !app.message.is_empty(),
+        "the complaint should be shown once"
+    );
+    app.apply(Intent::Down);
+    assert!(
+        app.message.is_empty(),
+        "it must not sit in the header after the user has moved on"
+    );
+}
+
+#[test]
+fn arrows_in_a_list_do_not_double_as_back_and_open() {
+    // Esc and Enter are the only way in and out; a list has no second axis for
+    // left and right to move along.
+    let mut app = app();
+    app.stack.push(Level::loading("Movies", Source::Libraries));
+    app.stack.last_mut().unwrap().fill(vec![episode("e1")]);
+    app.screen = Screen::Browse;
+
+    app.apply(Intent::Left);
+    assert_eq!(app.stack.len(), 1, "left must not pop the browse stack");
+    app.apply(Intent::Right);
+    assert_eq!(app.stack.len(), 1, "right must not open the row either");
+    assert_eq!(app.selected(), 0);
+}

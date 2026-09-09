@@ -14,12 +14,12 @@ rule rather than left to be rediscovered.
 
 | Layer                   | Lives in                 | Lifetime                                   |
 | ----------------------- | ------------------------ | ------------------------------------------ |
-| `cmd_run`               | `src/app/cli.rs`             | The process. Owns the lock, tray, signals. |
-| `runtime::run`          | `src/runtime/session.rs` | The process. Owns the reconnect loop, the mpv-event channel and the report sink. |
-| `run_session`           | `src/runtime/session.rs` | One WebSocket connection over the shared `Runtime`. |
-| `Runtime`               | `src/runtime/state.rs`   | The whole daemon session. Owns the queue, mpv and the track memories. |
+| `cmd_run`               | `crates/jellysink/src/cli/run.rs`             | The process. Owns the lock, tray, signals. |
+| `runtime::run`          | `crates/jellysink/src/runtime/session.rs` | The process. Owns the reconnect loop, the mpv-event channel and the report sink. |
+| `run_session`           | `crates/jellysink/src/runtime/session.rs` | One WebSocket connection over the shared `Runtime`. |
+| `Runtime`               | `crates/jellysink/src/runtime/state.rs`   | The whole daemon session. Owns the queue, mpv and the track memories. |
 
-(`src/runtime/mod.rs` is just `pub(crate) use session::run;` plus the other
+(`crates/jellysink/src/runtime/mod.rs` is just `pub(crate) use session::run;` plus the other
 module declarations — `run` and `run_session` live in `session.rs`.)
 
 **`Runtime` is built once, in `run`, before the reconnect loop starts, and the
@@ -55,7 +55,7 @@ written by MPRIS, read by `run_session`).
 Only the WebSocket reader is session-scoped. The report sink and the mpv
 channel are created once in `run`, before the reconnect loop, precisely so a
 reconnect does not have to re-plumb them. Every task spawned inside `runtime`
-is wrapped in an `AbortOnDrop` (`src/runtime/task.rs`) so dropping the handle
+is wrapped in an `AbortOnDrop` (`crates/jellysink/src/runtime/task.rs`) so dropping the handle
 aborts the task — there is no single collecting struct, each call site owns its
 own handle. Without it a reconnect spawned a fresh WebSocket reader and left
 the previous one running; against a half-open TCP connection that never
@@ -175,7 +175,7 @@ was just replaced advances the queue past the episode that is now playing.
 
 ## Signals
 
-`Signal` (`src/app/signal.rs`) is a latching `watch` channel, not
+`Signal` (`crates/jellysink/src/daemon/signal.rs`) is a latching `watch` channel, not
 `Notify::notify_waiters`. `notify_waiters` stores no permit — it only wakes
 futures already registered — and every receiver in this crate re-creates its
 future on each loop iteration, around loop bodies that routinely await mpv IPC
@@ -210,7 +210,7 @@ failure mode when left set.
 | `transitioning` | `start_current` (reuse), `spawn_and_load`, `advance_in_mpv`, `play_previous` | `on_file_loaded`, `stop_playback`, and every failed step that set it. |
 | `stopping`      | `stop_playback`                                                    | `start_current`, end of `stop_playback`. |
 
-`end_file_action` (`src/runtime/window.rs`):
+`end_file_action` (`crates/jellysink/src/runtime/window.rs`):
 
 | Condition                        | Action                                     |
 | ---------------------------------| --------------------------------------------|
@@ -222,10 +222,10 @@ failure mode when left set.
 **Every step that sets `transitioning` must clear it if it fails.** Nothing will
 emit `file-loaded` after a failed `playlist-next` or `playlist-prev`, so the
 flag would stay set and `end_file_action` would `Ignore` every later end-file:
-autoplay dead until the daemon restarts. `advance_in_mpv` (`src/runtime/queue.rs`)
-and `play_previous` (`src/runtime/state.rs`) both do this explicitly.
+autoplay dead until the daemon restarts. `advance_in_mpv` (`crates/jellysink/src/runtime/queue/mod.rs`)
+and `play_previous` (`crates/jellysink/src/runtime/state.rs`) both do this explicitly.
 
-`EndFileReason` is parsed once in `src/mpv/mod.rs` rather than carried up as a
+`EndFileReason` is parsed once in `crates/jellysink/src/mpv/event.rs` rather than carried up as a
 `String` and matched in three places, so `end_file_action` can match
 exhaustively and a typo cannot fall silently into the ignore arm.
 
@@ -240,11 +240,11 @@ index, re-preparing, reporting — is the playlist window's business and lives i
 
 ### Reading mpv is not optional
 
-`playlist_state` (`src/runtime/queue.rs`) returns an error rather than a
+`playlist_state` (`crates/jellysink/src/runtime/queue/mod.rs`) returns an error rather than a
 fabricated `(0, 0)`, and `play_next_or_stop` stops playback when it cannot
 read. `playlist_eof` decides autoplay from those two numbers, so guessing puts
 the wrong episode on screen; mpv failing to answer means it is gone or wedged.
-The same rule is why `as_i64_property` and friends (`src/mpv/mod.rs`) reject a
+The same rule is why `as_i64_property` and friends (`crates/jellysink/src/mpv/ipc.rs`) reject a
 wrong-typed answer instead of falling back to a plausible value —
 `playlist-pos` → 0 and `volume` → 100 used to make a transient IPC hiccup play
 the wrong episode.
@@ -302,27 +302,30 @@ forever and `jellysink update` then chose the stop path and failed with
 
 ## Tests
 
-Backoff (`src/runtime/session_test.rs`):
+Backoff (`crates/jellysink/src/runtime/session_test.rs`):
 
 - `a_quick_failure_keeps_the_grown_backoff`
 - `a_healthy_session_resets_the_backoff`
 - `an_expired_token_backs_off_to_the_maximum_however_long_the_session_ran`
 
-The latch (`src/app/signal_test.rs`) — these pin the `notify_waiters` bug directly:
+The latch (`crates/jellysink/src/daemon/signal_test.rs`) — these pin the `notify_waiters` bug directly:
 
 - `a_signal_fired_before_anyone_waits_is_not_lost`
 - `dropping_a_fired_future_does_not_consume_the_latch`
 - `take_clears_the_latch_so_the_next_edge_is_a_fresh_wait`
 - `clones_share_one_latch`
 
-Auth (`src/jellyfin/auth_test.rs`): `auth_expired_is_recognised_through_added_context`,
+Auth (`crates/core/src/jellyfin/auth_test.rs`): `auth_expired_is_recognised_through_added_context`,
 `an_unrelated_error_mentioning_401_is_not_an_auth_failure`.
 
-End-file gating (`src/runtime/window_test.rs`):
+End-file gating (`crates/jellysink/src/runtime/window_test.rs`):
 `end_file_is_ignored_while_replacing_the_current_file`,
 `end_file_eof_always_tries_the_next_item`, `end_file_quit_or_error_stops`,
 `playlist_jump_stop_is_not_a_session_stop`.
 
-IPC plumbing (`src/mpv/mod_test.rs`): `abandoned_requests_are_evicted`,
-`property_coercions_reject_a_missing_or_wrong_typed_answer`,
-`end_file_reasons_parse_to_their_variants`.
+IPC plumbing: `abandoned_requests_are_evicted`
+(`crates/jellysink/src/mpv/mod_test.rs`),
+`property_coercions_reject_a_missing_or_wrong_typed_answer`
+(`crates/jellysink/src/mpv/ipc_test.rs`),
+`end_file_reasons_parse_to_their_variants`
+(`crates/jellysink/src/mpv/event_test.rs`).
