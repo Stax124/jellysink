@@ -8,7 +8,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 ///
 /// `Targets` rather than `EnvFilter`: measured at +186 KB (+2.1%) of release
 /// binary, and all we give up is span-field filtering.
-pub fn parse_log_filter(spec: &str) -> Result<Targets> {
+pub(crate) fn parse_log_filter(spec: &str) -> Result<Targets> {
     spec.parse()
         .wrap_err_with(|| format!("invalid log filter {spec:?}"))
 }
@@ -16,7 +16,7 @@ pub fn parse_log_filter(spec: &str) -> Result<Targets> {
 /// Validates a `log_level` before it is written to config.toml. Stricter than
 /// [`parse_log_filter`], which reads a bare `"banana"` as a target name and
 /// then silently filters out everything jellysink logs.
-pub fn validate_log_level(spec: &str) -> Result<()> {
+pub(crate) fn validate_log_level(spec: &str) -> Result<()> {
     parse_log_filter(spec)?;
     let bare = spec.trim();
     if !bare.contains('=') && !bare.contains(',') {

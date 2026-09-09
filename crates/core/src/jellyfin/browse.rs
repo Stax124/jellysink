@@ -57,7 +57,7 @@ impl ItemQuery {
         self
     }
 
-    pub fn to_query(&self, user_id: &str) -> String {
+    pub(crate) fn to_query(&self, user_id: &str) -> String {
         let mut query = format!(
             "userId={}&Fields={ITEM_FIELDS}&Recursive={}",
             encode_query_value(user_id),

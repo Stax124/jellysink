@@ -59,7 +59,7 @@ impl Item {
         ) || (self.is_folder && !self.is_playable())
     }
 
-    pub fn is_playable(&self) -> bool {
+    pub(crate) fn is_playable(&self) -> bool {
         matches!(self.kind(), "Episode" | "Movie" | "Video")
     }
 

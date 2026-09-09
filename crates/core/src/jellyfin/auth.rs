@@ -9,7 +9,7 @@ use std::fmt;
 /// The server rejected our access token. Typed so the reconnect loop does not
 /// have to look for `"401"` in an error chain that also carries the URL.
 #[derive(Debug)]
-pub struct AuthExpired;
+pub(crate) struct AuthExpired;
 
 impl fmt::Display for AuthExpired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -25,7 +25,7 @@ pub fn is_auth_expired(err: &color_eyre::Report) -> bool {
     err.chain().any(|cause| cause.is::<AuthExpired>())
 }
 
-pub fn authorization_header(device: &str, device_id: &str, token: Option<&str>) -> String {
+pub(crate) fn authorization_header(device: &str, device_id: &str, token: Option<&str>) -> String {
     let device = sanitize_token_field(device);
     let mut header = format!(
         r#"MediaBrowser Client="{CLIENT_NAME}", Device="{device}", DeviceId="{device_id}", Version="{VERSION}""#
@@ -97,7 +97,7 @@ impl Api {
         })
     }
 
-    pub fn auth_header(&self) -> &str {
+    pub(crate) fn auth_header(&self) -> &str {
         &self.auth_header
     }
 
@@ -139,12 +139,12 @@ impl Api {
     }
 
     /// A POST whose parameters all live in the query string.
-    pub async fn post(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
+    pub(crate) async fn post(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
         let url = format!("{}{path}", self.server);
         self.send(self.http.post(&url), "POST", &url).await
     }
 
-    pub async fn get_json(&self, path: &str) -> color_eyre::Result<serde_json::Value> {
+    pub(crate) async fn get_json(&self, path: &str) -> color_eyre::Result<serde_json::Value> {
         let resp = self
             .get(path)
             .await?

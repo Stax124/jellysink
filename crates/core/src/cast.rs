@@ -43,7 +43,7 @@ pub enum CastEvent {
 }
 
 impl CastEvent {
-    pub fn from_ws(message_type: &str, data: &Value) -> Option<Self> {
+    pub(crate) fn from_ws(message_type: &str, data: &Value) -> Option<Self> {
         match message_type {
             "Play" => parse_play(data),
             "Playstate" => parse_playstate(data),

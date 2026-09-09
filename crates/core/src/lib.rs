@@ -14,7 +14,7 @@ pub mod ticks;
 pub use error::{UsageError, usage_err};
 
 pub const APP_NAME: &str = "jellysink";
-pub const CLIENT_NAME: &str = "jellysink";
+pub(crate) const CLIENT_NAME: &str = "jellysink";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Both binaries speak TLS through the same rustls build, which has no default
