@@ -1293,11 +1293,8 @@ dependencies = [
  "dialoguer",
  "futures-util",
  "ico",
- "image",
  "jellysink-core",
  "ksni",
- "ratatui",
- "ratatui-image",
  "reqwest",
  "rustix 1.1.4",
  "self_update",
@@ -1329,6 +1326,22 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jellytui"
+version = "0.8.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "image",
+ "jellysink-core",
+ "ratatui",
+ "ratatui-image",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

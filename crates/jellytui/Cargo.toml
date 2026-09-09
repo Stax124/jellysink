@@ -1,0 +1,24 @@
+[package]
+name = "jellytui"
+description = "Browse Jellyfin in the terminal and play in jellysink"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+jellysink-core.workspace = true
+
+clap.workspace = true
+color-eyre.workspace = true
+image.workspace = true
+ratatui.workspace = true
+ratatui-image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+tracing.workspace = true

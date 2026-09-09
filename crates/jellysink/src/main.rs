@@ -1,6 +1,13 @@
+mod app;
+mod jellyfin;
+mod media;
+mod mpv;
+mod report;
+mod runtime;
+
+use app::cli;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use jellysink::app::cli;
 use jellysink_core::UsageError;
 use jellysink_core::config::{Config, Paths};
 use jellysink_core::logging::init_tracing;

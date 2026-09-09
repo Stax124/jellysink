@@ -1,4 +1,4 @@
-pub mod cli;
+pub(crate) mod cli;
 pub(crate) mod instance;
 pub(crate) mod mpris;
 pub(crate) mod signal;

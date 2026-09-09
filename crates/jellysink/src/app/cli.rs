@@ -30,7 +30,7 @@ fn after_install(from_tray: bool, daemon_running: bool, updated: bool) -> AfterI
     }
 }
 
-pub async fn cmd_login(paths: &Paths) -> color_eyre::Result<()> {
+pub(crate) async fn cmd_login(paths: &Paths) -> color_eyre::Result<()> {
     paths.ensure()?;
     let theme = ColorfulTheme::default();
 
@@ -71,18 +71,18 @@ pub async fn cmd_login(paths: &Paths) -> color_eyre::Result<()> {
     Ok(())
 }
 
-pub fn cmd_logout(paths: &Paths) -> color_eyre::Result<()> {
+pub(crate) fn cmd_logout(paths: &Paths) -> color_eyre::Result<()> {
     Credentials::remove(paths)?;
     println!("Logged out.");
     Ok(())
 }
 
-pub fn cmd_config_path(paths: &Paths) -> color_eyre::Result<()> {
+pub(crate) fn cmd_config_path(paths: &Paths) -> color_eyre::Result<()> {
     println!("{}", paths.config_dir.display());
     Ok(())
 }
 
-pub fn cmd_config_get(paths: &Paths, key: Option<&str>) -> color_eyre::Result<()> {
+pub(crate) fn cmd_config_get(paths: &Paths, key: Option<&str>) -> color_eyre::Result<()> {
     let Some(key) = key else {
         let cfg = Config::load(paths)?;
         print!("{}", cfg.to_toml()?);
@@ -103,7 +103,7 @@ pub fn cmd_config_get(paths: &Paths, key: Option<&str>) -> color_eyre::Result<()
     Ok(())
 }
 
-pub fn cmd_config_set(paths: &Paths, key: &str, value: &str) -> color_eyre::Result<()> {
+pub(crate) fn cmd_config_set(paths: &Paths, key: &str, value: &str) -> color_eyre::Result<()> {
     let field = Field::parse(key)?;
     let mut cfg = Config::load(paths)?;
     if cfg.set(field, value)? {
@@ -114,11 +114,11 @@ pub fn cmd_config_set(paths: &Paths, key: &str, value: &str) -> color_eyre::Resu
     Ok(())
 }
 
-pub fn cmd_stop(paths: &Paths) -> color_eyre::Result<()> {
+pub(crate) fn cmd_stop(paths: &Paths) -> color_eyre::Result<()> {
     instance::request_stop(paths)
 }
 
-pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
+pub(crate) fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
     let status = instance::request_status(paths)?;
     if json {
         let mut status = status;
@@ -155,7 +155,7 @@ pub fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
     Ok(())
 }
 
-pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
+pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     tracing::info!("jellysink {VERSION}");
 
     let config = Config::load_or_create(&paths)?;
@@ -260,7 +260,7 @@ pub async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     Ok(())
 }
 
-pub async fn cmd_update(
+pub(crate) async fn cmd_update(
     paths: &Paths,
     check_only: bool,
     from_tray: bool,
