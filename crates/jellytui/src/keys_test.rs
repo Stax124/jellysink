@@ -86,3 +86,11 @@ fn an_unbound_key_is_ignored_rather_than_mapped_to_something_else() {
     assert_eq!(map(key(KeyCode::F(5), KeyModifiers::NONE), false), None);
     assert_eq!(map(press('z'), false), None);
 }
+
+#[test]
+fn the_log_pane_keys_are_still_text_in_the_search_box() {
+    assert_eq!(map(press('L'), false), Some(Intent::Logs));
+    assert_eq!(map(press('c'), false), Some(Intent::ClearLogs));
+    assert_eq!(map(press('L'), true), Some(Intent::Type('L')));
+    assert_eq!(map(press('c'), true), Some(Intent::Type('c')));
+}

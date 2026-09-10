@@ -86,6 +86,12 @@ impl Config {
         Ok(cfg)
     }
 
+    /// The log level to start tracing with, for the two binaries that must do
+    /// so before a config error has anywhere to be reported.
+    pub fn configured_log_level(paths: &Paths) -> String {
+        Self::load(paths).map_or_else(|_| Self::default().log_level, |cfg| cfg.log_level)
+    }
+
     /// For the daemon, which is a reasonable moment to materialise a config
     /// file the user can then edit by hand.
     pub fn load_or_create(paths: &Paths) -> color_eyre::Result<Self> {

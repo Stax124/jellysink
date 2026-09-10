@@ -6,18 +6,22 @@ use super::*;
 impl App {
     pub(super) fn load_home(&mut self) {
         let (api, limit) = (self.api.clone(), HOME_ROWS);
-        self.spawn(async move { api.resume(limit).await }, |items| {
+        self.spawn("resume", async move { api.resume(limit).await }, |items| {
             Msg::Home(HomePane::Resume, items)
         });
         let api = self.api.clone();
-        self.spawn(async move { api.next_up(limit).await }, |items| {
-            Msg::Home(HomePane::NextUp, items)
-        });
+        self.spawn(
+            "next_up",
+            async move { api.next_up(limit).await },
+            |items| Msg::Home(HomePane::NextUp, items),
+        );
     }
 
     pub(super) fn load_level(&self, depth: usize, source: Source) {
+        tracing::info!(depth, ?source, "opening level");
         let api = self.api.clone();
         self.spawn(
+            "level",
             async move {
                 match source {
                     Source::Libraries => api.user_views().await,
@@ -130,7 +134,9 @@ impl App {
         }
         self.results.loading = true;
         let (api, term) = (self.api.clone(), self.query.clone());
+        tracing::info!(term = %self.query, generation, "searching");
         self.spawn(
+            "search",
             async move {
                 api.items(
                     &ItemQuery::search(&term)
@@ -146,6 +152,7 @@ impl App {
     /// The Playing screen's own lookup: the status socket carries a title and
     /// a position, not a synopsis or a season.
     pub(super) fn load_playing(&mut self, item_id: String) {
+        tracing::info!(%item_id, "now playing changed");
         self.playing_item = None;
         self.playing_episodes = Level::loading("Episodes", Source::Libraries);
         let (api, tx) = (self.api.clone(), self.tx.clone());
@@ -172,6 +179,7 @@ impl App {
     ) {
         let api = self.api.clone();
         self.spawn(
+            "playing_episodes",
             async move {
                 api.episodes(&series_id, Some(&season_id), EPISODE_LIMIT)
                     .await

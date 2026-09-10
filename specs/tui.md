@@ -344,6 +344,37 @@ if playback has moved on, the same rule search generations and level depths
 follow. Until they land the daemon's `display_title` holds the screen, so it is
 never blank.
 
+## The log pane
+
+`L` opens it and `L` or Esc closes it again. It is not in the tab strip: the
+strip names it only while it is up, because it is a debugging screen rather
+than somewhere to browse.
+
+`logs::install` builds the subscriber in `main`, before the alternate screen is
+taken and while a bad filter can still be reported on the normal one. It is
+`Targets` + one `Layer`, and that layer writes `LogLine`s into a bounded
+`VecDeque` — no `fmt` layer, so nothing can reach stdout. The filter comes from
+`core`'s `log_filter`, so `log_level` and `RUST_LOG` mean here exactly what they
+mean for the daemon, and `jellysink_core=debug` turns on the Jellyfin HTTP
+layer's own events too. The daemon's logs are **not** here: it is another
+process, and `stop.sock` has no command that would carry them.
+
+Levels are split so the default `info` is already worth reading: `info` is what
+the user did that had an effect (a play, a command sent, a search, a level
+opened) plus every request's elapsed time and row count; `debug` adds a line per
+keypress; `trace` adds the once-a-second poll and the per-cover fetch/decode
+timings. The 1 Hz poll is deliberately not at `info` — at that rate it would
+push everything else out of a 2000-line buffer inside half an hour. What is
+logged at `info` is the *transition*, connected to not and back.
+
+Scrolling is anchored by sequence number, not by index. The ring evicts from the
+front, so an index into it slides under a paused reader; `Ring` therefore counts
+`first_seq` past everything it has dropped, and `log_anchor` holds the sequence
+number of the top visible line. This is the same rule search generations and
+level depths follow — the view outlives the buffer it points into. Reaching the
+bottom clears the anchor rather than pinning it there, because a view pinned at
+the tail would stop following the moment the next line arrived.
+
 ## Terminal ownership
 
 mpv is a separate process with its own window and all three stdio handles on
@@ -351,8 +382,9 @@ mpv is a separate process with its own window and all three stdio handles on
 
 Two rules follow from owning the alternate screen:
 
-- `jellytui` never calls `init_tracing`. It is a `fmt` subscriber on stdout and
-  would paint over the UI. With no subscriber the `tracing` macros are no-ops.
+- `jellytui` never calls `init_tracing`. It builds a `fmt` layer on stdout,
+  which is the alternate screen. It installs a subscriber of its own instead —
+  see [The log pane](#the-log-pane) — whose only sink is memory.
 - `view::enter` installs a panic hook that restores the terminal before
   delegating, so a panic (or a color_eyre report) does not leave the user in a
   raw-mode alternate screen.

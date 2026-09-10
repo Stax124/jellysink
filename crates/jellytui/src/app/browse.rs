@@ -27,6 +27,7 @@ impl App {
             Screen::Browse => self.stack.last().map_or(&[], |level| &level.items),
             Screen::Search => &self.results.items,
             Screen::Playing => &self.playing_episodes.items,
+            Screen::Logs => &[],
         }
     }
 
@@ -50,6 +51,7 @@ impl App {
             Screen::Browse => self.stack.last().map_or(0, |level| level.selected),
             Screen::Search => self.results.selected,
             Screen::Playing => self.playing_episodes.selected,
+            Screen::Logs => 0,
         }
     }
 
@@ -80,6 +82,7 @@ impl App {
             }
             Screen::Search => self.results.move_by(delta),
             Screen::Playing => self.playing_episodes.move_by(delta),
+            Screen::Logs => {}
         }
         self.rescroll();
     }
@@ -108,6 +111,7 @@ impl App {
             }
             Screen::Search => self.results.move_to_end(end),
             Screen::Playing => self.playing_episodes.move_to_end(end),
+            Screen::Logs => {}
         }
         self.rescroll();
     }
@@ -152,7 +156,7 @@ impl App {
                     )
                 })
             }
-            Screen::Search | Screen::Playing => None,
+            Screen::Search | Screen::Playing | Screen::Logs => None,
         }
     }
 
@@ -176,7 +180,7 @@ impl App {
         match self.screen {
             Screen::Home => self.shelf(self.home_pane).offset,
             Screen::Browse => self.stack.last().map_or(0, |level| level.offset),
-            Screen::Search | Screen::Playing => 0,
+            Screen::Search | Screen::Playing | Screen::Logs => 0,
         }
     }
 
@@ -193,7 +197,7 @@ impl App {
                     level.offset = offset;
                 }
             }
-            Screen::Search | Screen::Playing => {}
+            Screen::Search | Screen::Playing | Screen::Logs => {}
         }
     }
 
@@ -244,7 +248,7 @@ impl App {
                 }
             }
             Screen::Playing => self.screen = Screen::Home,
-            Screen::Home => {}
+            Screen::Home | Screen::Logs => {}
         }
     }
 
@@ -277,6 +281,7 @@ impl App {
                     self.load_playing(item_id);
                 }
             }
+            Screen::Logs => {}
         }
         self.poll_player();
     }
@@ -285,7 +290,7 @@ impl App {
     pub(super) fn rail_item(&self) -> Option<&Item> {
         match self.screen {
             Screen::Browse | Screen::Search => self.selected_item(),
-            Screen::Home | Screen::Playing => None,
+            Screen::Home | Screen::Playing | Screen::Logs => None,
         }
     }
 }

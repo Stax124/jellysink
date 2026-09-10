@@ -148,13 +148,13 @@ jellysink logout
 
 ## Configuration
 
-| Key                | Default   | Notes                                                                                                 |
-| ------------------ | --------- | ----------------------------------------------------------------------------------------------------- |
-| `mpv_path`         | `mpv`     | Binary used to spawn the player                                                                       |
-| `log_level`        | `info`    | `tracing` filter (`error`, `warn`, `info`, `debug`, `trace`); `RUST_LOG` overrides this if set        |
-| `autoplay`         | `true`    | Next episode in aired order; `false` stops after the current item                                     |
-| `prepend_previous` | `true`    | Also load the episodes that aired *before* the current one, so mpv's playlist selector can reach them |
-| `mpv_args`         | _(empty)_ | Extra argv on top of your mpv config, never instead of it                                             |
+| Key                | Default   | Notes                                                                                                                                    |
+| ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `mpv_path`         | `mpv`     | Binary used to spawn the player                                                                                                          |
+| `log_level`        | `info`    | `tracing` filter (`error`, `warn`, `info`, `debug`, `trace`); `RUST_LOG` overrides this if set. Also sets what jellytui's `L` pane shows |
+| `autoplay`         | `true`    | Next episode in aired order; `false` stops after the current item                                                                        |
+| `prepend_previous` | `true`    | Also load the episodes that aired *before* the current one, so mpv's playlist selector can reach them                                    |
+| `mpv_args`         | _(empty)_ | Extra argv on top of your mpv config, never instead of it                                                                                |
 
 `--config DIR` (global) uses a different configuration directory. The default is `~/.config/jellysink`.
 

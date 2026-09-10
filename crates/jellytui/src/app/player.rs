@@ -11,10 +11,16 @@ impl App {
     pub(super) fn poll_player(&self) {
         let (paths, tx) = (self.paths.clone(), self.tx.clone());
         tokio::spawn(async move {
+            let started = std::time::Instant::now();
             let status = tokio::task::spawn_blocking(move || instance::request_status(&paths))
                 .await
                 .ok()
                 .and_then(Result::ok);
+            tracing::trace!(
+                answered = status.is_some(),
+                elapsed_ms = started.elapsed().as_millis(),
+                "status poll"
+            );
             let _ = tx.send(Msg::Player(status.map(Box::new)));
         });
     }
@@ -24,7 +30,10 @@ impl App {
         let (api, tx) = (self.api.clone(), self.tx.clone());
         tokio::spawn(async move {
             let msg = match api.session_for_device().await {
-                Ok(Some(session)) => Msg::SessionId(session.id),
+                Ok(Some(session)) => {
+                    tracing::info!(session_id = %session.id, "found the daemon's session");
+                    Msg::SessionId(session.id)
+                }
                 Ok(None) => return,
                 Err(e) => Msg::Error(format!("{e:#}")),
             };
@@ -33,6 +42,11 @@ impl App {
     }
 
     pub(super) fn on_player(&mut self, player: Option<PlayerStatus>) {
+        // The transition, not the poll: at 1 Hz the poll itself would fill the
+        // buffer in half an hour.
+        if self.player_polled && self.player.is_some() != player.is_some() {
+            tracing::info!(connected = player.is_some(), "daemon");
+        }
         self.player_polled = true;
         let item_id = player
             .as_ref()
@@ -81,6 +95,7 @@ impl App {
         };
         let (api, tx) = (self.api.clone(), self.tx.clone());
         let (item_id, start_ticks) = (item.id.clone(), item.resume_ticks());
+        tracing::info!(%item_id, title = item.name.as_deref().unwrap_or(""), start_ticks, "play");
         tokio::spawn(async move {
             if let Err(e) = api.play_now(&session_id, &item_id, start_ticks).await {
                 let _ = tx.send(Msg::Error(format!("{e:#}")));
@@ -92,6 +107,7 @@ impl App {
         let Some(session_id) = self.session_id() else {
             return;
         };
+        tracing::info!(?command, ?seek_ticks, "playstate");
         let (api, tx) = (self.api.clone(), self.tx.clone());
         tokio::spawn(async move {
             if let Err(e) = api.playstate(&session_id, command, seek_ticks).await {
@@ -104,6 +120,7 @@ impl App {
         let Some(session_id) = self.session_id() else {
             return;
         };
+        tracing::info!(name, %arguments, "command");
         let (api, tx) = (self.api.clone(), self.tx.clone());
         tokio::spawn(async move {
             if let Err(e) = api.general_command(&session_id, name, arguments).await {

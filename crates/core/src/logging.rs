@@ -31,7 +31,10 @@ pub(crate) fn validate_log_level(spec: &str) -> Result<()> {
     Ok(())
 }
 
-fn log_filter(level: &str) -> Result<Targets> {
+/// The filter a binary should log through: `RUST_LOG` when it is set, the
+/// configured `log_level` otherwise. jellytui builds its own subscriber and
+/// still has to honour the same precedence.
+pub fn log_filter(level: &str) -> Result<Targets> {
     match std::env::var("RUST_LOG") {
         Ok(spec) => parse_log_filter(&spec),
         Err(_) => parse_log_filter(level),

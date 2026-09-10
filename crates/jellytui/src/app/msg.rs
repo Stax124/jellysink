@@ -84,20 +84,38 @@ impl App {
                 self.covers.store(key, protocol.map(|boxed| *boxed));
             }
             Msg::CoverFailed { key } => self.covers.release(&key),
-            Msg::Error(message) => self.message = message,
+            Msg::Error(message) => {
+                tracing::warn!(%message, "request failed");
+                self.message = message;
+            }
         }
     }
 
     /// Every load goes through here, so no request can block key handling.
-    pub(super) fn spawn<F>(&self, request: F, wrap: impl FnOnce(Vec<Item>) -> Msg + Send + 'static)
-    where
+    /// `label` names it in the log pane; it is also where a request's cost
+    /// gets timed.
+    pub(super) fn spawn<F>(
+        &self,
+        label: &'static str,
+        request: F,
+        wrap: impl FnOnce(Vec<Item>) -> Msg + Send + 'static,
+    ) where
         F: std::future::Future<Output = Result<serde_json::Value>> + Send + 'static,
     {
         let tx = self.tx.clone();
         tokio::spawn(async move {
+            let started = std::time::Instant::now();
             let msg = match request.await {
                 Ok(body) => match ItemList::deserialize(&body) {
-                    Ok(list) => wrap(list.items),
+                    Ok(list) => {
+                        tracing::info!(
+                            label,
+                            rows = list.items.len(),
+                            elapsed_ms = started.elapsed().as_millis(),
+                            "loaded"
+                        );
+                        wrap(list.items)
+                    }
                     Err(e) => Msg::Error(format!("decoding items: {e}")),
                 },
                 Err(e) => Msg::Error(format!("{e:#}")),

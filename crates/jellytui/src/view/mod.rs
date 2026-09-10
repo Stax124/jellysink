@@ -3,6 +3,7 @@
 
 pub(super) mod body;
 pub(super) mod grid;
+mod logs;
 pub(super) mod playing;
 pub(super) mod rail;
 
@@ -74,6 +75,7 @@ pub(super) fn render(app: &App, frame: &mut Frame) {
         Screen::Browse => render_browse(app, frame, panes.body),
         Screen::Search => render_search(app, frame, panes.body),
         Screen::Playing => playing::render(app, frame, panes.body),
+        Screen::Logs => logs::render(app, frame, panes.body),
     }
     render_now_playing(app, frame, panes.footer);
     render_hint(app, frame, panes.hint);
@@ -105,6 +107,10 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
         ("/", "Search", app.screen == Screen::Search),
     ] {
         spans.extend(segment(key, label, active));
+    }
+    // Not a tab one browses to: it names itself only while it is up.
+    if app.screen == Screen::Logs {
+        spans.extend(segment("L", "Logs", true));
     }
     let tabs = Line::from(spans);
     let status = daemon_status(app);
@@ -242,6 +248,22 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
         }
         Screen::Search => {
             "type to search · ↑/↓ move · Enter play · Esc leave search · ⇧←/⇧→ seek · ^C quit"
+        }
+        Screen::Logs => {
+            let following = if app.log_window(area.height).1 {
+                "following"
+            } else {
+                "paused"
+            };
+            return frame.render_widget(
+                Paragraph::new(Span::styled(
+                    format!(
+                        "j/k scroll · g/G top/bottom · c clear · L/Esc back · q quit · {following}"
+                    ),
+                    Style::default().fg(DIM),
+                )),
+                area,
+            );
         }
         // In a grid every arrow moves, so back and open need naming.
         _ if app.grid_metrics().is_some() => {

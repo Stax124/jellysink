@@ -1,6 +1,7 @@
 //! App state and the event loop.
 
 mod browse;
+mod logs;
 mod msg;
 mod player;
 mod request;
@@ -10,6 +11,7 @@ use msg::Msg;
 
 use crate::cover::{self, CoverKey, Covers};
 use crate::keys::{self, Intent};
+use crate::logs::{LogBuffer, LogLine};
 use crate::nav::{self, End, Level, Source};
 use crate::view::{grid, playing, rail};
 
@@ -50,6 +52,9 @@ pub(crate) enum Screen {
     Browse,
     Search,
     Playing,
+    /// Reached only by its key: the tab strip names it while it is up and not
+    /// otherwise.
+    Logs,
 }
 
 /// Which of the two Home shelves has focus.
@@ -102,6 +107,11 @@ pub(crate) struct App {
     cover_due: Option<tokio::time::Instant>,
     wanted_covers: Vec<CoverKey>,
     paths: Paths,
+    logs: LogBuffer,
+    /// Sequence number of the top line of the log pane, or `None` while it is
+    /// following the tail.
+    log_anchor: Option<u64>,
+    screen_before_logs: Screen,
     pub(crate) message: String,
     search_generation: u64,
     search_due: Option<tokio::time::Instant>,
@@ -109,7 +119,7 @@ pub(crate) struct App {
 }
 
 impl App {
-    pub(crate) fn new(api: Api, paths: Paths, picker: Picker) -> Self {
+    pub(crate) fn new(api: Api, paths: Paths, picker: Picker, logs: LogBuffer) -> Self {
         let (tx, rx) = unbounded_channel();
         Self {
             api,
@@ -133,6 +143,9 @@ impl App {
             cover_due: None,
             wanted_covers: Vec::new(),
             paths,
+            logs,
+            log_anchor: None,
+            screen_before_logs: Screen::Home,
             message: String::new(),
             search_generation: 0,
             search_due: None,
@@ -197,6 +210,7 @@ impl App {
         let Some(intent) = keys::map(key, typing) else {
             return;
         };
+        tracing::debug!(?intent, screen = ?self.screen, "key");
         self.apply(intent);
     }
 
@@ -204,11 +218,18 @@ impl App {
         // Any keypress retires the previous message; handlers that want to
         // say something set it again below.
         self.message.clear();
+        // The log pane rebinds movement to scrolling; everything it does not
+        // claim — the playback keys above all — still means what it always did.
+        if self.screen == Screen::Logs && self.scroll_in_logs(&intent) {
+            return;
+        }
         match intent {
             Intent::Quit => self.quit = true,
             Intent::Home => self.screen = Screen::Home,
             Intent::Libraries => self.open_libraries(),
             Intent::Playing => self.screen = Screen::Playing,
+            Intent::Logs => self.toggle_logs(),
+            Intent::ClearLogs => {}
             Intent::StartSearch => {
                 self.screen = Screen::Search;
                 self.message.clear();

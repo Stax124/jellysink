@@ -9,6 +9,9 @@ pub(super) enum Intent {
     Home,
     Libraries,
     Playing,
+    /// The log pane, which is a toggle rather than a tab.
+    Logs,
+    ClearLogs,
     StartSearch,
     Up,
     Down,
@@ -79,6 +82,8 @@ fn command(c: char) -> Option<Intent> {
         '1' => Some(Intent::Home),
         '2' => Some(Intent::Libraries),
         '3' => Some(Intent::Playing),
+        'L' => Some(Intent::Logs),
+        'c' => Some(Intent::ClearLogs),
         '/' => Some(Intent::StartSearch),
         'j' => Some(Intent::Down),
         'k' => Some(Intent::Up),

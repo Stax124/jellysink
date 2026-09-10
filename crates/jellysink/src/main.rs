@@ -95,12 +95,8 @@ async fn main() -> Result<()> {
 async fn try_main() -> Result<()> {
     let cli = Cli::parse();
     let paths = Paths::from_override(cli.config)?;
-    let log_level = Config::load(&paths)
-        .map(|c| c.log_level)
-        .unwrap_or_else(|_| "info".into());
-
     jellysink_core::install_crypto_provider();
-    init_tracing(&log_level)?;
+    init_tracing(&Config::configured_log_level(&paths))?;
 
     match cli.command.unwrap_or(Command::Run) {
         Command::Login => cli::cmd_login(&paths).await?,

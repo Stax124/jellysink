@@ -224,6 +224,7 @@ pub(super) fn detect_picker() -> Picker {
 /// `Ok(None)` for an item the server has no artwork for. Decode and encode are
 /// real CPU work on the thread that draws, so they go to `spawn_blocking`.
 pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<Option<Protocol>> {
+    let started = std::time::Instant::now();
     let (font_size, size) = (picker.font_size(), key.size);
     let width = u32::from(size.width) * u32::from(font_size.width);
     let height = u32::from(size.height) * u32::from(font_size.height);
@@ -233,7 +234,8 @@ pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<O
     else {
         return Ok(None);
     };
-    tokio::task::spawn_blocking(move || {
+    let (len, fetched_ms) = (bytes.len(), started.elapsed().as_millis());
+    let protocol = tokio::task::spawn_blocking(move || {
         let image = image::load_from_memory(&bytes).wrap_err("decoding cover")?;
         picker
             .new_protocol(image, size, Resize::Fit(None))
@@ -241,7 +243,15 @@ pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<O
             .map(Some)
     })
     .await
-    .wrap_err("cover worker")?
+    .wrap_err("cover worker")?;
+    tracing::trace!(
+        item_id = %key.item_id,
+        bytes = len,
+        fetched_ms,
+        total_ms = started.elapsed().as_millis(),
+        "cover"
+    );
+    protocol
 }
 
 #[cfg(test)]

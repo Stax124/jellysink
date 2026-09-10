@@ -239,3 +239,30 @@ fn the_total_is_blank_until_the_duration_arrives_then_fills_in() {
     app.runtime_ticks = Some(("e1".to_string(), 14_220_809_999));
     assert!(drawn(&app).contains("15:17 / 23:42"));
 }
+
+#[test]
+fn the_log_pane_names_itself_in_the_header_only_while_it_is_up() {
+    let mut app = app();
+    assert!(!drawn(&app).contains("L Logs"));
+
+    app.screen = Screen::Logs;
+    let screen = drawn(&app);
+    assert!(screen.contains("L Logs"));
+    assert!(
+        screen.contains("RUST_LOG=jellytui=debug"),
+        "an empty buffer has to say why it is empty, not just draw nothing"
+    );
+    assert!(screen.contains("c clear"), "the hint row is the pane's own");
+}
+
+#[test]
+fn a_captured_event_is_drawn_with_its_level_and_target() {
+    let logs = crate::logs::LogBuffer::new();
+    logs.push_line("played item=The Bear".into());
+    let mut app = crate::test_support::app_with_logs(logs);
+    app.screen = Screen::Logs;
+
+    let screen = drawn(&app);
+    assert!(screen.contains("INFO"));
+    assert!(screen.contains("played item=The Bear"));
+}

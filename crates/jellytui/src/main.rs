@@ -2,7 +2,8 @@
 //! jellysink. See `specs/tui.md`.
 //!
 //! It never calls `init_tracing`: that writes to stdout and would paint over
-//! the alternate screen.
+//! the alternate screen. It installs a subscriber of its own instead, whose
+//! only sink is the ring buffer the `L` screen draws — see `crate::logs`.
 
 mod app;
 mod cover;
@@ -10,6 +11,7 @@ mod cover;
 mod test_support;
 
 mod keys;
+mod logs;
 mod nav;
 
 mod view;
@@ -17,7 +19,7 @@ mod view;
 use clap::Parser;
 use color_eyre::eyre::Result;
 use jellysink_core::UsageError;
-use jellysink_core::config::{Credentials, Paths};
+use jellysink_core::config::{Config, Credentials, Paths};
 use jellysink_core::jellyfin::auth::Api;
 use jellysink_core::usage_err;
 use std::path::PathBuf;
@@ -53,11 +55,14 @@ async fn main() -> Result<()> {
 }
 
 async fn run(paths: Paths) -> Result<()> {
+    // Before anything worth logging happens, and while a bad filter can still
+    // be reported on the normal screen.
+    let logs = logs::install(&Config::configured_log_level(&paths))?;
     let credentials = Credentials::load(&paths)?
         .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
     let api = Api::from_credentials(&credentials)?;
     // Before the alternate screen is taken: the protocol query writes to
     // stdout and reads the terminal's answer back off stdin.
     let picker = cover::detect_picker();
-    app::App::new(api, paths, picker).run().await
+    app::App::new(api, paths, picker, logs).run().await
 }
