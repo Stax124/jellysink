@@ -1,6 +1,6 @@
 //! The detail rail: cover and metadata for whichever row holds the cursor.
 
-use crate::cover::{self, CoverKey, Covers};
+use crate::cover::{self, Covers};
 use jellysink_core::jellyfin::model::Item;
 use jellysink_core::ticks::ticks_to_seconds;
 use ratatui::Frame;
@@ -62,7 +62,8 @@ pub(crate) fn render(frame: &mut Frame, rail: Rect, item: Option<&Item>, covers:
     };
 
     let cover = cover_rect(rail, item, covers.font_size());
-    if let Some(protocol) = CoverKey::primary(item, cover.as_size())
+    if let Some(protocol) = covers
+        .key(item, cover.as_size())
         .as_ref()
         .and_then(|key| covers.protocol(key))
     {

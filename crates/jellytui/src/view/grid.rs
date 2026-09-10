@@ -2,7 +2,7 @@
 //! tiles themselves.
 
 use super::{ACCENT, DIM, to_width};
-use crate::cover::{self, CoverKey, Covers};
+use crate::cover::{self, Covers};
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
@@ -233,7 +233,8 @@ fn render_tile(
         width: metrics.cover.width,
         height: metrics.cover.height,
     };
-    if let Some(protocol) = CoverKey::primary(item, cover.as_size())
+    if let Some(protocol) = covers
+        .key(item, cover.as_size())
         .as_ref()
         .and_then(|key| covers.protocol(key))
     {

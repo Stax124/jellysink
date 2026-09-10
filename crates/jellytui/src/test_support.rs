@@ -19,6 +19,5 @@ pub(crate) fn app() -> App {
         Api::from_credentials(&credentials).unwrap(),
         Paths::from_override(Some(std::path::PathBuf::from("/nonexistent"))).unwrap(),
         ratatui_image::picker::Picker::halfblocks(),
-        1.0,
     )
 }

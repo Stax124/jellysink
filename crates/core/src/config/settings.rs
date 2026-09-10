@@ -15,7 +15,6 @@ pub enum Field {
     LogLevel,
     Autoplay,
     PrependPrevious,
-    ImageScale,
 }
 
 impl Field {
@@ -25,7 +24,6 @@ impl Field {
         Field::LogLevel,
         Field::Autoplay,
         Field::PrependPrevious,
-        Field::ImageScale,
     ];
 
     pub fn name(self) -> &'static str {
@@ -35,7 +33,6 @@ impl Field {
             Field::LogLevel => "log_level",
             Field::Autoplay => "autoplay",
             Field::PrependPrevious => "prepend_previous",
-            Field::ImageScale => "image_scale",
         }
     }
 
@@ -61,11 +58,6 @@ pub struct Config {
     pub log_level: String,
     pub autoplay: bool,
     pub prepend_previous: bool,
-    /// jellytui only: how many pixels a cover is fetched and encoded at, per
-    /// cell the terminal says it has. See `specs/tui.md` — a HiDPI display
-    /// where the terminal reports a scaled cell size needs this at the
-    /// display's scale factor, or covers land at a fraction of their box.
-    pub image_scale: f32,
 }
 
 impl Default for Config {
@@ -75,7 +67,6 @@ impl Default for Config {
             log_level: "info".into(),
             autoplay: true,
             prepend_previous: true,
-            image_scale: 1.0,
         }
     }
 }
@@ -121,7 +112,6 @@ impl Config {
             Field::LogLevel => Some(self.log_level.clone()),
             Field::Autoplay => Some(self.autoplay.to_string()),
             Field::PrependPrevious => Some(self.prepend_previous.to_string()),
-            Field::ImageScale => Some(self.image_scale.to_string()),
         }
     }
 
@@ -143,7 +133,6 @@ impl Config {
             }
             Field::Autoplay => self.autoplay = parse_bool(value)?,
             Field::PrependPrevious => self.prepend_previous = parse_bool(value)?,
-            Field::ImageScale => self.image_scale = parse_image_scale(value)?,
         }
         Ok(true)
     }
@@ -157,23 +146,6 @@ fn parse_bool(value: &str) -> color_eyre::Result<bool> {
             "invalid boolean {value:?}; use true/false"
         ))),
     }
-}
-
-/// The bounds are a sanity check rather than a rule: 2 is a HiDPI display, 1.5
-/// and 1.25 are fractional scaling, and anything outside this is a typo that
-/// would otherwise download megabytes per cover or nothing worth drawing.
-fn parse_image_scale(value: &str) -> color_eyre::Result<f32> {
-    let scale: f32 = value.trim().parse().map_err(|_| {
-        usage_err(format!(
-            "invalid image_scale {value:?}; use a number like 2"
-        ))
-    })?;
-    if !(0.5..=4.0).contains(&scale) {
-        return Err(usage_err(format!(
-            "image_scale {scale} is outside 0.5 to 4.0"
-        )));
-    }
-    Ok(scale)
 }
 
 #[cfg(test)]

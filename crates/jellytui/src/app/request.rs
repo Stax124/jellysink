@@ -45,7 +45,7 @@ impl App {
             return self
                 .current_item()
                 .and_then(|item| playing::still_size(body, item, font_size).zip(Some(item)))
-                .and_then(|(size, item)| CoverKey::primary(item, size))
+                .and_then(|(size, item)| self.covers.key(item, size))
                 .into_iter()
                 .collect();
         }
@@ -64,7 +64,7 @@ impl App {
                         .iter()
                         .skip(shelf.offset * metrics.columns)
                         .take(metrics.page())
-                        .filter_map(|item| CoverKey::primary(item, metrics.cover_size())),
+                        .filter_map(|item| self.covers.key(item, metrics.cover_size())),
                 );
             }
             return keys;
@@ -76,13 +76,13 @@ impl App {
                 .iter()
                 .skip(self.grid_offset() * metrics.columns)
                 .take(metrics.page())
-                .filter_map(|item| CoverKey::primary(item, size))
+                .filter_map(|item| self.covers.key(item, size))
                 .collect();
         }
         let (body, font_size) = (self.body_area(), self.covers.font_size());
         self.rail_item()
             .and_then(|item| rail::cover_size(body, item, font_size).zip(Some(item)))
-            .and_then(|(size, item)| CoverKey::primary(item, size))
+            .and_then(|(size, item)| self.covers.key(item, size))
             .into_iter()
             .collect()
     }
@@ -103,9 +103,9 @@ impl App {
                 continue;
             }
             let (api, tx) = (self.api.clone(), self.tx.clone());
-            let (picker, scale) = (self.covers.picker(), self.covers.scale());
+            let picker = self.covers.picker();
             tokio::spawn(async move {
-                let msg = match cover::fetch(&api, picker, scale, &key).await {
+                let msg = match cover::fetch(&api, picker, &key).await {
                     Ok(protocol) => Msg::Cover {
                         key,
                         protocol: protocol.map(Box::new),

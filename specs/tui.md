@@ -155,9 +155,10 @@ they have focus, which the border colour and the caption highlight carry, and
 the focused one only, so Home does not go through it.
 
 The list beside a rail is split by share rather than by a fixed width
-(`rail::width`): 38% of the body, floored at 38 columns so the cover and the
-synopsis still fit and capped at 72 so a very wide terminal stops eliding list
-rows to grow a preview that is already large.
+(`rail::split`): half each, because a row is a line of text that elides
+gracefully while the cover beside it is the thing worth the width. Below
+`MIN_BODY_WIDTH` there is no rail at all — half of a narrow body leaves the list
+too narrow to read — and the screen stays the full-width list.
 
 Because a grid has a second axis, `h`/`j`/`k`/`l` and all four arrows move the
 cursor while one is focused, and `Esc` is the only way back. Up and down move by
@@ -231,7 +232,7 @@ poster obeying its aspect would grow out of the height with them.
 
 `ratatui-image` draws the covers, with `Picker::from_query_stdio()` deciding
 between kitty, sixel, iTerm2 and halfblocks. That query **has to run before
-`ui::enter()`**: it writes an escape sequence to stdout and reads the answer
+`view::enter()`**: it writes an escape sequence to stdout and reads the answer
 back off stdin, which the alternate screen would swallow. When it fails —
 tmux without passthrough, a plain xterm — `Picker::halfblocks()` is the
 fallback, so every terminal gets a picture rather than a hole.
@@ -249,13 +250,17 @@ Three things are worth stating because getting them wrong is invisible:
   however short the box is. This is the `/Sessions` lesson above at a smaller
   scale — a rail cover is about 40 KB rather than a megabyte.
 - **A cover's size is part of its identity.** A `Protocol` is encoded against
-  one rect, so after a terminal resize the cached one is the *wrong* encoding,
-  not a stale one. `CoverKey` is `(item id, image tag, size)`, and because
-  `visible_covers` is recomputed every loop iteration, a resize asks for the
-  new size without anything having to notice the resize.
+  one rect at one cell size, so after a terminal resize the cached one is the
+  *wrong* encoding, not a stale one. `CoverKey` is `(item id, image tag, size,
+  cell)`, and because `visible_covers` is recomputed every loop iteration, a
+  resize asks for the new size without anything having to notice the resize.
+  The cell is the pixel grid below (see *HiDPI*): it catches the case the size
+  cannot, a move to a display of another scale that leaves the columns and rows
+  exactly where they were.
 - **An item's `Primary` is not always a poster.** Every cover the frontend
-  draws is `CoverKey::primary`, so a row's shape follows the item, and
-  `cover::fit` sizes the box around what `cover::primary_aspect` answers: the
+  draws is a `Covers::key` on the item's `Primary`, so a row's shape follows
+  it, and `cover::fit` sizes the box around what `cover::primary_aspect`
+  answers: the
   server's own `PrimaryImageAspectRatio` where it sent one, otherwise 16:9 for
   an episode's still and 2:3 for a poster. Guessing is not enough on its own —
   a library's primary image is a 16:9 banner although a `CollectionFolder`
@@ -266,29 +271,52 @@ Three things are worth stating because getting them wrong is invisible:
   (`SeriesPrimaryImageTag`); it now shows the episode's own still, which is
   what the rail beside a season already showed.
 
-### HiDPI: `image_scale`
+### HiDPI: the measured cell size
 
 Kitty is told an image's **pixel** dimensions (`s=`/`v=` in the transmit) and no
 column or row count, so it works out how many cells the placement covers by
 dividing those pixels by the terminal's *real* cell size. `ratatui-image`,
-meanwhile, lays out the placeholder cells using the cell size the terminal
-*reported* over `CSI 16 t`. On a HiDPI display where that report is the scaled
-size rather than the physical one, the two disagree by the display's scale
-factor and every cover lands in the top-left corner of its box at 1/scale of
-the size — the box, caption and progress rule stay where the grid put them.
+meanwhile, encodes and lays out against the cell size the terminal reported over
+`CSI 16 t` — once, before the alternate screen, because that query cannot be run
+again mid-session. Where the two disagree, every cover lands in the top-left
+corner of its box at 1/scale of the size; the box, caption and progress rule
+stay where the grid put them. Dragging the window to a display of another scale
+is the same disagreement arriving later: the reported cell size is frozen at
+startup, and encoding against it after the move draws every cover at the wrong
+fraction of its box, in whichever direction the move went.
 
-`image_scale` in `config.toml` (jellytui only, default `1`) multiplies the cell
-box a cover is *fetched and encoded* for, so 2 on a 2× display asks the server
-for twice the pixels and hands kitty an image that measures out to the full box.
-Nothing about the layout changes: `Image` clamps the placeholder cells it draws
-to the area it is given, so the surplus is spent on pixels rather than cells.
+So the cell size is measured, once a loop iteration, rather than trusted from
+startup. `cover::cell_size` divides the window's pixel size — `ws_xpixel` /
+`ws_ypixel`, which `Backend::window_size` reads out of `TIOCGWINSZ` — by the
+grid, and `Covers::set_cell_size` builds the picker again at that font size,
+keeping the protocol the query settled on (`Picker::from_fontsize` is deprecated
+in favour of the query, and 11.x has no way to hand a new font size to a picker
+it already returned). A cover is then fetched and encoded for `cells × the real
+cell`, so kitty measures the placement out to exactly the box the grid drew.
 
-Two things this is not. It is not a sharpness setting for its own sake — above
-the true factor the extra pixels are thrown away by the clamp. And it never
-applies to **halfblocks**, which draw ordinary cells with no pixel grid to be
-out of step with: `render_halfblocks` skips cells outside the area, so an
-over-encoded halfblocks cover would be cropped to its top-left quarter rather
-than sharpened. `Covers::new` drops the scale to 1 for that protocol.
+The measurement lives at the head of the loop beside the `terminal.size()` read
+rather than in an `Event::Resize` arm, because a change of scale need not be a
+resize at all — the compositor can hand the terminal more device pixels for the
+same grid — and the once-a-second poll then bounds how long a cover can stay
+encoded for the old pixel grid. A change drops every entry in the cache; the
+keys carry the cell, so those encodings could never be looked up again, and the
+requests still in flight land under the old key rather than on screen.
+
+**Do not encode a cover larger than its box.** `image_scale` used to do exactly
+that — a user-typed multiplier on the cell box, on the understanding that the
+widget clamped the cells it drew and the surplus was spent on pixels. It does
+not: `Image::render` draws *nothing at all* when the protocol's size exceeds its
+area unless `allow_clipping` is set, so an over-encoded cover is not a sharper
+one, it is a missing one. That is why the factor belongs in the picker's font
+size, where the encoding still comes out at the size of the box, rather than in
+the box. A measurement within a few percent of the current cell is the window's
+padding — it is counted in the window's pixel size but not in a cell — and is
+ignored, or every pixel the window moved would cost a round trip.
+
+The key went with the mechanism. The number was the terminal's to report all
+along, and a fixed one is wrong the moment the window changes display. A
+terminal that reports no pixel size — tmux, a plain xterm — is left with the
+query's answer, which is what it drew with before.
 
 Decode and encode run in `spawn_blocking` — jellytui is a `current_thread`
 runtime and both are real CPU work on the thread that draws. The finished
@@ -325,7 +353,7 @@ Two rules follow from owning the alternate screen:
 
 - `jellytui` never calls `init_tracing`. It is a `fmt` subscriber on stdout and
   would paint over the UI. With no subscriber the `tracing` macros are no-ops.
-- `ui::enter` installs a panic hook that restores the terminal before
+- `view::enter` installs a panic hook that restores the terminal before
   delegating, so a panic (or a color_eyre report) does not leave the user in a
   raw-mode alternate screen.
 

@@ -3,7 +3,7 @@
 
 use super::{ACCENT, DIM};
 use crate::app::App;
-use crate::cover::{self, CoverKey};
+use crate::cover;
 use crate::view::rail;
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
@@ -86,7 +86,7 @@ pub(crate) fn render(app: &App, frame: &mut Frame, area: Rect) {
     let detail = match still {
         Some(rect) => {
             if let Some(protocol) = item
-                .and_then(|item| CoverKey::primary(item, rect.as_size()))
+                .and_then(|item| app.covers.key(item, rect.as_size()))
                 .as_ref()
                 .and_then(|key| app.covers.protocol(key))
             {
