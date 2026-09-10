@@ -6,6 +6,7 @@ use jellysink_core::jellyfin::auth::Api;
 use jellysink_core::jellyfin::model::Item;
 use ratatui::backend::WindowSize;
 use ratatui::layout::{Rect, Size};
+use ratatui_image::FilterType;
 use ratatui_image::FontSize;
 use ratatui_image::Resize;
 use ratatui_image::picker::Picker;
@@ -223,6 +224,9 @@ pub(super) fn detect_picker() -> Picker {
 /// lesson `specs/tui.md` records about `/Sessions`, at a smaller scale.
 /// `Ok(None)` for an item the server has no artwork for. Decode and encode are
 /// real CPU work on the thread that draws, so they go to `spawn_blocking`.
+///
+/// The server answers with a bucket rather than the exact box, so every cover
+/// is rescaled here now and the default `Nearest` would show it.
 pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<Option<Protocol>> {
     let started = std::time::Instant::now();
     let (font_size, size) = (picker.font_size(), key.size);
@@ -238,7 +242,7 @@ pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<O
     let protocol = tokio::task::spawn_blocking(move || {
         let image = image::load_from_memory(&bytes).wrap_err("decoding cover")?;
         picker
-            .new_protocol(image, size, Resize::Fit(None))
+            .new_protocol(image, size, Resize::Fit(Some(FilterType::Lanczos3)))
             .wrap_err("encoding cover for the terminal")
             .map(Some)
     })

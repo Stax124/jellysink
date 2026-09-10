@@ -93,6 +93,28 @@ impl ItemQuery {
     }
 }
 
+/// Sizes are rounded up to this so the server's resize cache is hit rather
+/// than re-encoded per terminal; `specs/tui.md` has the why.
+const IMAGE_BUCKET_PIXELS: u32 = 64;
+
+/// Left off, the server answers far above 90 whatever its API documents — a
+/// grid cover measured 33 KB unasked against 12 KB here. 100 is a cliff rather
+/// than a step: WebP turns near-lossless and quadruples.
+const IMAGE_QUALITY: u32 = 85;
+
+fn bucket_pixels(pixels: u32) -> u32 {
+    pixels.max(1).div_ceil(IMAGE_BUCKET_PIXELS) * IMAGE_BUCKET_PIXELS
+}
+
+fn primary_image_path(item_id: &str, image_tag: &str, max_width: u32, max_height: u32) -> String {
+    format!(
+        "/Items/{item_id}/Images/Primary?maxWidth={}&maxHeight={}&format=Webp&quality={IMAGE_QUALITY}&tag={}",
+        bucket_pixels(max_width),
+        bucket_pixels(max_height),
+        encode_query_value(image_tag)
+    )
+}
+
 impl Api {
     pub async fn user_views(&self) -> Result<Value> {
         let path = format!("/UserViews?userId={}", encode_query_value(&self.user_id));
@@ -157,10 +179,10 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// The item's primary image, bounded to the box it will be drawn in.
-    /// `maxWidth`/`maxHeight` cap both sides and keep the aspect ratio;
-    /// `fillWidth`/`fillHeight` do neither, and hand back a full-height poster
-    /// however narrow the box is.
+    /// The item's primary image, bounded to the box it will be drawn in and
+    /// rounded up to a bucket. `maxWidth`/`maxHeight` cap both sides and keep
+    /// the aspect ratio; `fillWidth`/`fillHeight` do neither, and hand back a
+    /// full-height poster however narrow the box is.
     ///
     /// `Ok(None)` means the server has no such image, which is ordinary and
     /// permanent; an `Err` is worth retrying when the item is looked at again.
@@ -171,10 +193,7 @@ impl Api {
         max_width: u32,
         max_height: u32,
     ) -> Result<Option<Vec<u8>>> {
-        let path = format!(
-            "/Items/{item_id}/Images/Primary?maxWidth={max_width}&maxHeight={max_height}&format=Jpg&tag={}",
-            encode_query_value(image_tag)
-        );
+        let path = primary_image_path(item_id, image_tag, max_width, max_height);
         let response = self.get(&path).await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);

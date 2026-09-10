@@ -240,15 +240,38 @@ fallback, so every terminal gets a picture rather than a hole.
 Images are fetched through `Api::primary_image`, which goes through `Api::get`
 and so carries the cached auth header. `jellyfin::url::image_url` is *not* used
 here: that one puts the token in the query string because MPRIS hands the URL
-to a desktop widget to fetch itself.
+to a desktop widget to fetch itself. It is capped at a fixed 600 px rather than
+bucketed, and stays JPEG — the widget fetching it is someone else's, and WebP
+is not a safe assumption about it, and it names a quality for the same reason
+the covers do. The cap alone was not enough: a measured 265 KB poster came back
+at 226 KB until the quality was named too, and then at 75 KB.
 
 Three things are worth stating because getting them wrong is invisible:
 
-- **The server does the resizing**, bounded to the cell box the cover will be
-  drawn in. `maxWidth`/`maxHeight` keep the aspect ratio and cap both sides;
+- **The server does the resizing**, bounded to the next 64 px bucket around the
+  cell box the cover will be drawn in, and asked for as WebP.
+  `maxWidth`/`maxHeight` keep the aspect ratio and cap both sides;
   `fillWidth`/`fillHeight` do neither and hand back a full-height poster
   however short the box is. This is the `/Sessions` lesson above at a smaller
   scale — a rail cover is about 40 KB rather than a megabyte.
+
+  The bucket is for the *server*, not for us. Jellyfin has no prepared
+  variants: `ImageProcessor` re-encodes on demand and caches under a key that
+  includes the dimensions, the format and the quality, so an exact `cells ×
+  font size` — which moves with every resize, font and display scale — walks it
+  through a Skia encode per request that is then used once. Rounding up costs a
+  few percent more pixels and turns a drag-resize into cache hits. It does not
+  reduce our *request* count: `Covers::claim` is keyed on the exact size and
+  cell, so the client still asks once per distinct box, and the bandwidth win
+  is WebP's alone.
+
+  Because the bucket is wider than the box, the last downscale now happens
+  here, on every cover, where it used to be a no-op. `Resize::Fit` never
+  upscales, so the surplus is resampled locally — with `FilterType::Lanczos3`,
+  because the default `Nearest` at these ratios is visible, worst on the small
+  shelf tiles. `format=Webp` is a request rather than a guarantee: the server
+  returns the original untouched when its encoder cannot handle the source, or
+  for a GIF, which is why the JPEG decoder stays enabled alongside it.
 - **A cover's size is part of its identity.** A `Protocol` is encoded against
   one rect at one cell size, so after a terminal resize the cached one is the
   *wrong* encoding, not a stale one. `CoverKey` is `(item id, image tag, size,

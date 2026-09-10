@@ -181,3 +181,23 @@ fn a_librarys_banner_is_measured_by_the_server_not_guessed_from_its_kind() {
     .unwrap();
     assert!((primary_aspect(&episode) - 16.0 / 9.0).abs() < 0.001);
 }
+
+/// A 2x2 lossless WebP, the container the server answers `format=Webp` with.
+const TINY_WEBP: &[u8] = &[
+    0x52, 0x49, 0x46, 0x46, 0x1e, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c,
+    0x11, 0x00, 0x00, 0x00, 0x2f, 0x01, 0x40, 0x00, 0x00, 0x07, 0x50, 0x9e, 0x22, 0x17, 0xa5, 0xff,
+    0x81, 0x88, 0xe8, 0x7f, 0x00, 0x00,
+];
+
+/// Which decoders `image` compiles in is a Cargo feature, so a tidied manifest
+/// turns every cover blank at runtime with nothing in the build to say so.
+#[test]
+fn the_decoders_the_server_can_answer_with_are_compiled_in() {
+    image::load_from_memory(TINY_WEBP).expect("webp");
+
+    let mut jpeg = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2)
+        .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+        .expect("encoding a jpeg to decode");
+    image::load_from_memory(jpeg.get_ref()).expect("jpeg");
+}
