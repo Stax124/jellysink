@@ -23,6 +23,7 @@ use jellysink_core::jellyfin::model::{Item, ItemList};
 use jellysink_core::jellyfin::remote::PlaystateCommand;
 use jellysink_core::status::PlayerStatus;
 use jellysink_core::ticks::seconds_to_ticks;
+use ratatui::backend::Backend;
 use ratatui::crossterm::event::{Event, KeyEventKind};
 use ratatui::layout::{Rect, Size};
 use ratatui_image::picker::Picker;
@@ -108,7 +109,7 @@ pub(crate) struct App {
 }
 
 impl App {
-    pub(crate) fn new(api: Api, paths: Paths, picker: Picker, image_scale: f32) -> Self {
+    pub(crate) fn new(api: Api, paths: Paths, picker: Picker) -> Self {
         let (tx, rx) = unbounded_channel();
         Self {
             api,
@@ -127,7 +128,7 @@ impl App {
             playing_item: None,
             playing_episodes: Level::loading("Episodes", Source::Libraries),
             session_id: None,
-            covers: Covers::new(picker, image_scale),
+            covers: Covers::new(picker),
             viewport: Size::default(),
             cover_due: None,
             wanted_covers: Vec::new(),
@@ -152,6 +153,11 @@ impl App {
         let result = loop {
             if let Ok(viewport) = terminal.size() {
                 self.viewport = viewport;
+            }
+            // Not an `Event::Resize` arm: a display of another scale can
+            // change the cell's pixels without moving the grid at all.
+            if let Ok(window) = terminal.backend_mut().window_size() {
+                self.covers.set_cell_size(cover::cell_size(window));
             }
             self.tick_covers();
             if let Err(e) = terminal.draw(|frame| view::render(&self, frame)) {

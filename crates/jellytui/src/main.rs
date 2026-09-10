@@ -17,7 +17,7 @@ mod view;
 use clap::Parser;
 use color_eyre::eyre::Result;
 use jellysink_core::UsageError;
-use jellysink_core::config::{Config, Credentials, Paths};
+use jellysink_core::config::{Credentials, Paths};
 use jellysink_core::jellyfin::auth::Api;
 use jellysink_core::usage_err;
 use std::path::PathBuf;
@@ -59,6 +59,5 @@ async fn run(paths: Paths) -> Result<()> {
     // Before the alternate screen is taken: the protocol query writes to
     // stdout and reads the terminal's answer back off stdin.
     let picker = cover::detect_picker();
-    let image_scale = Config::load(&paths)?.image_scale;
-    app::App::new(api, paths, picker, image_scale).run().await
+    app::App::new(api, paths, picker).run().await
 }

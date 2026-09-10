@@ -21,6 +21,11 @@ pub struct Item {
     pub parent_index_number: Option<i64>,
     pub production_year: Option<i64>,
     pub run_time_ticks: Option<i64>,
+    /// Seasons, for a series. Episodes, for a season.
+    pub child_count: Option<i64>,
+    /// Episodes all the way down, so a series counts them across its seasons.
+    pub recursive_item_count: Option<i64>,
+    pub genres: Vec<String>,
     pub is_folder: bool,
     pub user_data: Option<UserData>,
     pub overview: Option<String>,
@@ -46,6 +51,7 @@ pub struct UserData {
     pub played: bool,
     pub playback_position_ticks: i64,
     pub played_percentage: Option<f64>,
+    pub unplayed_item_count: Option<i64>,
 }
 
 impl Item {
@@ -83,10 +89,29 @@ impl Item {
     }
 
     /// How far in, 0.0..=1.0, for the progress bar on a partly watched row.
+    /// A series or a season has no position of its own, so the server's
+    /// percentage over its children is the only thing that answers for one.
     pub fn watched_fraction(&self) -> Option<f64> {
+        if let Some(percentage) = self
+            .user_data
+            .as_ref()
+            .and_then(|user_data| user_data.played_percentage)
+        {
+            return (percentage > 0.0).then(|| (percentage / 100.0).clamp(0.0, 1.0));
+        }
         let ticks = self.run_time_ticks.filter(|ticks| *ticks > 0)?;
         let position = self.resume_ticks();
         (position > 0).then(|| (position as f64 / ticks as f64).clamp(0.0, 1.0))
+    }
+
+    /// How many children are still unwatched, for a container. `None` rather
+    /// than `Some(0)` when there is nothing left, so a caller can leave the
+    /// field out instead of printing a zero.
+    pub fn unplayed_count(&self) -> Option<i64> {
+        self.user_data
+            .as_ref()
+            .and_then(|user_data| user_data.unplayed_item_count)
+            .filter(|count| *count > 0)
     }
 
     /// The row label. Episodes lead with their number so a season list lines

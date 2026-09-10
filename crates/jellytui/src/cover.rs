@@ -4,10 +4,11 @@
 use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::jellyfin::auth::Api;
 use jellysink_core::jellyfin::model::Item;
+use ratatui::backend::WindowSize;
 use ratatui::layout::{Rect, Size};
 use ratatui_image::FontSize;
 use ratatui_image::Resize;
-use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::picker::Picker;
 use ratatui_image::protocol::Protocol;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -15,29 +16,26 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// few screens of scrollback without the encoded frames adding up.
 const CACHE_CAPACITY: usize = 64;
 
-/// Which image to draw, and how large. The size belongs to the identity
-/// because a protocol is encoded against one rect — after a terminal resize
-/// the old encoding is the wrong one rather than a stale one.
+/// How far a measured cell has to be from the one the covers are encoded with
+/// before it counts as another display rather than as the window's padding,
+/// which is in its pixel size but not in a cell. A scale factor is at least a
+/// quarter away, so this only has to clear the padding.
+const NEW_GRID_THRESHOLD: f32 = 0.05;
+
+/// Which image to draw, how large, and against which pixel grid. Both sizes
+/// belong to the identity because a protocol is encoded against one rect at one
+/// cell size — after a resize, or a move to a display of another scale, the old
+/// encoding is the wrong one rather than a stale one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct CoverKey {
     item_id: String,
     image_tag: String,
     size: Size,
-}
-
-impl CoverKey {
-    pub(super) fn primary(item: &Item, size: Size) -> Option<Self> {
-        Some(Self {
-            item_id: item.id.clone(),
-            image_tag: item.primary_image_tag()?.to_string(),
-            size,
-        })
-    }
+    cell: Size,
 }
 
 pub(super) struct Covers {
     picker: Picker,
-    scale: f32,
     ready: HashMap<CoverKey, Protocol>,
     order: VecDeque<CoverKey>,
     in_flight: HashSet<CoverKey>,
@@ -48,23 +46,48 @@ pub(super) struct Covers {
 }
 
 impl Covers {
-    pub(super) fn new(picker: Picker, image_scale: f32) -> Self {
-        // Halfblocks are ordinary cells, so there is no pixel grid to be out
-        // of step with — and an over-encoded halfblocks image is cropped to
-        // the area rather than drawn sharper.
-        let scale = if picker.protocol_type() == ProtocolType::Halfblocks {
-            1.0
-        } else {
-            image_scale
-        };
+    pub(super) fn new(picker: Picker) -> Self {
         Self {
             picker,
-            scale,
             ready: HashMap::new(),
             order: VecDeque::new(),
             in_flight: HashSet::new(),
             absent: HashSet::new(),
         }
+    }
+
+    pub(super) fn key(&self, item: &Item, size: Size) -> Option<CoverKey> {
+        let font_size = self.picker.font_size();
+        Some(CoverKey {
+            item_id: item.id.clone(),
+            image_tag: item.primary_image_tag()?.to_string(),
+            size,
+            cell: Size::new(font_size.width, font_size.height),
+        })
+    }
+
+    /// Takes the terminal's current pixels per cell, and encodes against that
+    /// grid from here on. Everything encoded against the previous one goes: a
+    /// key carries the cell, so those entries could never be looked up again,
+    /// and the requests still in flight land under the old key rather than on
+    /// screen.
+    pub(super) fn set_cell_size(&mut self, cell: Option<Size>) {
+        let Some(cell) = cell else { return };
+        if !self.is_new_grid(cell) {
+            return;
+        }
+        self.picker = repicker(&self.picker, cell);
+        self.ready.clear();
+        self.order.clear();
+        self.absent.clear();
+    }
+
+    fn is_new_grid(&self, cell: Size) -> bool {
+        // One axis is enough: a display's scale is uniform, and the other
+        // would differ only in its rounding.
+        let font_size = self.picker.font_size();
+        let ratio = f32::from(cell.width) / f32::from(font_size.width);
+        (ratio - 1.0).abs() >= NEW_GRID_THRESHOLD
     }
 
     pub(super) fn protocol(&self, key: &CoverKey) -> Option<&Protocol> {
@@ -113,23 +136,17 @@ impl Covers {
     pub(super) fn font_size(&self) -> FontSize {
         self.picker.font_size()
     }
-
-    pub(super) fn scale(&self) -> f32 {
-        self.scale
-    }
 }
 
-/// The cell box an image is fetched and encoded for, which is not always the
-/// box it is drawn in. Kitty sizes a placement by dividing the image's pixels
-/// by the terminal's *real* cell size, while `ratatui-image` lays out the
-/// placeholder cells using the size the terminal *reports* — and on a HiDPI
-/// display those differ by the display's scale factor, so a cover encoded for
-/// the reported grid covers a fraction of the box we reserved for it. Asking
-/// for `scale` times the pixels puts the factor back; the widget clamps the
-/// cells it draws to its area, so the surplus costs pixels, not layout.
-fn encoded_size(size: Size, scale: f32) -> Size {
-    let grow = |cells: u16| ((f32::from(cells) * scale).round() as u16).max(1);
-    Size::new(grow(size.width), grow(size.height))
+/// The picker again at `cell` pixels per cell, keeping the protocol the startup
+/// query settled on. Deprecated in favour of that query, which cannot be run a
+/// second time with the alternate screen up — and 11.x has no way to hand a new
+/// font size to the picker it already returned.
+fn repicker(picker: &Picker, cell: Size) -> Picker {
+    #[allow(deprecated)]
+    let mut rebuilt = Picker::from_fontsize(FontSize::new(cell.width, cell.height));
+    rebuilt.set_protocol_type(picker.protocol_type());
+    rebuilt
 }
 
 /// The shape of an item's primary image, as width ÷ height. The server's own
@@ -180,6 +197,20 @@ pub(super) fn fit(area: Rect, aspect: f32, font_size: FontSize, max_rows: u16) -
     }
 }
 
+/// The terminal's pixels per cell, worked out from the size the tty reports for
+/// the window. `None` where it leaves the pixel fields at zero — tmux and a
+/// plain xterm do, and there is nothing to measure against then.
+pub(super) fn cell_size(window: WindowSize) -> Option<Size> {
+    let (grid, pixels) = (window.columns_rows, window.pixels);
+    if grid.width == 0 || grid.height == 0 || pixels.width == 0 || pixels.height == 0 {
+        return None;
+    }
+    Some(Size::new(
+        pixels.width / grid.width,
+        pixels.height / grid.height,
+    ))
+}
+
 /// Queries the terminal for its graphics protocol and cell size. Has to run
 /// before the alternate screen is taken: the query goes out on stdout and the
 /// answer comes back on stdin. Halfblocks are the fallback rather than a
@@ -192,14 +223,8 @@ pub(super) fn detect_picker() -> Picker {
 /// lesson `specs/tui.md` records about `/Sessions`, at a smaller scale.
 /// `Ok(None)` for an item the server has no artwork for. Decode and encode are
 /// real CPU work on the thread that draws, so they go to `spawn_blocking`.
-pub(super) async fn fetch(
-    api: &Api,
-    picker: Picker,
-    scale: f32,
-    key: &CoverKey,
-) -> Result<Option<Protocol>> {
-    let font_size = picker.font_size();
-    let size = encoded_size(key.size, scale);
+pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<Option<Protocol>> {
+    let (font_size, size) = (picker.font_size(), key.size);
     let width = u32::from(size.width) * u32::from(font_size.width);
     let height = u32::from(size.height) * u32::from(font_size.height);
     let Some(bytes) = api

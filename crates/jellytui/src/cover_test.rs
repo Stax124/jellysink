@@ -10,11 +10,20 @@ fn item(id: &str, image_tag: Option<&str>) -> Item {
 }
 
 fn key(id: &str) -> CoverKey {
-    CoverKey::primary(&item(id, Some("tag")), Size::new(2, 2)).unwrap()
+    covers()
+        .key(&item(id, Some("tag")), Size::new(2, 2))
+        .unwrap()
 }
 
 fn covers() -> Covers {
-    Covers::new(Picker::halfblocks(), 1.0)
+    Covers::new(Picker::halfblocks())
+}
+
+fn window(columns_rows: Size, pixels: Size) -> WindowSize {
+    WindowSize {
+        columns_rows,
+        pixels,
+    }
 }
 
 fn protocol() -> Protocol {
@@ -30,17 +39,26 @@ fn protocol() -> Protocol {
 #[test]
 fn an_item_with_no_artwork_is_never_asked_for() {
     // Without a tag the request is a guaranteed 404, once per cursor move.
-    assert!(CoverKey::primary(&item("s1", None), Size::new(4, 4)).is_none());
-    assert!(CoverKey::primary(&item("s1", Some("tag")), Size::new(4, 4)).is_some());
+    let covers = covers();
+    assert!(covers.key(&item("s1", None), Size::new(4, 4)).is_none());
+    assert!(
+        covers
+            .key(&item("s1", Some("tag")), Size::new(4, 4))
+            .is_some()
+    );
 }
 
 #[test]
 fn a_resized_terminal_asks_for_a_new_encoding_instead_of_stretching_the_old() {
-    let small = CoverKey::primary(&item("s1", Some("tag")), Size::new(10, 8)).unwrap();
-    let large = CoverKey::primary(&item("s1", Some("tag")), Size::new(20, 16)).unwrap();
+    let mut covers = covers();
+    let small = covers
+        .key(&item("s1", Some("tag")), Size::new(10, 8))
+        .unwrap();
+    let large = covers
+        .key(&item("s1", Some("tag")), Size::new(20, 16))
+        .unwrap();
     assert_ne!(small, large);
 
-    let mut covers = covers();
     covers.store(small.clone(), Some(protocol()));
     assert!(covers.protocol(&small).is_some());
     assert!(covers.protocol(&large).is_none());
@@ -92,19 +110,55 @@ fn the_cache_drops_its_oldest_covers_rather_than_growing_with_the_library() {
 }
 
 #[test]
-fn a_hidpi_scale_buys_pixels_without_moving_the_cell_box() {
-    // The box the grid reserved is unchanged; only the image inside it grows,
-    // because kitty measures the placement against the real pixel grid.
-    let box_ = Size::new(32, 24);
-    assert_eq!(encoded_size(box_, 1.0), box_);
-    assert_eq!(encoded_size(box_, 2.0), Size::new(64, 48));
-    assert_eq!(encoded_size(box_, 1.5), Size::new(48, 36));
+fn a_terminal_that_reports_no_pixel_size_is_left_alone() {
+    // tmux and a plain xterm leave the fields at zero, and halfblocks are what
+    // they draw with anyway.
+    assert_eq!(cell_size(window(Size::new(80, 24), Size::new(0, 0))), None);
+    assert_eq!(
+        cell_size(window(Size::new(0, 0), Size::new(800, 480))),
+        None
+    );
+    assert_eq!(
+        cell_size(window(Size::new(80, 24), Size::new(800, 480))),
+        Some(Size::new(10, 20))
+    );
 }
 
 #[test]
-fn halfblocks_ignore_the_scale_because_an_over_encoded_one_is_cropped() {
-    let covers = Covers::new(Picker::halfblocks(), 2.0);
-    assert_eq!(covers.scale(), 1.0);
+fn a_display_of_another_scale_encodes_against_it_and_drops_the_old_grid() {
+    // The columns and rows do not have to move: the same cell box on a 1.5x
+    // display is half again as many pixels, and the cover cached for the old
+    // grid is the wrong encoding rather than a stale one.
+    let mut covers = covers();
+    let box_ = Size::new(10, 8);
+    let before = covers.key(&item("s1", Some("tag")), box_).unwrap();
+    covers.store(before.clone(), Some(protocol()));
+
+    covers.set_cell_size(Some(Size::new(15, 30)));
+    assert_eq!(covers.font_size().width, 15);
+    let after = covers.key(&item("s1", Some("tag")), box_).unwrap();
+    assert_ne!(before, after);
+    assert!(covers.protocol(&after).is_none());
+    assert!(
+        covers.protocol(&before).is_none(),
+        "the old grid is dropped"
+    );
+}
+
+#[test]
+fn the_terminals_padding_is_not_mistaken_for_a_display_scale() {
+    // The window is a few pixels wider than the cells it holds, so a
+    // measurement is a hair over — and re-encoding every cover for that would
+    // be a round trip each time the window moved by a pixel.
+    let mut covers = covers();
+    let key = covers
+        .key(&item("s1", Some("tag")), Size::new(10, 8))
+        .unwrap();
+    covers.store(key.clone(), Some(protocol()));
+
+    covers.set_cell_size(cell_size(window(Size::new(80, 24), Size::new(816, 488))));
+    assert_eq!(covers.font_size().width, 10);
+    assert!(covers.protocol(&key).is_some());
 }
 
 #[test]

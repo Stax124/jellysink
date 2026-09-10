@@ -2,8 +2,7 @@
 //! tiles themselves.
 
 use super::{ACCENT, DIM, to_width};
-use crate::cover::{self, CoverKey, Covers};
-use crate::view::rail;
+use crate::cover::{self, Covers};
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
@@ -234,7 +233,8 @@ fn render_tile(
         width: metrics.cover.width,
         height: metrics.cover.height,
     };
-    if let Some(protocol) = CoverKey::primary(item, cover.as_size())
+    if let Some(protocol) = covers
+        .key(item, cover.as_size())
         .as_ref()
         .and_then(|key| covers.protocol(key))
     {
@@ -288,11 +288,17 @@ fn watched_rule(item: &Item, width: u16) -> Line<'static> {
     ])
 }
 
-/// A tile has no room for a percentage, so the bar above carries progress and
-/// this only has to say when something is finished.
+/// A tile is only as wide as its cover, so this is the two facts worth that
+/// row. Progress is the rule above, and the count says what a tick used to.
 fn caption_meta(item: &Item) -> String {
-    let tick = if item.played() { "✓ " } else { "" };
-    format!("{tick}{}", rail::meta(item))
+    [
+        item.unplayed_count().map(|count| format!("{count} left")),
+        item.community_rating.map(|rating| format!("★ {rating:.1}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 #[cfg(test)]

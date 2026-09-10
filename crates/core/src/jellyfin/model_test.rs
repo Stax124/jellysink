@@ -46,6 +46,62 @@ fn an_episode_without_a_season_number_still_gets_a_label() {
     assert_eq!(item.label(), "E03  Paradise, Once More");
 }
 
+/// Trimmed from a real `/Items` response, which is where the percentage that
+/// answers for a folder comes from — the ticks are zero on a series however
+/// much of it has been watched.
+fn part_watched_series() -> serde_json::Value {
+    json!({
+        "Id": "ae3555401a49fc006fd79fdad5b1966b",
+        "Name": "That Time I Got Reincarnated as a Slime",
+        "Type": "Series",
+        "ProductionYear": 2018,
+        "CommunityRating": 8.0,
+        "RunTimeTicks": 14400000000i64,
+        "UserData": {
+            "PlayedPercentage": 55.33980582524271,
+            "UnplayedItemCount": 46,
+            "PlaybackPositionTicks": 0,
+            "PlayCount": 0,
+            "IsFavorite": false,
+            "Played": false
+        }
+    })
+}
+
+#[test]
+fn a_series_takes_its_progress_from_the_percentage_because_its_ticks_are_zero() {
+    let item = Item::deserialize(part_watched_series()).unwrap();
+    assert_eq!(item.resume_ticks(), 0);
+    assert!((item.watched_fraction().unwrap() - 0.5534).abs() < 0.001);
+    assert_eq!(item.unplayed_count(), Some(46));
+}
+
+#[test]
+fn a_finished_series_has_nothing_left_and_an_untouched_one_shows_no_bar() {
+    let mut finished = part_watched_series();
+    finished["UserData"]["PlayedPercentage"] = json!(100.0);
+    finished["UserData"]["UnplayedItemCount"] = json!(0);
+    finished["UserData"]["Played"] = json!(true);
+    let finished = Item::deserialize(finished).unwrap();
+    assert_eq!(finished.watched_fraction(), Some(1.0));
+    assert_eq!(finished.unplayed_count(), None);
+
+    let mut untouched = part_watched_series();
+    untouched["UserData"]["PlayedPercentage"] = json!(0.0);
+    let untouched = Item::deserialize(untouched).unwrap();
+    assert_eq!(untouched.watched_fraction(), None);
+}
+
+#[test]
+fn a_series_the_server_sent_no_percentage_for_shows_no_bar_rather_than_its_runtime() {
+    // `RecursiveItemCount` unasked: the ticks are the nominal episode length,
+    // and dividing a zero position by them would be meaningless either way.
+    let mut raw = part_watched_series();
+    raw["UserData"]["PlayedPercentage"] = json!(null);
+    let item = Item::deserialize(raw).unwrap();
+    assert_eq!(item.watched_fraction(), None);
+}
+
 #[test]
 fn an_item_the_server_sent_no_user_data_for_is_unwatched_not_a_panic() {
     let item = Item::deserialize(json!({
@@ -56,6 +112,7 @@ fn an_item_the_server_sent_no_user_data_for_is_unwatched_not_a_panic() {
     assert_eq!(item.resume_ticks(), 0);
     assert!(!item.played());
     assert_eq!(item.watched_fraction(), None);
+    assert_eq!(item.unplayed_count(), None);
 }
 
 #[test]

@@ -1,4 +1,6 @@
 use super::*;
+use serde::Deserialize;
+use serde_json::json;
 
 const FONT_SIZE: FontSize = FontSize {
     width: 8,
@@ -120,4 +122,48 @@ fn a_shelf_spends_the_width_the_cover_cannot_use_on_more_tiles() {
         "{shelf:?}"
     );
     assert_eq!(shelf.cover.width, shelf.tile.width - 2, "{shelf:?}");
+}
+
+fn item(raw: serde_json::Value) -> Item {
+    Item::deserialize(raw).unwrap()
+}
+
+#[test]
+fn a_caption_carries_what_is_left_and_how_it_rates_and_nothing_it_cannot_fit() {
+    let part_watched = item(json!({
+        "Id": "s1", "Name": "Slime", "Type": "Series", "ProductionYear": 2018,
+        "CommunityRating": 8.0, "RunTimeTicks": 14400000000i64, "OfficialRating": "TV-14",
+        "UserData": {"PlayedPercentage": 55.3, "UnplayedItemCount": 46, "Played": false}
+    }));
+    assert_eq!(caption_meta(&part_watched), "46 left · ★ 8.0");
+
+    let finished = item(json!({
+        "Id": "s2", "Name": "Alya", "Type": "Series", "ProductionYear": 2024,
+        "CommunityRating": 7.5, "OfficialRating": "TV-14",
+        "UserData": {"UnplayedItemCount": 0, "Played": true}
+    }));
+    assert_eq!(caption_meta(&finished), "★ 7.5");
+
+    let episode = item(json!({
+        "Id": "e1", "Name": "Falmuth", "Type": "Episode", "IndexNumber": 4,
+        "CommunityRating": 7.9, "RunTimeTicks": 14220350000i64
+    }));
+    assert_eq!(caption_meta(&episode), "★ 7.9");
+
+    let unrated = item(json!({"Id": "u1", "Name": "Home Video", "Type": "Video"}));
+    assert_eq!(caption_meta(&unrated), "");
+}
+
+#[test]
+fn a_part_watched_series_fills_its_rule_rather_than_leaving_it_empty() {
+    let series = item(json!({
+        "Id": "s1", "Name": "Slime", "Type": "Series",
+        "RunTimeTicks": 14400000000i64,
+        "UserData": {"PlayedPercentage": 55.3, "PlaybackPositionTicks": 0, "Played": false}
+    }));
+    let filled = |line: Line<'static>| line.spans[0].content.chars().count();
+    assert_eq!(filled(watched_rule(&series, 20)), 11);
+
+    let untouched = item(json!({"Id": "s2", "Name": "Bebop", "Type": "Series"}));
+    assert_eq!(filled(watched_rule(&untouched, 20)), 0);
 }
