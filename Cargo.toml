@@ -89,6 +89,13 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 jellysink-core = { path = "crates/core" }
 
+# `ratatui-image` sends the kitty transmit as raw RGBA, and it is written to
+# the terminal from inside `draw`, so a cover costs the frame that first shows
+# it. This fork deflates it (`o=z`), which halves that. Pinned to a rev rather
+# than a branch so a build is reproducible; drop the patch if it lands upstream.
+[patch.crates-io]
+ratatui-image = { git = "https://github.com/Stax124/ratatui-image", rev = "988d3b9e11aa279cc4b038fa8d53b0a6711f8a6d" }
+
 [profile.release]
 opt-level = "s"
 lto = true

@@ -41,9 +41,11 @@ const PAGE_JUMP: isize = 10;
 /// Long enough that typing a word is one request, short enough to feel live.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// Long enough that holding `j` through a library does not fetch a cover per
-/// row, short enough that resting on one shows its art at once.
-const COVER_DEBOUNCE: Duration = Duration::from_millis(120);
+/// The shortest gap between two batches of cover requests. It is a rate limit
+/// rather than a settling delay: a cursor that has been still fetches at once,
+/// and only a held key is held back — otherwise scrolling a library would ask
+/// for a cover per row it passed through.
+const COVER_THROTTLE: Duration = Duration::from_millis(120);
 const SEARCH_TYPES: &str = "Movie,Series,Episode";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +107,8 @@ pub(crate) struct App {
     /// between frames rather than only while one is being drawn.
     viewport: Size,
     cover_due: Option<tokio::time::Instant>,
+    /// When the next batch may go out. `None` until the first one has.
+    cover_ready_at: Option<tokio::time::Instant>,
     wanted_covers: Vec<CoverKey>,
     paths: Paths,
     logs: LogBuffer,
@@ -141,6 +145,7 @@ impl App {
             covers: Covers::new(picker),
             viewport: Size::default(),
             cover_due: None,
+            cover_ready_at: None,
             wanted_covers: Vec::new(),
             paths,
             logs,

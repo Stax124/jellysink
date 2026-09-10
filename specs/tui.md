@@ -321,9 +321,17 @@ query's answer, which is what it drew with before.
 Decode and encode run in `spawn_blocking` — jellytui is a `current_thread`
 runtime and both are real CPU work on the thread that draws. The finished
 `Protocol` comes back over the existing `Msg` channel, so no `select!` arm was
-added. Fetches are debounced 120 ms after the visible set settles, or holding
-`j` through a 218-item library would fire 218 requests, and `Covers::claim`
-keeps a resting cursor to one. The cache is bounded and evicts oldest-first;
+added. Fetches are throttled to one batch per 120 ms, and `Covers::claim` keeps
+a resting cursor, and a second visit to the same row, to one request. The
+throttle is a rate limit rather than a settling delay: the first change after a
+quiet spell goes out **immediately**, because that is a cursor arriving
+somewhere, and only changes inside the window wait — otherwise holding `j`
+through a 218-item library would fire 218 requests. Waiting ones are scheduled
+for when the window opens rather than for 120 ms after the last keypress, and
+the last change standing is the one that fires, so a cursor coming to rest is
+always fetched. It was a trailing-edge debounce until it was measured: every
+single keypress paid the full 120 ms before its request even started, against
+an HTTP round trip of about the same. The cache is bounded and evicts oldest-first;
 items the server has no image for are remembered as absent, because otherwise
 an artless row is re-requested on every poll.
 

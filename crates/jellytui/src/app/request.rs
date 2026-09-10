@@ -93,19 +93,33 @@ impl App {
 
     pub(super) fn tick_covers(&mut self) {
         let wanted = self.visible_covers();
-        if wanted != self.wanted_covers {
-            self.wanted_covers = wanted;
-            self.cover_due = Some(tokio::time::Instant::now() + COVER_DEBOUNCE);
+        if wanted == self.wanted_covers {
+            return;
+        }
+        self.wanted_covers = wanted;
+        let now = tokio::time::Instant::now();
+        match self.cover_ready_at {
+            // Inside the window: wait it out rather than asking for a row the
+            // cursor is only passing through. The last change to arrive is the
+            // one still standing when it opens, so a cursor coming to rest is
+            // always fetched.
+            Some(ready_at) if ready_at > now => self.cover_due = Some(ready_at),
+            _ => {
+                self.cover_due = None;
+                self.request_covers();
+            }
         }
     }
 
-    /// The trailing edge of the debounce. `Covers::claim` is what keeps a
-    /// resting cursor, and a second visit to the same row, to one request.
+    /// `Covers::claim` is what keeps a resting cursor, and a second visit to
+    /// the same row, to one request.
     pub(super) fn request_covers(&mut self) {
+        let mut spawned = 0usize;
         for key in self.wanted_covers.clone() {
             if !self.covers.claim(&key) {
                 continue;
             }
+            spawned += 1;
             let (api, tx) = (self.api.clone(), self.tx.clone());
             let picker = self.covers.picker();
             tokio::spawn(async move {
@@ -118,6 +132,11 @@ impl App {
                 };
                 let _ = tx.send(msg);
             });
+        }
+        // A batch that asked for nothing — every cover already cached or in
+        // flight — costs the server nothing, so it does not close the window.
+        if spawned > 0 {
+            self.cover_ready_at = Some(tokio::time::Instant::now() + COVER_THROTTLE);
         }
     }
 

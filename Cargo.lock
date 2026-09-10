@@ -2045,12 +2045,12 @@ dependencies = [
 [[package]]
 name = "ratatui-image"
 version = "11.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "399baa06251282b0c1bbb5762848cf98a6b7b84f44af7f0daf3213ace16df4f0"
+source = "git+https://github.com/Stax124/ratatui-image?rev=988d3b9e11aa279cc4b038fa8d53b0a6711f8a6d#988d3b9e11aa279cc4b038fa8d53b0a6711f8a6d"
 dependencies = [
  "base64-simd",
  "icy_sixel",
  "image",
+ "miniz_oxide",
  "rand 0.8.8",
  "ratatui",
  "rustix 0.38.44",

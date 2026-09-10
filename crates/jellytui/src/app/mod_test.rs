@@ -212,3 +212,65 @@ fn arrows_in_a_list_do_not_double_as_back_and_open() {
     assert_eq!(app.stack.len(), 1, "right must not open the row either");
     assert_eq!(app.selected(), 0);
 }
+
+fn tile(id: &str) -> Item {
+    Item::deserialize(serde_json::json!({
+        "Id": id, "Name": id, "Type": "Series", "ImageTags": { "Primary": "tag" }
+    }))
+    .unwrap()
+}
+
+/// A cursor that has been still asks for its covers at once: the throttle is
+/// a rate limit, not a settling delay.
+#[tokio::test(start_paused = true)]
+async fn a_resting_cursor_fetches_its_covers_at_once() {
+    let mut app = app();
+    app.viewport = Size::new(120, 40);
+    app.resume.fill(vec![tile("a"), tile("b"), tile("c")]);
+
+    app.tick_covers();
+
+    let wanted = app.visible_covers();
+    assert!(!wanted.is_empty(), "the shelf has covers to ask for");
+    assert!(
+        app.cover_due.is_none(),
+        "nothing was left waiting for a timer"
+    );
+    assert!(
+        wanted.iter().all(|key| !app.covers.claim(key)),
+        "the immediate batch claimed every visible cover"
+    );
+}
+
+/// The reason the throttle exists: scrolling a library must not ask for a
+/// cover per row the cursor passes through. The rows that go by inside the
+/// window are scheduled, and only the last of them is still standing when it
+/// opens.
+#[tokio::test(start_paused = true)]
+async fn a_moving_cursor_does_not_fetch_a_cover_per_row() {
+    let mut app = app();
+    app.viewport = Size::new(120, 40);
+    app.resume.fill(vec![tile("a")]);
+    app.tick_covers();
+    let ready_at = app.cover_ready_at.expect("the first batch opened a window");
+
+    for row in 0..20 {
+        app.resume.fill(vec![tile(&format!("row{row}"))]);
+        app.tick_covers();
+    }
+
+    // Scheduled for when the window opens, not 120 ms after the last of the
+    // twenty — a cursor coming to rest waits out what is left, not a fresh wait.
+    assert_eq!(app.cover_due, Some(ready_at));
+    assert_eq!(
+        app.cover_ready_at,
+        Some(ready_at),
+        "no second batch went out inside the window"
+    );
+    let passed_through = app.visible_covers();
+    assert!(!passed_through.is_empty());
+    assert!(
+        passed_through.iter().all(|key| app.covers.claim(key)),
+        "nothing the cursor passed through was requested"
+    );
+}
