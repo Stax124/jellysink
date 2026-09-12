@@ -105,12 +105,25 @@ impl Covers {
     /// Whether the caller should start a request for `key`, marking it in
     /// flight if so.
     pub(super) fn claim(&mut self, key: &CoverKey) -> bool {
-        if self.ready.contains_key(key) || self.in_flight.contains(key) || self.absent.contains(key)
-        {
+        if self.settled(key) {
             return false;
         }
         self.in_flight.insert(key.clone());
         true
+    }
+
+    /// Whether any of `keys` is still a blank tile: not cached, not in flight
+    /// and not known absent. The screen standing still is not evidence that
+    /// every cover on it arrived — a request can fail, and an entry can be
+    /// evicted by results still landing for the sizes a drag-resize went
+    /// through — so this is what the caller asks instead of assuming an
+    /// unchanged screen needs nothing.
+    pub(super) fn any_missing(&self, keys: &[CoverKey]) -> bool {
+        keys.iter().any(|key| !self.settled(key))
+    }
+
+    fn settled(&self, key: &CoverKey) -> bool {
+        self.ready.contains_key(key) || self.in_flight.contains(key) || self.absent.contains(key)
     }
 
     /// `None` records that the server has no such image. A request that failed
@@ -118,6 +131,7 @@ impl Covers {
     pub(super) fn store(&mut self, key: CoverKey, protocol: Option<Protocol>) {
         self.in_flight.remove(&key);
         let Some(protocol) = protocol else {
+            tracing::debug!(item_id = %key.item_id, "no artwork on the server");
             self.absent.insert(key);
             return;
         };

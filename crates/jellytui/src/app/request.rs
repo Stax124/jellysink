@@ -93,10 +93,14 @@ impl App {
 
     pub(super) fn tick_covers(&mut self) {
         let wanted = self.visible_covers();
-        if wanted == self.wanted_covers {
+        let moved = wanted != self.wanted_covers;
+        self.wanted_covers = wanted;
+        // An unchanged screen still asks when something on it is blank, or a
+        // cover lost to a failed request or an eviction stays lost until the
+        // cursor happens to move. The throttle below bounds the retrying.
+        if !moved && !self.covers.any_missing(&self.wanted_covers) {
             return;
         }
-        self.wanted_covers = wanted;
         let now = tokio::time::Instant::now();
         match self.cover_ready_at {
             // Inside the window: wait it out rather than asking for a row the
@@ -128,7 +132,10 @@ impl App {
                         key,
                         protocol: protocol.map(Box::new),
                     },
-                    Err(_) => Msg::CoverFailed { key },
+                    Err(err) => Msg::CoverFailed {
+                        key,
+                        error: format!("{err:#}"),
+                    },
                 };
                 let _ = tx.send(msg);
             });

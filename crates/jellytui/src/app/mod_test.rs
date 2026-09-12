@@ -274,3 +274,28 @@ async fn a_moving_cursor_does_not_fetch_a_cover_per_row() {
         "nothing the cursor passed through was requested"
     );
 }
+
+/// The bug a resize reproduces: a cover that went missing while the cursor
+/// stood still stayed missing. A drag pushes a key per intermediate size
+/// through a 64-entry cache, so results for sizes nobody wants any more evict
+/// the ones just fetched for the size on screen — and the tile is then blank
+/// with nothing in flight, nothing cached and nothing to log.
+#[tokio::test(start_paused = true)]
+async fn a_cover_lost_after_the_cursor_came_to_rest_is_asked_for_again() {
+    let mut app = app();
+    app.viewport = Size::new(120, 40);
+    app.resume.fill(vec![tile("a")]);
+    app.tick_covers();
+    let key = app.visible_covers().pop().expect("the shelf wants a cover");
+
+    // Whatever lost it — an evicted entry, or the release a failed request
+    // does — the screen is unchanged, so nothing about `wanted` has moved.
+    app.covers.release(&key);
+    tokio::time::advance(COVER_THROTTLE * 2).await;
+    app.tick_covers();
+
+    assert!(
+        !app.covers.claim(&key),
+        "a blank tile the screen still wants was never asked for again"
+    );
+}

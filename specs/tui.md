@@ -358,6 +358,20 @@ an HTTP round trip of about the same. The cache is bounded and evicts oldest-fir
 items the server has no image for are remembered as absent, because otherwise
 an artless row is re-requested on every poll.
 
+**A still screen is not evidence that every cover on it arrived.** `tick_covers`
+used to return early whenever the wanted set was unchanged, which meant the only
+thing that ever started a request was the set *changing* — so a cover lost after
+the cursor came to rest stayed lost until the cursor happened to move again, and
+the tile was blank for the rest of the session. Two things lose one: a request
+that fails (`Msg::CoverFailed` releases the claim), and an eviction — a
+drag-resize puts a key per intermediate size through a 64-entry cache, and a
+slow result for a size nobody wants any more can push out one just fetched for
+the size on screen. Neither logged anything, so a blank tile was its own only
+evidence. So the gate is now `Covers::any_missing` — is anything wanted neither
+cached, in flight, nor absent — and the 120 ms throttle is what bounds the
+retrying. Both losses log at `debug`, and so does an absent image, because the
+next one of these should be readable in the `L` pane rather than inferred.
+
 ### The disk cache
 
 The in-memory cache holds 64 covers and stops there on purpose. A `Protocol` is
