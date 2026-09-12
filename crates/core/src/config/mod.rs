@@ -18,22 +18,42 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Also the cover cache's writer: a torn file there is a hard decode error
-/// rather than a miss that re-fetches.
+static TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 pub fn atomic_write(path: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {
-    let tmp = path.with_extension("tmp");
+    // Two writers can share a destination — the cover cache maps a range of
+    // sizes onto one file — and a tmp name derived from it alone would have
+    // them writing the same bytes over each other.
+    let tmp = path.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        TMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = write_tmp(&tmp, data, mode).and_then(|()| {
+        fs::rename(&tmp, path)
+            .wrap_err_with(|| format!("renaming {} -> {}", tmp.display(), path.display()))
+    });
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn write_tmp(tmp: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {
     {
         let mut f =
-            fs::File::create(&tmp).wrap_err_with(|| format!("creating {}", tmp.display()))?;
+            fs::File::create(tmp).wrap_err_with(|| format!("creating {}", tmp.display()))?;
         f.write_all(data)
             .wrap_err_with(|| format!("writing {}", tmp.display()))?;
         f.sync_all()
             .wrap_err_with(|| format!("flushing {}", tmp.display()))?;
     }
-    fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
-        .wrap_err_with(|| format!("restricting {}", tmp.display()))?;
-    fs::rename(&tmp, path)
-        .wrap_err_with(|| format!("renaming {} -> {}", tmp.display(), path.display()))?;
-    Ok(())
+    fs::set_permissions(tmp, fs::Permissions::from_mode(mode))
+        .wrap_err_with(|| format!("restricting {}", tmp.display()))
 }
+
+#[cfg(test)]
+#[path = "mod_test.rs"]
+mod tests;
