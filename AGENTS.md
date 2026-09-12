@@ -106,23 +106,85 @@ Also in the tree (not a Rust module): `systemd/jellysink.service` — user unit 
 
 ## Conventions
 
-- Errors: `color_eyre` (`eyre::Result`), `wrap_err`/`wrap_err_with` with path-bearing context; `thiserror` only for typed error enums. CLI mistakes (not logged in, already running, unknown config key) use `usage_err` (`UsageError`) — the binary prints the message and exits 1 without a color-eyre dump.
-- Async: tokio; I/O is async except small config file reads.
-- Logging: `tracing` macros, never `println!` in daemon code (CLI output uses `println!`).
-- Config/credential files are written atomically (tmp file + rename); cred.json is mode 0600. The config directory itself is 0700 — `mpv.sock` lives there, it is created by mpv (so we cannot pick its mode), and `http-header-fields` on it hands out the access token.
-- Comments: **the default is none.** Write one only where a competent Rust reader would still be guessing — a non-obvious constraint, an invariant, the reason the obvious approach was rejected. Simple code gets no comment at all; "say why" is not a licence to justify something self-evident, and a doc comment is not owed to every item.
+Everything below is a rule `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` cannot express. Those two already cover formatting and lints; this section is the rest, and it is what review checks.
+
+### Product guarantees
+
+Rarely touched, and the most severe thing to break:
+
+- mpv is never spawned with `vo`, `hwdec`, `scale` or `glsl-shaders`, and never with `--no-config`. The user's own mpv config and upscalers must apply.
+- No transcoding. If the server will not DirectPlay/DirectStream, playback is refused. See README "What it will not do".
+
+### Comments
+
+- **The default is none.** Write one only where a competent Rust reader would still be guessing — a non-obvious constraint, an invariant, the reason the obvious approach was rejected. Simple code gets no comment at all; "say why" is not a licence to justify something self-evident, and a doc comment is not owed to every item.
 - Never say a thing twice. If an assert message, error string, function name or test name already carries it, the comment gets deleted, not reworded. Never narrate what the next line does.
-- One or two lines is the ceiling, not a target. Anything that needs a paragraph belongs in `specs/` or the commit message.
-- Names spell things out: `audio_stream_id`, not `aid`; `subtitle_index`, not `sidx`. Abbreviate only where the short form *is* the domain term (mpv's own `sid`/`aid` properties, `ipc`, `url`), and keep the full name the moment the value crosses into our own code.
-- Every test needs a reason to exist. Don't assert that a constant still holds its value or that an enum still has its variants — the compiler already says that, and such a test only breaks when someone edits it. Test behaviour in a realistic scenario instead: feed a real payload through the parser, drive the state machine to the edge case, check what the code *does* with the constant.
+- Never list your own call sites, or any other inventory of the code as it stands today — it is wrong the moment someone adds a fourth one. Invariants age well; inventories do not.
+- One or two lines is the ceiling for an inline comment, not a target. The carve-out is a doc comment carrying a real invariant: three to five lines is established practice there (`runtime/state.rs`, `runtime/session.rs`, `runtime/window.rs`) and is not a violation. Calibrate against the file you are in rather than a fixed number, and flag length only when the comment is long *and* the extra lines are narration. Anything that needs a paragraph belongs in `specs/` or the commit message.
+- The inverse is a defect too, but only where you can name the thing a reader would be guessing about: an invariant or a rejected alternative left unwritten.
+
+### Names
+
+- Names spell things out: `audio_stream_id`, not `aid`; `subtitle_index`, not `sidx`. Abbreviate only where the short form *is* the domain term (mpv's own `sid`/`aid` properties, `ipc`, `url`), and take the full name the moment the value crosses out of that boundary into our own code.
+- Conventional short bindings for errors, contexts, connections and iterator variables (`e`, `ctx`, `conn`, `iface`) are fine. What is not is an abbreviation of a field or type the codebase spells out elsewhere — `np` for a `now_playing` field, `prep` for a `PreparedPlay`. That contrast is the test.
+
+### Errors
+
+- `color_eyre` (`eyre::Result`), `wrap_err`/`wrap_err_with` with context that names the resource that failed — the path, the URL, the socket. A bare `?` on a filesystem, network or IPC call loses it. `thiserror` only for typed error enums.
+- CLI mistakes (not logged in, already running, unknown config key) use `usage_err` (`UsageError`) — the binary prints the message and exits 1 without a color-eyre dump. A user-facing CLI error raised as a plain `eyre!` is wrong.
+- Matching the adjacent function is a partial defence, not a full one. If the surrounding code already drops the path, the new code still carries it.
+- **A discarded error is the judgement call that comes up most.** Every `let _ = …`, `if let Ok(..)` and ignored `Result` is one of two things. Correct, where fail-open is the stated policy — the tray and MPRIS document that no session bus is a warning and not a fatal error, and a send on a channel whose receiver is gone is often genuinely nothing. Or a defect, where the daemon is the only thing that will ever see the failure and it keeps no record of it: a dropped write or serialize error with no `tracing` call leaves the operator with nothing, and often makes the *other* end report the wrong failure. The second kind gets a `warn!`.
+
+### Logging
+
+`tracing` macros in daemon code, never `println!` there; `println!` is for CLI subcommand output only.
+
+### Async
+
+tokio; I/O is async except small config file reads.
+
+### Tests
+
+- **Every test needs a reason to exist.** Don't assert that a constant still holds its value, that an enum still has its variants, that a constructor assigned its arguments, or that a derived `Serialize`/`Deserialize` round-trips with no serde attributes pinning anything down — the compiler already says all of that, and such a test only ever breaks when someone edits it. Test behaviour in a realistic scenario instead (feed a real payload through the parser, drive the state machine to the edge case), or pin the thing that is actually a contract, such as the serialized field names `status.rs` promises the other binary.
 - Tests live in a sibling file next to the one they test: `streams.rs` → `streams_test.rs`, `mod.rs` → `mod_test.rs`. The file under test ends with the three-line declaration
   ```rust
   #[cfg(test)]
   #[path = "streams_test.rs"]
   mod tests;
   ```
-  `#[path]` rather than a plain sibling `mod` in the parent `mod.rs`, because this keeps `tests` a *child* module and most test modules read their parent's private items (`config::parse_mpv_args`, `PlaylistWindow`'s private `queue` field, …). Test paths are unchanged by this (`media::streams::tests::…`), so `cargo test <filter>` works as before. `tempfile::TempDir` for anything touching the filesystem.
-- `crates/jellysink/src/mpv/integration_test.rs` (`mpv::integration_tests`) is the exception that answers for mpv rather than for us: it drives a real player, and is where mpv behaviour we depend on but cannot fake belongs — `#EXTINF` titles surviving a `loadlist`, `insert-at` not moving the playing entry, `sid`/`aid` observers firing, and which `end-file` reason each way of ending a file produces. It plays `crates/jellysink/tests/fixtures/sample.mkv` (3 s, two audio and two subtitle tracks, 31 KB, regenerate with the `make-fixtures.sh` beside it). Add a case here when a bug turns out to be mpv doing something other than what we assumed.
-- Keep the DirectPlay/no-transcode and user-mpv-config guarantees (see README "What it will not do") — they are the product's core promises.
-- Anything jellytui sends must be something `cast.rs` already parses. The two halves are wired through the Jellyfin server, so a typo in a command name fails silently at runtime; `core`'s `jellyfin/remote_test.rs` round-trips every command through `CastEvent::from_ws` — which is why `cast.rs` and `jellyfin/session.rs` stay in `core` even though only the daemon connects the socket to catch that at compile-and-test time instead.
+  `#[path]` rather than a plain sibling `mod` in the parent `mod.rs`, because this keeps `tests` a *child* module and most test modules read their parent's private items (`config::parse_mpv_args`, `PlaylistWindow`'s private `queue` field, …). Test paths are unchanged by this (`media::streams::tests::…`), so `cargo test <filter>` works as before. `tempfile::TempDir` for anything touching the filesystem. A `mod tests` inline in the file under test is wrong.
+- **A test that answers for an external program rather than for us belongs in its own identifiable file**, so a failure in an environment lacking that program lands in one module. `crates/jellysink/src/mpv/integration_test.rs` (`mpv::integration_tests`) is the established instance: it drives a real player, and is where mpv behaviour we depend on but cannot fake belongs — `#EXTINF` titles surviving a `loadlist`, `insert-at` not moving the playing entry, `sid`/`aid` observers firing, and which `end-file` reason each way of ending a file produces. It plays `crates/jellysink/tests/fixtures/sample.mkv` (3 s, two audio and two subtitle tracks, 31 KB, regenerate with the `make-fixtures.sh` beside it). Add a case here when a bug turns out to be mpv doing something other than what we assumed; a test needing a live D-Bus session or any other external daemon has the same shape and wants the same treatment.
+- **No sleep-based synchronization.** A bare `sleep(50ms)` before an assert, or a `while !path.exists()` poll loop, is flaky by construction, and a green run has to mean the tests ran. Wait on a channel, a readiness signal, or a bounded retry that fails for real at the end.
+
+### Visibility
+
+Neither binary has a `lib.rs`, so everything in `jellysink` and `jellytui` stays `pub(crate)`; there are no bare `pub` items in either, and a stray one is a defect rather than a style nit — it stops `dead_code` working for the whole crate. In `core`, `pub` is only what a binary actually names (see the note in Commands): start an addition `pub(crate)` and let the compiler tell you it has to be wider. `PlaylistWindow`'s fields stay private — new access is a method on it, not a reach past it.
+
+### Reuse what the crate already owns
+
+- `core`'s `ticks.rs` owns every Jellyfin-tick conversion (100 ns units). A bare `/ 10` or `* 10` at a call site is that rule broken — and it is usually what then forces an explanatory comment.
+- `core`'s `jellyfin/url.rs` owns URL construction.
+- `PlaylistWindow` (`runtime/window.rs`) owns the queue/window arithmetic. Computing a predicate outside it whose twin lives inside it (`has_next`) means adding the method, not open-coding the other half.
+
+### Secrets and the filesystem
+
+- Config and credential files are written atomically (tmp file + rename); cred.json is mode 0600. The config directory itself is 0700 — `mpv.sock` lives there, it is created by mpv (so we cannot pick its mode), and `http-header-fields` on it hands out the access token.
+- The file modes are only half of it. Check **every channel the access token can leave the process by** — a D-Bus property, a JSON payload on `stop.sock`, a log line, a URL handed to another program. `redact_api_key` exists for this, and redacting the token on one path while broadcasting it unredacted on another is the inconsistency to catch.
+
+### Specs
+
+Read the spec that covers a file before touching it (`specs/playlist.md`, `specs/tracks.md`, `specs/tui.md`, `specs/session.md` — see Architecture for which covers what), **and also whenever you add a `tokio::spawn` or a `select!` arm anywhere in the daemon**, wherever the spawning code lives: `specs/session.md` documents the task and channel contract for the whole daemon, not just for `runtime/session.rs`, and the file that breaks it is often somewhere else entirely.
+
+Two ways to break one, both of which mean editing the spec in the same commit:
+
+- The change **contradicts** a documented invariant. Every spawned task being wrapped in an `AbortOnDrop` (`runtime/task.rs`) is one such invariant — a detached `tokio::spawn` either violates it or needs the spec amended to record the deliberate exception and why.
+- The change makes an **inventory** stale. `specs/session.md` carries a task/channel table and a `select!`-arm table; adding a channel, task or arm leaves them silently wrong without contradicting anything. Update the row.
+
+### Build
+
+Every build is musl. Don't reach for `--target x86_64-unknown-linux-gnu` to get around a build error, and don't weaken the non-musl guard in `.cargo/config.toml` or `crates/core/build.rs` — fix the error.
+
+### The two binaries
+
+- Anything jellytui sends must be something `cast.rs` already parses. The two halves are wired through the Jellyfin server, so a typo in a command name fails silently at runtime; `core`'s `jellyfin/remote_test.rs` round-trips every command through `CastEvent::from_ws` — which is why `cast.rs` and `jellyfin/session.rs` stay in `core` even though only the daemon connects the socket, to catch that at compile-and-test time instead.
 - The release carries several assets whose names all contain the target triple (`jellysink-*`, `jellytui-*`, `*.sha256`). `self_update`'s default asset selection is a substring match that would take whichever GitHub lists first, so `daemon/update.rs` pins the choice with an `asset_matcher` on the exact name. Do not remove it while more than one asset per target exists. The consequence is deliberate and documented in `specs/tui.md`: the self-updater is daemon-only, so `jellysink update` leaves `jellytui` behind and the two are expected to work version-skewed.
