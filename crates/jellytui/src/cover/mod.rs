@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Decoded covers held at once. A grid shows around fifteen, so this carries a
 /// few screens of scrollback without the encoded frames adding up.
-const CACHE_CAPACITY: usize = 64;
+pub(super) const CACHE_CAPACITY: usize = 64;
 
 /// How far a measured cell has to be from the one the covers are encoded with
 /// before it counts as another display rather than as the window's padding,
@@ -46,10 +46,9 @@ pub(super) struct Covers {
     ready: HashMap<CoverKey, Protocol>,
     order: VecDeque<CoverKey>,
     in_flight: HashSet<CoverKey>,
-    /// Items the server has no artwork for, so revisiting the row does not ask
-    /// again. A request that merely failed is not in here — that one is worth
-    /// retrying next time the item is looked at.
-    absent: HashSet<CoverKey>,
+    /// Covers this session will not ask for again: the server has no artwork
+    /// for the item, or a request for it failed.
+    unavailable: HashSet<CoverKey>,
 }
 
 impl Covers {
@@ -60,7 +59,7 @@ impl Covers {
             ready: HashMap::new(),
             order: VecDeque::new(),
             in_flight: HashSet::new(),
-            absent: HashSet::new(),
+            unavailable: HashSet::new(),
         }
     }
 
@@ -87,7 +86,7 @@ impl Covers {
         self.picker = repicker(&self.picker, cell);
         self.ready.clear();
         self.order.clear();
-        self.absent.clear();
+        self.unavailable.clear();
     }
 
     fn is_new_grid(&self, cell: Size) -> bool {
@@ -112,27 +111,24 @@ impl Covers {
         true
     }
 
-    /// Whether any of `keys` is still a blank tile: not cached, not in flight
-    /// and not known absent. The screen standing still is not evidence that
-    /// every cover on it arrived — a request can fail, and an entry can be
-    /// evicted by results still landing for the sizes a drag-resize went
-    /// through — so this is what the caller asks instead of assuming an
-    /// unchanged screen needs nothing.
+    /// Whether any of `keys` is a tile still waiting on a cover it may yet get.
     pub(super) fn any_missing(&self, keys: &[CoverKey]) -> bool {
         keys.iter().any(|key| !self.settled(key))
     }
 
     fn settled(&self, key: &CoverKey) -> bool {
-        self.ready.contains_key(key) || self.in_flight.contains(key) || self.absent.contains(key)
+        self.ready.contains_key(key)
+            || self.in_flight.contains(key)
+            || self.unavailable.contains(key)
     }
 
     /// `None` records that the server has no such image. A request that failed
-    /// for any other reason goes through [`Covers::release`] instead.
+    /// for any other reason goes through [`Covers::give_up`] instead.
     pub(super) fn store(&mut self, key: CoverKey, protocol: Option<Protocol>) {
         self.in_flight.remove(&key);
         let Some(protocol) = protocol else {
             tracing::debug!(item_id = %key.item_id, "no artwork on the server");
-            self.absent.insert(key);
+            self.unavailable.insert(key);
             return;
         };
         if self.ready.insert(key.clone(), protocol).is_none() {
@@ -145,10 +141,12 @@ impl Covers {
         }
     }
 
-    /// Gives up on a request without concluding anything about the item, so a
-    /// blip does not cost the cover for the rest of the session.
-    pub(super) fn release(&mut self, key: &CoverKey) {
+    /// One request is all a cover gets. Asking again would cost a request per
+    /// throttle window for as long as the tile is on screen, because the gate
+    /// that starts one is the tile being blank.
+    pub(super) fn give_up(&mut self, key: &CoverKey) {
         self.in_flight.remove(key);
+        self.unavailable.insert(key.clone());
     }
 
     pub(super) fn picker(&self) -> Picker {
@@ -249,12 +247,7 @@ pub(super) fn detect_picker() -> Picker {
 /// lesson `specs/tui.md` records about `/Sessions`, at a smaller scale.
 /// `Ok(None)` for an item the server has no artwork for. Decode and encode are
 /// real CPU work on the thread that draws, so they go to `spawn_blocking`,
-/// which is also where the disk cache is read and written: plain `std::fs` on
-/// a thread that is already blocking, rather than a second hop through
-/// `tokio::fs`.
-///
-/// An absent image is not remembered on disk. `Covers::absent` answers for the
-/// session, and a negative entry would need an invalidation rule of its own.
+/// which is also where the disk cache is read and written.
 ///
 /// The server answers with a bucket rather than the exact box, so every cover
 /// is rescaled here now and the default `Nearest` would show it.
@@ -273,8 +266,6 @@ pub(super) async fn fetch(
             let bytes = disk.read(&key)?;
             match encode(&bytes, &picker, size) {
                 Ok(protocol) => Some(protocol),
-                // A half-written file survives a kill, and re-decoding it every
-                // time the row scrolls past is worse than fetching once.
                 Err(err) => {
                     tracing::debug!(%err, "cached cover discarded");
                     disk.discard(&key);

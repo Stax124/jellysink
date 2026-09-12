@@ -95,9 +95,8 @@ impl App {
         let wanted = self.visible_covers();
         let moved = wanted != self.wanted_covers;
         self.wanted_covers = wanted;
-        // An unchanged screen still asks when something on it is blank, or a
-        // cover lost to a failed request or an eviction stays lost until the
-        // cursor happens to move. The throttle below bounds the retrying.
+        // A cover evicted while the cursor stood still would otherwise stay
+        // lost until the cursor happened to move.
         if !moved && !self.covers.any_missing(&self.wanted_covers) {
             return;
         }

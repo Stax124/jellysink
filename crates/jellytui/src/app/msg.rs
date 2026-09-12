@@ -31,10 +31,9 @@ pub(super) enum Msg {
         key: CoverKey,
         protocol: Option<Box<Protocol>>,
     },
-    /// The request failed rather than answered, so the item keeps its claim to
-    /// a cover and is asked for again while it is still on screen. It carries
-    /// the error because a blank tile is otherwise the only evidence there was
-    /// one.
+    /// The request failed rather than answered. It carries the error because
+    /// the tile stays blank either way, and a blank tile is otherwise the only
+    /// evidence there was one.
     CoverFailed {
         key: CoverKey,
         error: String,
@@ -88,7 +87,7 @@ impl App {
             }
             Msg::CoverFailed { key, error } => {
                 tracing::debug!(%error, "cover request failed");
-                self.covers.release(&key);
+                self.covers.give_up(&key);
             }
             Msg::Error(message) => {
                 tracing::warn!(%message, "request failed");

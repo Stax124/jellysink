@@ -360,17 +360,25 @@ an artless row is re-requested on every poll.
 
 **A still screen is not evidence that every cover on it arrived.** `tick_covers`
 used to return early whenever the wanted set was unchanged, which meant the only
-thing that ever started a request was the set *changing* — so a cover lost after
-the cursor came to rest stayed lost until the cursor happened to move again, and
-the tile was blank for the rest of the session. Two things lose one: a request
-that fails (`Msg::CoverFailed` releases the claim), and an eviction — a
-drag-resize puts a key per intermediate size through a 64-entry cache, and a
-slow result for a size nobody wants any more can push out one just fetched for
-the size on screen. Neither logged anything, so a blank tile was its own only
-evidence. So the gate is now `Covers::any_missing` — is anything wanted neither
-cached, in flight, nor absent — and the 120 ms throttle is what bounds the
-retrying. Both losses log at `debug`, and so does an absent image, because the
-next one of these should be readable in the `L` pane rather than inferred.
+thing that ever started a request was the set *changing* — so a cover evicted
+after the cursor came to rest stayed lost until the cursor happened to move
+again, and the tile was blank for the rest of the session. A drag-resize puts a
+key per intermediate size through a 64-entry cache, and a slow result for a size
+nobody wants any more pushes out one just fetched for the size on screen. So the
+gate is now `Covers::any_missing` — is anything wanted still waiting on a cover
+it may yet get.
+
+That gate is why **a failed request is final**. It makes the blank tile itself
+the thing that starts a request, so a key put back to unsettled by a failure is
+asked for once per throttle window for as long as the screen is open — against a
+server that refuses connections, a full grid is a batch every 120 ms and a redraw
+per failure, forever. `Covers::give_up` therefore files a failure alongside an
+image the server does not have: both are `unavailable`, both are answered from
+memory for the rest of the session, and only a display-scale change clears them.
+The eviction case is unaffected, because an evicted key was never failed — and
+since the disk cache went in, re-fetching it is a local read rather than a round
+trip. Both a failure and an absent image log at `debug`, because the next one of
+these should be readable in the `L` pane rather than inferred from a blank tile.
 
 ### The disk cache
 
