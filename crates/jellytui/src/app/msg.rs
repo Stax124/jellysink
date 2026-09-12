@@ -31,10 +31,12 @@ pub(super) enum Msg {
         key: CoverKey,
         protocol: Option<Box<Protocol>>,
     },
-    /// The request failed rather than answered, so the item keeps its claim to
-    /// a cover and is asked for again next time it is on screen.
+    /// The request failed rather than answered. It carries the error because
+    /// the tile stays blank either way, and a blank tile is otherwise the only
+    /// evidence there was one.
     CoverFailed {
         key: CoverKey,
+        error: String,
     },
     Error(String),
 }
@@ -83,7 +85,10 @@ impl App {
             Msg::Cover { key, protocol } => {
                 self.covers.store(key, protocol.map(|boxed| *boxed));
             }
-            Msg::CoverFailed { key } => self.covers.release(&key),
+            Msg::CoverFailed { key, error } => {
+                tracing::debug!(%error, "cover request failed");
+                self.covers.give_up(&key);
+            }
             Msg::Error(message) => {
                 tracing::warn!(%message, "request failed");
                 self.message = message;

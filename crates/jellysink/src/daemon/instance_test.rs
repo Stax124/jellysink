@@ -8,9 +8,7 @@ use tempfile::TempDir;
 #[tokio::test]
 async fn status_round_trips_over_the_socket() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     let shutdown = Signal::new();
     let restart = Signal::new();
     let (_status_tx, status_rx) = tokio::sync::watch::channel(PlayerStatus::idle(

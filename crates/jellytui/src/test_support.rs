@@ -25,6 +25,7 @@ pub(crate) fn app_with_logs(logs: LogBuffer) -> App {
         Api::from_credentials(&credentials).unwrap(),
         Paths::from_override(Some(std::path::PathBuf::from("/nonexistent"))).unwrap(),
         ratatui_image::picker::Picker::halfblocks(),
+        crate::cover::CoverDisk::disabled(),
         logs,
     )
 }

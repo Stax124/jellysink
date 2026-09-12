@@ -4,9 +4,7 @@ use tempfile::TempDir;
 #[test]
 fn config_roundtrip_and_set() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     let mut cfg = Config::default();
     cfg.set(Field::MpvPath, "/usr/bin/mpv").unwrap();
     cfg.save(&paths).unwrap();
@@ -61,9 +59,7 @@ fn mpv_args_is_not_stored_in_config_toml() {
 #[test]
 fn load_does_not_create_a_config_file() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     let cfg = Config::load(&paths).unwrap();
     assert_eq!(cfg, Config::default());
     assert!(
@@ -88,9 +84,7 @@ fn invalid_autoplay_value_is_a_usage_error() {
 #[test]
 fn missing_autoplay_key_defaults_on() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     paths.ensure().unwrap();
     fs::write(
         paths.config_file(),
@@ -104,9 +98,7 @@ fn missing_autoplay_key_defaults_on() {
 #[test]
 fn autoplay_defaults_on_and_roundtrips() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     let cfg = Config::default();
     assert!(cfg.autoplay);
     cfg.save(&paths).unwrap();

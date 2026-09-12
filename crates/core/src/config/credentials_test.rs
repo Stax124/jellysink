@@ -5,9 +5,7 @@ use tempfile::TempDir;
 #[test]
 fn cred_file_is_mode_600() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     let creds = Credentials {
         server: "http://h:8096".into(),
         username: "u".into(),

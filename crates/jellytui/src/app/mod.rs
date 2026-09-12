@@ -9,7 +9,7 @@ mod request;
 pub(crate) use browse::Shelf;
 use msg::Msg;
 
-use crate::cover::{self, CoverKey, Covers};
+use crate::cover::{self, CoverDisk, CoverKey, Covers};
 use crate::keys::{self, Intent};
 use crate::logs::{LogBuffer, LogLine};
 use crate::nav::{self, End, Level, Source};
@@ -123,7 +123,13 @@ pub(crate) struct App {
 }
 
 impl App {
-    pub(crate) fn new(api: Api, paths: Paths, picker: Picker, logs: LogBuffer) -> Self {
+    pub(crate) fn new(
+        api: Api,
+        paths: Paths,
+        picker: Picker,
+        disk: CoverDisk,
+        logs: LogBuffer,
+    ) -> Self {
         let (tx, rx) = unbounded_channel();
         Self {
             api,
@@ -142,7 +148,7 @@ impl App {
             playing_item: None,
             playing_episodes: Level::loading("Episodes", Source::Libraries),
             session_id: None,
-            covers: Covers::new(picker),
+            covers: Covers::new(picker, disk),
             viewport: Size::default(),
             cover_due: None,
             cover_ready_at: None,

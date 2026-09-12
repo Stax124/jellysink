@@ -358,6 +358,69 @@ an HTTP round trip of about the same. The cache is bounded and evicts oldest-fir
 items the server has no image for are remembered as absent, because otherwise
 an artless row is re-requested on every poll.
 
+**A still screen is not evidence that every cover on it arrived.** `tick_covers`
+used to return early whenever the wanted set was unchanged, which meant the only
+thing that ever started a request was the set *changing* — so a cover evicted
+after the cursor came to rest stayed lost until the cursor happened to move
+again, and the tile was blank for the rest of the session. A drag-resize puts a
+key per intermediate size through a 64-entry cache, and a slow result for a size
+nobody wants any more pushes out one just fetched for the size on screen. So the
+gate is now `Covers::any_missing` — is anything wanted still waiting on a cover
+it may yet get.
+
+That gate is why **a failed request is final**. It makes the blank tile itself
+the thing that starts a request, so a key put back to unsettled by a failure is
+asked for once per throttle window for as long as the screen is open — against a
+server that refuses connections, a full grid is a batch every 120 ms and a redraw
+per failure, forever. `Covers::give_up` therefore files a failure alongside an
+image the server does not have: both are `unavailable`, both are answered from
+memory for the rest of the session, and only a display-scale change clears them.
+The eviction case is unaffected, because an evicted key was never failed — and
+since the disk cache went in, re-fetching it is a local read rather than a round
+trip. Both a failure and an absent image log at `debug`, because the next one of
+these should be readable in the `L` pane rather than inferred from a blank tile.
+
+### The disk cache
+
+The in-memory cache holds 64 covers and stops there on purpose. A `Protocol` is
+a decoded frame encoded against one rect at one cell size, so holding more of
+them is straight memory growth — and every one of them is invalidated by a
+resize or a move to another display scale, which is why none of them can be
+persisted.
+
+What is persisted is the layer underneath: the **bytes the server sent**, about
+40 KB of WebP each, under `~/.cache/jellysink/covers/` (`Paths::cover_cache_dir`;
+a `--config` override takes the cache with it, so an isolated run stays
+isolated). A memory miss then costs a local read and a decode instead of an
+HTTP round trip, at no extra resident memory. `cover/disk.rs` owns it and
+`cover/mod.rs` calls it from inside the `spawn_blocking` that was already doing
+the decode — plain `std::fs` on a thread that is already blocking, rather than
+a second hop through `tokio::fs`, which would also have cost the daemon a tokio
+feature it does not need.
+
+Four rules:
+
+- **The key is the bucket, not the box.** An entry is
+  `{item_id}-{image_tag}-{bucket_w}x{bucket_h}.img`, rounded through core's
+  `bucket_pixels` — the same rounding the request makes. Keying on the exact box
+  instead would store a file per pixel of a window drag while the requests
+  behind them were all the same one. The key is its own filename and nothing is
+  hashed; the id and the tag are sanitised on the way in, because they come from
+  the server and a `/` or a `..` in one would make the key a path.
+- **Absence stays in memory.** `Covers::absent` answers for the session; a
+  negative entry on disk would need an invalidation rule of its own for no gain.
+- **Nothing here may fail a cover.** Every path in `disk.rs` degrades to a miss,
+  and a miss is a fetch. A file that will not decode — a half-write that
+  survived a kill — is removed rather than re-decoded on every scroll.
+- **Eviction is LRU by mtime**, under `cover_cache_mb` (default 256, `0` off).
+  A read touches the file, so what is being looked at outlives what was merely
+  fetched first. A write prunes inline once it has written a quarter of the
+  budget since the last prune, which is what bounds a long browse; `main.rs`
+  prunes once at startup as well, so a budget the user has just lowered takes
+  effect even in a session that never writes a cover. A prune goes to 90% of
+  budget rather than exactly to it, or a full cache would prune again on the
+  next cover.
+
 ## The Playing screen
 
 `3` opens a screen for whatever the daemon is on: a banner carrying the

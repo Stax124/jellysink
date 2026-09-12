@@ -102,7 +102,7 @@ const IMAGE_BUCKET_PIXELS: u32 = 64;
 /// than a step: WebP turns near-lossless and quadruples.
 const IMAGE_QUALITY: u32 = 85;
 
-fn bucket_pixels(pixels: u32) -> u32 {
+pub fn bucket_pixels(pixels: u32) -> u32 {
     pixels.max(1).div_ceil(IMAGE_BUCKET_PIXELS) * IMAGE_BUCKET_PIXELS
 }
 

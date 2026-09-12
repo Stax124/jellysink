@@ -1,5 +1,10 @@
 //! Cover art: which image an item wants, and the bounded cache of decoded
-//! terminal protocols behind it.
+//! terminal protocols behind it. The encoded bytes underneath it are kept on
+//! disk instead — see [`disk`].
+
+mod disk;
+
+pub(crate) use disk::CoverDisk;
 
 use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::jellyfin::auth::Api;
@@ -15,7 +20,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Decoded covers held at once. A grid shows around fifteen, so this carries a
 /// few screens of scrollback without the encoded frames adding up.
-const CACHE_CAPACITY: usize = 64;
+pub(super) const CACHE_CAPACITY: usize = 64;
 
 /// How far a measured cell has to be from the one the covers are encoded with
 /// before it counts as another display rather than as the window's padding,
@@ -37,23 +42,24 @@ pub(super) struct CoverKey {
 
 pub(super) struct Covers {
     picker: Picker,
+    disk: CoverDisk,
     ready: HashMap<CoverKey, Protocol>,
     order: VecDeque<CoverKey>,
     in_flight: HashSet<CoverKey>,
-    /// Items the server has no artwork for, so revisiting the row does not ask
-    /// again. A request that merely failed is not in here — that one is worth
-    /// retrying next time the item is looked at.
-    absent: HashSet<CoverKey>,
+    /// Covers this session will not ask for again: the server has no artwork
+    /// for the item, or a request for it failed.
+    unavailable: HashSet<CoverKey>,
 }
 
 impl Covers {
-    pub(super) fn new(picker: Picker) -> Self {
+    pub(super) fn new(picker: Picker, disk: CoverDisk) -> Self {
         Self {
             picker,
+            disk,
             ready: HashMap::new(),
             order: VecDeque::new(),
             in_flight: HashSet::new(),
-            absent: HashSet::new(),
+            unavailable: HashSet::new(),
         }
     }
 
@@ -80,7 +86,7 @@ impl Covers {
         self.picker = repicker(&self.picker, cell);
         self.ready.clear();
         self.order.clear();
-        self.absent.clear();
+        self.unavailable.clear();
     }
 
     fn is_new_grid(&self, cell: Size) -> bool {
@@ -98,20 +104,31 @@ impl Covers {
     /// Whether the caller should start a request for `key`, marking it in
     /// flight if so.
     pub(super) fn claim(&mut self, key: &CoverKey) -> bool {
-        if self.ready.contains_key(key) || self.in_flight.contains(key) || self.absent.contains(key)
-        {
+        if self.settled(key) {
             return false;
         }
         self.in_flight.insert(key.clone());
         true
     }
 
+    /// Whether any of `keys` is a tile still waiting on a cover it may yet get.
+    pub(super) fn any_missing(&self, keys: &[CoverKey]) -> bool {
+        keys.iter().any(|key| !self.settled(key))
+    }
+
+    fn settled(&self, key: &CoverKey) -> bool {
+        self.ready.contains_key(key)
+            || self.in_flight.contains(key)
+            || self.unavailable.contains(key)
+    }
+
     /// `None` records that the server has no such image. A request that failed
-    /// for any other reason goes through [`Covers::release`] instead.
+    /// for any other reason goes through [`Covers::give_up`] instead.
     pub(super) fn store(&mut self, key: CoverKey, protocol: Option<Protocol>) {
         self.in_flight.remove(&key);
         let Some(protocol) = protocol else {
-            self.absent.insert(key);
+            tracing::debug!(item_id = %key.item_id, "no artwork on the server");
+            self.unavailable.insert(key);
             return;
         };
         if self.ready.insert(key.clone(), protocol).is_none() {
@@ -124,14 +141,20 @@ impl Covers {
         }
     }
 
-    /// Gives up on a request without concluding anything about the item, so a
-    /// blip does not cost the cover for the rest of the session.
-    pub(super) fn release(&mut self, key: &CoverKey) {
+    /// One request is all a cover gets. Asking again would cost a request per
+    /// throttle window for as long as the tile is on screen, because the gate
+    /// that starts one is the tile being blank.
+    pub(super) fn give_up(&mut self, key: &CoverKey) {
         self.in_flight.remove(key);
+        self.unavailable.insert(key.clone());
     }
 
     pub(super) fn picker(&self) -> Picker {
         self.picker.clone()
+    }
+
+    pub(super) fn disk(&self) -> CoverDisk {
+        self.disk.clone()
     }
 
     pub(super) fn font_size(&self) -> FontSize {
@@ -223,13 +246,46 @@ pub(super) fn detect_picker() -> Picker {
 /// One cover, resized by the server rather than downloaded whole — the same
 /// lesson `specs/tui.md` records about `/Sessions`, at a smaller scale.
 /// `Ok(None)` for an item the server has no artwork for. Decode and encode are
-/// real CPU work on the thread that draws, so they go to `spawn_blocking`.
+/// real CPU work on the thread that draws, so they go to `spawn_blocking`,
+/// which is also where the disk cache is read and written.
 ///
 /// The server answers with a bucket rather than the exact box, so every cover
 /// is rescaled here now and the default `Nearest` would show it.
-pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<Option<Protocol>> {
+pub(super) async fn fetch(
+    api: &Api,
+    picker: Picker,
+    disk: CoverDisk,
+    key: &CoverKey,
+) -> Result<Option<Protocol>> {
     let started = std::time::Instant::now();
     let (font_size, size) = (picker.font_size(), key.size);
+
+    let cached = {
+        let (disk, picker, key) = (disk.clone(), picker.clone(), key.clone());
+        tokio::task::spawn_blocking(move || {
+            let bytes = disk.read(&key)?;
+            match encode(&bytes, &picker, size) {
+                Ok(protocol) => Some(protocol),
+                Err(err) => {
+                    tracing::debug!(%err, "cached cover discarded");
+                    disk.discard(&key);
+                    None
+                }
+            }
+        })
+        .await
+        .wrap_err("cover worker")?
+    };
+    if let Some(protocol) = cached {
+        tracing::trace!(
+            item_id = %key.item_id,
+            source = "disk",
+            total_ms = started.elapsed().as_millis(),
+            "cover"
+        );
+        return Ok(Some(protocol));
+    }
+
     let width = u32::from(size.width) * u32::from(font_size.width);
     let height = u32::from(size.height) * u32::from(font_size.height);
     let Some(bytes) = api
@@ -239,25 +295,31 @@ pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<O
         return Ok(None);
     };
     let (len, fetched_ms) = (bytes.len(), started.elapsed().as_millis());
+    let stored = key.clone();
     let protocol = tokio::task::spawn_blocking(move || {
-        let image = image::load_from_memory(&bytes).wrap_err("decoding cover")?;
-        picker
-            .new_protocol(image, size, Resize::Fit(Some(FilterType::Lanczos3)))
-            .wrap_err("encoding cover for the terminal")
-            .map(Some)
+        disk.write(&stored, &bytes);
+        encode(&bytes, &picker, size)
     })
     .await
     .wrap_err("cover worker")?;
     tracing::trace!(
         item_id = %key.item_id,
+        source = "server",
         bytes = len,
         fetched_ms,
         total_ms = started.elapsed().as_millis(),
         "cover"
     );
-    protocol
+    protocol.map(Some)
+}
+
+fn encode(bytes: &[u8], picker: &Picker, size: Size) -> Result<Protocol> {
+    let image = image::load_from_memory(bytes).wrap_err("decoding cover")?;
+    picker
+        .new_protocol(image, size, Resize::Fit(Some(FilterType::Lanczos3)))
+        .wrap_err("encoding cover for the terminal")
 }
 
 #[cfg(test)]
-#[path = "cover_test.rs"]
+#[path = "mod_test.rs"]
 mod tests;

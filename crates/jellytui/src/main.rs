@@ -55,14 +55,21 @@ async fn main() -> Result<()> {
 }
 
 async fn run(paths: Paths) -> Result<()> {
-    // Before anything worth logging happens, and while a bad filter can still
-    // be reported on the normal screen.
-    let logs = logs::install(&Config::configured_log_level(&paths))?;
+    // Before anything worth logging happens, and while a bad filter — or a
+    // config.toml that will not parse — can still be reported on the normal
+    // screen.
+    let config = Config::load(&paths)?;
+    let logs = logs::install(&config.log_level)?;
     let credentials = Credentials::load(&paths)?
         .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
     let api = Api::from_credentials(&credentials)?;
     // Before the alternate screen is taken: the protocol query writes to
     // stdout and reads the terminal's answer back off stdin.
     let picker = cover::detect_picker();
-    app::App::new(api, paths, picker, logs).run().await
+    let disk = cover::CoverDisk::new(paths.cover_cache_dir(), config.cover_cache_mb);
+    tokio::task::spawn_blocking({
+        let disk = disk.clone();
+        move || disk.prune()
+    });
+    app::App::new(api, paths, picker, disk, logs).run().await
 }

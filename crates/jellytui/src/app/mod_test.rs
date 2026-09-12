@@ -274,3 +274,65 @@ async fn a_moving_cursor_does_not_fetch_a_cover_per_row() {
         "nothing the cursor passed through was requested"
     );
 }
+
+fn protocol() -> Protocol {
+    Picker::halfblocks()
+        .new_protocol(
+            image::DynamicImage::new_rgb8(4, 4),
+            Size::new(2, 2),
+            ratatui_image::Resize::Fit(None),
+        )
+        .unwrap()
+}
+
+/// A drag-resize is what evicts one: a key per intermediate size goes through
+/// the cache while the screen itself does not move.
+#[tokio::test(start_paused = true)]
+async fn a_cover_evicted_while_the_cursor_stood_still_is_asked_for_again() {
+    let mut app = app();
+    app.viewport = Size::new(120, 40);
+    app.resume.fill(vec![tile("a")]);
+    app.tick_covers();
+    let key = app.visible_covers().pop().expect("the shelf wants a cover");
+    app.covers.store(key.clone(), Some(protocol()));
+
+    for index in 0..cover::CACHE_CAPACITY {
+        let dragged = app
+            .covers
+            .key(&tile(&format!("drag{index}")), Size::new(4, 4))
+            .unwrap();
+        app.covers.store(dragged, Some(protocol()));
+    }
+    assert!(app.covers.protocol(&key).is_none(), "the cover was evicted");
+
+    tokio::time::advance(COVER_THROTTLE * 2).await;
+    app.tick_covers();
+
+    assert!(
+        !app.covers.claim(&key),
+        "a blank tile the screen still wants was never asked for again"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cover_whose_request_failed_is_not_asked_for_once_a_window_forever() {
+    let mut app = app();
+    app.viewport = Size::new(120, 40);
+    app.resume.fill(vec![tile("a")]);
+    app.tick_covers();
+    let key = app.visible_covers().pop().expect("the shelf wants a cover");
+    let ready_at = app.cover_ready_at.expect("the first batch opened a window");
+
+    app.on_msg(Msg::CoverFailed {
+        key,
+        error: "connection refused".into(),
+    });
+    tokio::time::advance(COVER_THROTTLE * 2).await;
+    app.tick_covers();
+
+    assert_eq!(
+        app.cover_ready_at,
+        Some(ready_at),
+        "a second batch went out for a cover that had already failed"
+    );
+}

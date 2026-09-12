@@ -16,7 +16,7 @@ fn key(id: &str) -> CoverKey {
 }
 
 fn covers() -> Covers {
-    Covers::new(Picker::halfblocks())
+    Covers::new(Picker::halfblocks(), CoverDisk::disabled())
 }
 
 fn window(columns_rows: Size, pixels: Size) -> WindowSize {
@@ -85,14 +85,14 @@ fn an_image_the_server_does_not_have_is_not_asked_for_again() {
 }
 
 #[test]
-fn a_request_that_merely_failed_is_tried_again_next_time() {
-    // A network blip must not cost the item its artwork for the session, the
-    // way a genuinely missing image does.
+fn a_failed_request_is_not_asked_for_again() {
+    // A blank tile is what starts a request, so retrying one would be a
+    // request per throttle window for as long as the row is on screen.
     let mut covers = covers();
     let key = key("s1");
     assert!(covers.claim(&key));
-    covers.release(&key);
-    assert!(covers.claim(&key));
+    covers.give_up(&key);
+    assert!(!covers.claim(&key));
 }
 
 #[test]

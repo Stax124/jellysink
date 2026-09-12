@@ -8,19 +8,26 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub config_dir: PathBuf,
+    cache_dir: PathBuf,
 }
 
 impl Paths {
+    /// An overridden config directory takes the cache with it, so `--config`
+    /// isolates a run rather than leaving it writing to the real `~/.cache`.
     pub fn from_override(config_dir: Option<PathBuf>) -> color_eyre::Result<Self> {
-        let config_dir = match config_dir {
-            Some(p) => p,
-            None => {
-                let dirs = directories::ProjectDirs::from("", APP_NAME, APP_NAME)
-                    .ok_or_else(|| usage_err("could not resolve a config directory"))?;
-                dirs.config_dir().to_path_buf()
-            }
+        let Some(config_dir) = config_dir else {
+            let dirs = directories::ProjectDirs::from("", APP_NAME, APP_NAME)
+                .ok_or_else(|| usage_err("could not resolve a config directory"))?;
+            return Ok(Self {
+                config_dir: dirs.config_dir().to_path_buf(),
+                cache_dir: dirs.cache_dir().to_path_buf(),
+            });
         };
-        Ok(Self { config_dir })
+        let cache_dir = config_dir.join("cache");
+        Ok(Self {
+            config_dir,
+            cache_dir,
+        })
     }
 
     /// Creates the config directory, mode 0700 — `mpv.sock` is created by mpv
@@ -56,6 +63,13 @@ impl Paths {
 
     pub(crate) fn mpv_args_file(&self) -> PathBuf {
         self.config_dir.join("mpv_args.conf")
+    }
+
+    /// Artwork jellytui keeps between sessions. Under the cache directory
+    /// rather than beside the config: it is derived data the user may delete at
+    /// any moment, and nothing in it is private the way the access token is.
+    pub fn cover_cache_dir(&self) -> PathBuf {
+        self.cache_dir.join("covers")
     }
 }
 

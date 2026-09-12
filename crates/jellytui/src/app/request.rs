@@ -93,10 +93,13 @@ impl App {
 
     pub(super) fn tick_covers(&mut self) {
         let wanted = self.visible_covers();
-        if wanted == self.wanted_covers {
+        let moved = wanted != self.wanted_covers;
+        self.wanted_covers = wanted;
+        // A cover evicted while the cursor stood still would otherwise stay
+        // lost until the cursor happened to move.
+        if !moved && !self.covers.any_missing(&self.wanted_covers) {
             return;
         }
-        self.wanted_covers = wanted;
         let now = tokio::time::Instant::now();
         match self.cover_ready_at {
             // Inside the window: wait it out rather than asking for a row the
@@ -121,14 +124,17 @@ impl App {
             }
             spawned += 1;
             let (api, tx) = (self.api.clone(), self.tx.clone());
-            let picker = self.covers.picker();
+            let (picker, disk) = (self.covers.picker(), self.covers.disk());
             tokio::spawn(async move {
-                let msg = match cover::fetch(&api, picker, &key).await {
+                let msg = match cover::fetch(&api, picker, disk, &key).await {
                     Ok(protocol) => Msg::Cover {
                         key,
                         protocol: protocol.map(Box::new),
                     },
-                    Err(_) => Msg::CoverFailed { key },
+                    Err(err) => Msg::CoverFailed {
+                        key,
+                        error: format!("{err:#}"),
+                    },
                 };
                 let _ = tx.send(msg);
             });
