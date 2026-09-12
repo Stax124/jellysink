@@ -121,9 +121,9 @@ impl App {
             }
             spawned += 1;
             let (api, tx) = (self.api.clone(), self.tx.clone());
-            let picker = self.covers.picker();
+            let (picker, disk) = (self.covers.picker(), self.covers.disk());
             tokio::spawn(async move {
-                let msg = match cover::fetch(&api, picker, &key).await {
+                let msg = match cover::fetch(&api, picker, disk, &key).await {
                     Ok(protocol) => Msg::Cover {
                         key,
                         protocol: protocol.map(Box::new),

@@ -1,5 +1,10 @@
 //! Cover art: which image an item wants, and the bounded cache of decoded
-//! terminal protocols behind it.
+//! terminal protocols behind it. The encoded bytes underneath it are kept on
+//! disk instead — see [`disk`].
+
+mod disk;
+
+pub(crate) use disk::CoverDisk;
 
 use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::jellyfin::auth::Api;
@@ -37,6 +42,7 @@ pub(super) struct CoverKey {
 
 pub(super) struct Covers {
     picker: Picker,
+    disk: CoverDisk,
     ready: HashMap<CoverKey, Protocol>,
     order: VecDeque<CoverKey>,
     in_flight: HashSet<CoverKey>,
@@ -47,9 +53,10 @@ pub(super) struct Covers {
 }
 
 impl Covers {
-    pub(super) fn new(picker: Picker) -> Self {
+    pub(super) fn new(picker: Picker, disk: CoverDisk) -> Self {
         Self {
             picker,
+            disk,
             ready: HashMap::new(),
             order: VecDeque::new(),
             in_flight: HashSet::new(),
@@ -132,6 +139,10 @@ impl Covers {
 
     pub(super) fn picker(&self) -> Picker {
         self.picker.clone()
+    }
+
+    pub(super) fn disk(&self) -> CoverDisk {
+        self.disk.clone()
     }
 
     pub(super) fn font_size(&self) -> FontSize {
@@ -223,13 +234,53 @@ pub(super) fn detect_picker() -> Picker {
 /// One cover, resized by the server rather than downloaded whole — the same
 /// lesson `specs/tui.md` records about `/Sessions`, at a smaller scale.
 /// `Ok(None)` for an item the server has no artwork for. Decode and encode are
-/// real CPU work on the thread that draws, so they go to `spawn_blocking`.
+/// real CPU work on the thread that draws, so they go to `spawn_blocking`,
+/// which is also where the disk cache is read and written: plain `std::fs` on
+/// a thread that is already blocking, rather than a second hop through
+/// `tokio::fs`.
+///
+/// An absent image is not remembered on disk. `Covers::absent` answers for the
+/// session, and a negative entry would need an invalidation rule of its own.
 ///
 /// The server answers with a bucket rather than the exact box, so every cover
 /// is rescaled here now and the default `Nearest` would show it.
-pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<Option<Protocol>> {
+pub(super) async fn fetch(
+    api: &Api,
+    picker: Picker,
+    disk: CoverDisk,
+    key: &CoverKey,
+) -> Result<Option<Protocol>> {
     let started = std::time::Instant::now();
     let (font_size, size) = (picker.font_size(), key.size);
+
+    let cached = {
+        let (disk, picker, key) = (disk.clone(), picker.clone(), key.clone());
+        tokio::task::spawn_blocking(move || {
+            let bytes = disk.read(&key)?;
+            match encode(&bytes, &picker, size) {
+                Ok(protocol) => Some(protocol),
+                // A half-written file survives a kill, and re-decoding it every
+                // time the row scrolls past is worse than fetching once.
+                Err(err) => {
+                    tracing::debug!(%err, "cached cover discarded");
+                    disk.discard(&key);
+                    None
+                }
+            }
+        })
+        .await
+        .wrap_err("cover worker")?
+    };
+    if let Some(protocol) = cached {
+        tracing::trace!(
+            item_id = %key.item_id,
+            source = "disk",
+            total_ms = started.elapsed().as_millis(),
+            "cover"
+        );
+        return Ok(Some(protocol));
+    }
+
     let width = u32::from(size.width) * u32::from(font_size.width);
     let height = u32::from(size.height) * u32::from(font_size.height);
     let Some(bytes) = api
@@ -239,25 +290,31 @@ pub(super) async fn fetch(api: &Api, picker: Picker, key: &CoverKey) -> Result<O
         return Ok(None);
     };
     let (len, fetched_ms) = (bytes.len(), started.elapsed().as_millis());
+    let stored = key.clone();
     let protocol = tokio::task::spawn_blocking(move || {
-        let image = image::load_from_memory(&bytes).wrap_err("decoding cover")?;
-        picker
-            .new_protocol(image, size, Resize::Fit(Some(FilterType::Lanczos3)))
-            .wrap_err("encoding cover for the terminal")
-            .map(Some)
+        disk.write(&stored, &bytes);
+        encode(&bytes, &picker, size)
     })
     .await
     .wrap_err("cover worker")?;
     tracing::trace!(
         item_id = %key.item_id,
+        source = "server",
         bytes = len,
         fetched_ms,
         total_ms = started.elapsed().as_millis(),
         "cover"
     );
-    protocol
+    protocol.map(Some)
+}
+
+fn encode(bytes: &[u8], picker: &Picker, size: Size) -> Result<Protocol> {
+    let image = image::load_from_memory(bytes).wrap_err("decoding cover")?;
+    picker
+        .new_protocol(image, size, Resize::Fit(Some(FilterType::Lanczos3)))
+        .wrap_err("encoding cover for the terminal")
 }
 
 #[cfg(test)]
-#[path = "cover_test.rs"]
+#[path = "mod_test.rs"]
 mod tests;

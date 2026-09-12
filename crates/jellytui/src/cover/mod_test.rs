@@ -16,7 +16,7 @@ fn key(id: &str) -> CoverKey {
 }
 
 fn covers() -> Covers {
-    Covers::new(Picker::halfblocks())
+    Covers::new(Picker::halfblocks(), CoverDisk::disabled())
 }
 
 fn window(columns_rows: Size, pixels: Size) -> WindowSize {
