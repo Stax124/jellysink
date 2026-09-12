@@ -404,8 +404,9 @@ Four rules:
   `{item_id}-{image_tag}-{bucket_w}x{bucket_h}.img`, rounded through core's
   `bucket_pixels` — the same rounding the request makes. Keying on the exact box
   instead would store a file per pixel of a window drag while the requests
-  behind them were all the same one. Ids and tags are hex, so the key is its own
-  filename and nothing has to be hashed.
+  behind them were all the same one. The key is its own filename and nothing is
+  hashed; the id and the tag are sanitised on the way in, because they come from
+  the server and a `/` or a `..` in one would make the key a path.
 - **Absence stays in memory.** `Covers::absent` answers for the session; a
   negative entry on disk would need an invalidation rule of its own for no gain.
 - **Nothing here may fail a cover.** Every path in `disk.rs` degrades to a miss,

@@ -1,8 +1,12 @@
 use super::*;
 use ratatui::layout::Size;
 use serde::Deserialize;
-use std::thread::sleep;
 use std::time::Duration;
+
+fn age(path: &Path, seconds: u64) {
+    let when = SystemTime::now() - Duration::from_secs(seconds);
+    fs::File::open(path).unwrap().set_modified(when).unwrap();
+}
 
 fn key(item_id: &str, box_: Size) -> CoverKey {
     let item = jellysink_core::jellyfin::model::Item::deserialize(serde_json::json!({
@@ -33,8 +37,6 @@ fn a_cover_written_in_one_session_is_read_back_in_the_next() {
 
 #[test]
 fn two_boxes_inside_one_bucket_share_the_request_and_the_file() {
-    // They already share a request — a key that rounded differently from
-    // `primary_image` would store a file per pixel of window drag.
     let dir = tempfile::tempdir().unwrap();
     let disk = CoverDisk::new(dir.path().to_path_buf(), 8);
     let small = key("s1", Size::new(10, 8));
@@ -55,11 +57,11 @@ fn a_lowered_budget_drops_the_cover_left_behind_and_keeps_the_one_being_looked_a
     let big = vec![0u8; 700 * 1024];
 
     roomy.write(&stale, &big);
-    // mtime orders them, and a filesystem's is not always finer than the loop
-    // that wrote both.
-    sleep(Duration::from_millis(20));
     roomy.write(&fresh, &big);
-    sleep(Duration::from_millis(20));
+    // Set rather than slept for: a filesystem's mtime is not always finer than
+    // the two writes above.
+    age(&roomy.path(&stale), 60);
+    age(&roomy.path(&fresh), 30);
     // Reading is what makes a cover recent, so this reverses the two.
     assert!(roomy.read(&stale).is_some());
 
@@ -79,7 +81,6 @@ fn a_session_that_keeps_writing_stays_under_budget_without_being_asked_to() {
 
     for index in 0..8 {
         disk.write(&key(&format!("s{index}"), Size::new(10, 8)), &big);
-        sleep(Duration::from_millis(5));
     }
 
     let total: u64 = std::fs::read_dir(dir.path())
