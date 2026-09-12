@@ -30,8 +30,6 @@ fn ensure_tightens_a_directory_left_world_readable_by_an_older_version() {
 
 #[test]
 fn an_overridden_config_dir_takes_the_cover_cache_with_it() {
-    // Otherwise `--config /tmp/…` still writes artwork into the real
-    // `~/.cache`, which defeats the point of isolating a run.
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
     assert!(paths.cover_cache_dir().starts_with(dir.path()));

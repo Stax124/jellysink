@@ -67,8 +67,6 @@ async fn run(paths: Paths) -> Result<()> {
     // stdout and reads the terminal's answer back off stdin.
     let picker = cover::detect_picker();
     let disk = cover::CoverDisk::new(paths.cover_cache_dir(), config.cover_cache_mb);
-    // Once a run, so a budget the user has just lowered takes effect even in a
-    // session that never writes a cover.
     tokio::task::spawn_blocking({
         let disk = disk.clone();
         move || disk.prune()

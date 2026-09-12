@@ -285,9 +285,8 @@ fn protocol() -> Protocol {
         .unwrap()
 }
 
-/// A drag-resize puts a key per intermediate size through the cache, so a
-/// result for a size nobody wants any more can evict the cover of the size on
-/// screen — and the screen has not moved, so nothing else would ask again.
+/// A drag-resize is what evicts one: a key per intermediate size goes through
+/// the cache while the screen itself does not move.
 #[tokio::test(start_paused = true)]
 async fn a_cover_evicted_while_the_cursor_stood_still_is_asked_for_again() {
     let mut app = app();

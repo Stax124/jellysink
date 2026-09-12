@@ -92,8 +92,8 @@ impl Config {
         Ok(cfg)
     }
 
-    /// The log level to start tracing with, for the two binaries that must do
-    /// so before a config error has anywhere to be reported.
+    /// The log level to start tracing with, before a config error has anywhere
+    /// to be reported.
     pub fn configured_log_level(paths: &Paths) -> String {
         Self::load(paths).map_or_else(|_| Self::default().log_level, |cfg| cfg.log_level)
     }
