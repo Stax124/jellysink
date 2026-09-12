@@ -154,6 +154,7 @@ jellysink logout
 | `log_level`        | `info`    | `tracing` filter (`error`, `warn`, `info`, `debug`, `trace`); `RUST_LOG` overrides this if set. Also sets what jellytui's `L` pane shows |
 | `autoplay`         | `true`    | Next episode in aired order; `false` stops after the current item                                                                        |
 | `prepend_previous` | `true`    | Also load the episodes that aired *before* the current one, so mpv's playlist selector can reach them                                    |
+| `cover_cache_mb`   | `256`     | Disk jellytui's cover cache may use, in `~/.cache/jellysink/covers`; `0` turns it off                                                    |
 | `mpv_args`         | _(empty)_ | Extra argv on top of your mpv config, never instead of it                                                                                |
 
 `--config DIR` (global) uses a different configuration directory. The default is `~/.config/jellysink`.

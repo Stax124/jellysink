@@ -358,6 +358,46 @@ an HTTP round trip of about the same. The cache is bounded and evicts oldest-fir
 items the server has no image for are remembered as absent, because otherwise
 an artless row is re-requested on every poll.
 
+### The disk cache
+
+The in-memory cache holds 64 covers and stops there on purpose. A `Protocol` is
+a decoded frame encoded against one rect at one cell size, so holding more of
+them is straight memory growth — and every one of them is invalidated by a
+resize or a move to another display scale, which is why none of them can be
+persisted.
+
+What is persisted is the layer underneath: the **bytes the server sent**, about
+40 KB of WebP each, under `~/.cache/jellysink/covers/` (`Paths::cover_cache_dir`;
+a `--config` override takes the cache with it, so an isolated run stays
+isolated). A memory miss then costs a local read and a decode instead of an
+HTTP round trip, at no extra resident memory. `cover/disk.rs` owns it and
+`cover/mod.rs` calls it from inside the `spawn_blocking` that was already doing
+the decode — plain `std::fs` on a thread that is already blocking, rather than
+a second hop through `tokio::fs`, which would also have cost the daemon a tokio
+feature it does not need.
+
+Four rules:
+
+- **The key is the bucket, not the box.** An entry is
+  `{item_id}-{image_tag}-{bucket_w}x{bucket_h}.img`, rounded through core's
+  `bucket_pixels` — the same rounding the request makes. Keying on the exact box
+  instead would store a file per pixel of a window drag while the requests
+  behind them were all the same one. Ids and tags are hex, so the key is its own
+  filename and nothing has to be hashed.
+- **Absence stays in memory.** `Covers::absent` answers for the session; a
+  negative entry on disk would need an invalidation rule of its own for no gain.
+- **Nothing here may fail a cover.** Every path in `disk.rs` degrades to a miss,
+  and a miss is a fetch. A file that will not decode — a half-write that
+  survived a kill — is removed rather than re-decoded on every scroll.
+- **Eviction is LRU by mtime**, under `cover_cache_mb` (default 256, `0` off).
+  A read touches the file, so what is being looked at outlives what was merely
+  fetched first. A write prunes inline once it has written a quarter of the
+  budget since the last prune, which is what bounds a long browse; `main.rs`
+  prunes once at startup as well, so a budget the user has just lowered takes
+  effect even in a session that never writes a cover. A prune goes to 90% of
+  budget rather than exactly to it, or a full cache would prune again on the
+  next cover.
+
 ## The Playing screen
 
 `3` opens a screen for whatever the daemon is on: a banner carrying the
