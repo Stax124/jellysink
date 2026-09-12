@@ -5,9 +5,7 @@ use tempfile::TempDir;
 #[test]
 fn second_lock_fails() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     let _a = InstanceLock::acquire(&paths).unwrap();
     let b = InstanceLock::acquire(&paths);
     assert!(b.is_err());
@@ -17,9 +15,7 @@ fn second_lock_fails() {
 #[test]
 fn lock_released_on_drop() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     {
         let _a = InstanceLock::acquire(&paths).unwrap();
     }
@@ -49,9 +45,7 @@ fn parse_instance_command_stop_and_restart() {
 #[test]
 fn request_status_without_a_running_instance_is_a_usage_error() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     let err = request_status(&paths).unwrap_err();
     assert!(err.to_string().contains("not running"));
 }
@@ -59,9 +53,7 @@ fn request_status_without_a_running_instance_is_a_usage_error() {
 #[test]
 fn no_lock_file_means_nothing_is_running() {
     let dir = tempfile::TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: dir.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
     assert!(!is_running(&paths));
     assert!(
         !paths.lock_file().exists(),
@@ -72,9 +64,7 @@ fn no_lock_file_means_nothing_is_running() {
 #[test]
 fn a_held_lock_means_something_is_running() {
     let dir = tempfile::TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: dir.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
     let lock = InstanceLock::acquire(&paths).unwrap();
     assert!(is_running(&paths));
     drop(lock);
@@ -86,9 +76,7 @@ fn a_held_lock_means_something_is_running() {
 #[test]
 fn a_stale_stop_socket_left_by_a_kill_does_not_look_like_a_running_daemon() {
     let dir = tempfile::TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: dir.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
     drop(InstanceLock::acquire(&paths).unwrap());
     std::fs::write(paths.stop_socket(), b"").unwrap();
     assert!(paths.stop_socket().exists(), "premise of the test");

@@ -4,9 +4,7 @@ use tempfile::TempDir;
 #[test]
 fn mpv_args_roundtrip_and_reload() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     MpvArgs::save(&paths, "--hwdec=no --vo=gpu").unwrap();
     let loaded = MpvArgs::load(&paths).unwrap();
     assert_eq!(loaded.0, vec!["--hwdec=no", "--vo=gpu"]);
@@ -20,18 +18,14 @@ fn mpv_args_roundtrip_and_reload() {
 #[test]
 fn mpv_args_missing_file_is_empty() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     assert_eq!(MpvArgs::load(&paths).unwrap().0, Vec::<String>::new());
 }
 
 #[test]
 fn mpv_args_comments_and_blank_lines_ignored() {
     let tmp = TempDir::new().unwrap();
-    let paths = Paths {
-        config_dir: tmp.path().to_path_buf(),
-    };
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     fs::write(
         paths.mpv_args_file(),
         "# comment\n\n--fullscreen\n  \n--volume=50\n",

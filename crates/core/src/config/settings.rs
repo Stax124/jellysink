@@ -15,6 +15,7 @@ pub enum Field {
     LogLevel,
     Autoplay,
     PrependPrevious,
+    CoverCacheMb,
 }
 
 impl Field {
@@ -24,6 +25,7 @@ impl Field {
         Field::LogLevel,
         Field::Autoplay,
         Field::PrependPrevious,
+        Field::CoverCacheMb,
     ];
 
     pub fn name(self) -> &'static str {
@@ -33,6 +35,7 @@ impl Field {
             Field::LogLevel => "log_level",
             Field::Autoplay => "autoplay",
             Field::PrependPrevious => "prepend_previous",
+            Field::CoverCacheMb => "cover_cache_mb",
         }
     }
 
@@ -58,6 +61,8 @@ pub struct Config {
     pub log_level: String,
     pub autoplay: bool,
     pub prepend_previous: bool,
+    /// How much disk jellytui's cover cache may use. `0` turns it off.
+    pub cover_cache_mb: u64,
 }
 
 impl Default for Config {
@@ -67,6 +72,7 @@ impl Default for Config {
             log_level: "info".into(),
             autoplay: true,
             prepend_previous: true,
+            cover_cache_mb: 256,
         }
     }
 }
@@ -118,6 +124,7 @@ impl Config {
             Field::LogLevel => Some(self.log_level.clone()),
             Field::Autoplay => Some(self.autoplay.to_string()),
             Field::PrependPrevious => Some(self.prepend_previous.to_string()),
+            Field::CoverCacheMb => Some(self.cover_cache_mb.to_string()),
         }
     }
 
@@ -139,6 +146,11 @@ impl Config {
             }
             Field::Autoplay => self.autoplay = parse_bool(value)?,
             Field::PrependPrevious => self.prepend_previous = parse_bool(value)?,
+            Field::CoverCacheMb => {
+                self.cover_cache_mb = value.trim().parse().map_err(|_| {
+                    usage_err(format!("invalid cover_cache_mb {value:?}; use a whole number of megabytes, or 0 to turn the cache off"))
+                })?;
+            }
         }
         Ok(true)
     }

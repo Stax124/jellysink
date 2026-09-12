@@ -19,7 +19,9 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-fn atomic_write(path: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {
+/// Also the cover cache's writer: a torn file there is a hard decode error
+/// rather than a miss that re-fetches.
+pub fn atomic_write(path: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut f =

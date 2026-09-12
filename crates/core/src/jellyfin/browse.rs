@@ -102,7 +102,10 @@ const IMAGE_BUCKET_PIXELS: u32 = 64;
 /// than a step: WebP turns near-lossless and quadruples.
 const IMAGE_QUALITY: u32 = 85;
 
-fn bucket_pixels(pixels: u32) -> u32 {
+/// Rounded up so the server's own image cache is hit again after a resize.
+/// `pub` because jellytui's disk cache keys on the bucket, and a key that
+/// rounded differently from the request would store a file per pixel.
+pub fn bucket_pixels(pixels: u32) -> u32 {
     pixels.max(1).div_ceil(IMAGE_BUCKET_PIXELS) * IMAGE_BUCKET_PIXELS
 }
 
