@@ -146,13 +146,17 @@ impl App {
         match self.screen {
             Screen::Home => self.shelf_metrics(self.home_pane),
             Screen::Browse => {
-                let first = self.rows().first()?;
-                nav::is_grid(self.rows()).then(|| {
+                let rows = self.rows();
+                let first = rows.first()?;
+                nav::is_grid(rows).then(|| {
                     grid::metrics(
                         grid::inner(self.body_area()),
                         cover::primary_aspect(first),
                         self.covers.font_size(),
-                        grid::TARGET_ROWS,
+                        grid::Shape {
+                            target_rows: grid::TARGET_ROWS,
+                            item_count: rows.len(),
+                        },
                     )
                 })
             }
@@ -163,12 +167,16 @@ impl App {
     /// A shelf's tiles whether or not it has focus: the covers in the other
     /// one are on screen too and still have to be asked for.
     pub(crate) fn shelf_metrics(&self, pane: HomePane) -> Option<grid::Metrics> {
-        let first = self.shelf(pane).items.first()?;
+        let items = &self.shelf(pane).items;
+        let first = items.first()?;
         Some(grid::metrics(
             grid::inner(view::body::shelf_rect(self.body_area(), pane)),
             cover::primary_aspect(first),
             self.covers.font_size(),
-            grid::SHELF_ROWS,
+            grid::Shape {
+                target_rows: grid::SHELF_ROWS,
+                item_count: items.len(),
+            },
         ))
     }
 

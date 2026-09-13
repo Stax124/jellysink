@@ -51,6 +51,14 @@ fn a_reload_that_returns_fewer_rows_pulls_the_cursor_back_into_range() {
 }
 
 #[test]
+fn a_level_of_libraries_is_a_grid_and_a_level_of_episodes_is_not() {
+    assert!(is_grid(&[item("CollectionFolder", "lib", None)]));
+    assert!(is_grid(&[item("UserView", "collections", None)]));
+    assert!(!is_grid(&[item("Episode", "e1", Some("s1"))]));
+    assert!(!is_grid(&[]), "nothing to size the tiles from");
+}
+
+#[test]
 fn descend_routes_each_kind_to_the_listing_that_holds_its_children() {
     assert_eq!(
         descend(&item("Series", "s1", None)),

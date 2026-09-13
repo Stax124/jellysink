@@ -175,10 +175,13 @@ own wording, is the honest confirmation that the command arrived.
 ## Two view modes
 
 A level is a grid of covers or a list with a detail rail, chosen by **item kind,
-not by `Source`** (`nav::is_grid`): `Series`, `Season`, `Movie` and `BoxSet` are
-poster-shaped and get the grid, everything else stays a list. By kind, a folder
-full of movies gets the grid whichever route reached it, and it is one function
-to test rather than a table kept in step with the browse stack.
+not by `Source`** (`nav::is_grid`): `Series`, `Season`, `Movie`, `BoxSet` and a
+library carry artwork and get the grid, everything else stays a list. By kind, a
+folder full of movies gets the grid whichever route reached it, and it is one
+function to test rather than a table kept in step with the browse stack. Only
+the first row is asked, so kinds that share a screen have to answer alike —
+`CollectionFolder` and `UserView` both come back from `/UserViews`, and a
+Libraries screen that changed shape with its sort order would be the bug.
 
 Two screens override it. **Search** is always a list — its rows are mixed kinds,
 so a grid would be tiles of three different shapes. **Home** is two grids,
@@ -231,8 +234,10 @@ thumbnails. Three bounds keep that honest:
 
 - never narrower than `minimum_tile_width` — 18 cells for a 2:3 poster, 26 for a
   16:9 still — below which the artwork is not worth drawing;
-- never so wide that a row holds fewer than `MIN_COLUMNS`, which stops a still
-  taking a third of a wide screen on its own;
+- never so wide that a row holds fewer than `MIN_COLUMNS` — which stops a still
+  taking a third of a wide screen on its own — unless the level has fewer items
+  than that, in which case they spread over their own count, since there is
+  nothing left for a wide tile to crowd out;
 - and **no budget at all** when the area cannot reach `TARGET_ROWS` even at the
   minimum width, since capping a cover that was never going to fit two rows only
   shrinks the one row that does fit.
@@ -245,6 +250,15 @@ fit fewer of the same covers. The cover is then `cover::fit` against both the
 tile width and that budget, because evening the tiles out across the area hands
 each one a few columns more than it asked for and a poster obeying its aspect
 would grow out of the height with them.
+
+`Metrics::rows` is what the grid **draws**, not what it could hold: the height
+budget always divides by `TARGET_ROWS`, so a level too short to fill the grid
+never spends the second row's height on a taller cover, and a level with one row
+of items reserves one row of height. Tiles are drawn from the top of the body, which is the only place the
+leftover can go — a wide screen caps the tile by width, so the covers cannot
+grow into the spare height however it is divided, and centring a block against
+rows that were never going to be drawn is what puts a gap above the only row
+there is.
 
 ## Where the artwork comes from
 
@@ -297,11 +311,13 @@ Three things are worth stating because getting them wrong is invisible:
 - **An item's `Primary` is not always a poster.** `cover::fit` sizes the box
   around what `cover::primary_aspect` answers: the server's own
   `PrimaryImageAspectRatio` where it sent one, otherwise 16:9 for an episode's
-  still and 2:3 for a poster. Guessing is not enough on its own — a library's
-  primary image is a 16:9 banner although a `CollectionFolder` looks like a
-  poster by kind, and a box reserved for the wrong shape shows up as a gap
-  between the picture and the text under it. `/UserViews` sends the ratio,
-  `/Items` only when asked, which is why the guess stays.
+  still or a library's banner and 2:3 for a poster. A box reserved for the wrong
+  shape shows up as a gap between the picture and the text under it, and a grid
+  sizes every tile from its first row, so one mis-shaped library mis-shapes the
+  whole screen. The measurement cannot carry it alone — `/UserViews` sends the
+  ratio and `/Items` only when asked, and a library the server has no artwork
+  for sends none at all — which is why the guess stays and why a
+  `CollectionFolder` guesses a banner rather than the poster its kind suggests.
 
 ### HiDPI: the measured cell size
 

@@ -181,6 +181,29 @@ fn the_rail_describes_the_row_under_the_cursor() {
 }
 
 #[test]
+fn the_libraries_screen_is_a_wall_of_tiles_rather_than_a_list_and_a_rail() {
+    let mut app = app();
+    let mut level = Level::loading("Libraries", Source::Libraries);
+    level.fill(vec![
+        Item::deserialize(serde_json::json!({
+            "Id": "l1", "Name": "Movies", "Type": "CollectionFolder",
+            "PrimaryImageAspectRatio": 1.777_777_777_777_777_7
+        }))
+        .unwrap(),
+    ]);
+    app.stack.push(level);
+    app.screen = Screen::Browse;
+
+    let screen = drawn(&app);
+    assert!(screen.contains("Movies"), "{screen}");
+    assert!(
+        !screen.contains("Details"),
+        "a grid has no rail beside it\n{screen}"
+    );
+    assert!(screen.contains("Enter open"), "{screen}");
+}
+
+#[test]
 fn an_empty_library_says_so_rather_than_drawing_a_blank_box() {
     let mut app = app();
     let mut level = Level::loading("Movies", Source::Libraries);

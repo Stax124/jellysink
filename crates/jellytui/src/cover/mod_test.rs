@@ -162,16 +162,22 @@ fn the_terminals_padding_is_not_mistaken_for_a_display_scale() {
 }
 
 #[test]
-fn a_librarys_banner_is_measured_by_the_server_not_guessed_from_its_kind() {
-    // `/UserViews` answers with the ratio; a box sized for the 2:3 poster a
-    // CollectionFolder would otherwise get leaves the rail's text stranded
-    // half a screen below the picture.
+fn a_librarys_box_is_a_banner_rather_than_the_poster_its_kind_suggests() {
+    // A box sized for the 2:3 poster a CollectionFolder would otherwise get
+    // leaves the text stranded half a screen below the picture.
     let library = Item::deserialize(serde_json::json!({
         "Id": "l1", "Name": "Movies", "Type": "CollectionFolder",
         "PrimaryImageAspectRatio": 1.777_777_777_777_777_7
     }))
     .unwrap();
     assert!((primary_aspect(&library) - 16.0 / 9.0).abs() < 0.001);
+
+    // A library with no artwork comes back without the ratio.
+    let bare = Item::deserialize(serde_json::json!({
+        "Id": "l2", "Name": "Shows", "Type": "CollectionFolder"
+    }))
+    .unwrap();
+    assert!((primary_aspect(&bare) - 16.0 / 9.0).abs() < 0.001);
 
     // `/Items` leaves it out, so the kind still has to answer for these.
     assert!((primary_aspect(&item("s1", None)) - 2.0 / 3.0).abs() < 0.001);

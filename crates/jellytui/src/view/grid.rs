@@ -28,8 +28,17 @@ pub(crate) const TARGET_ROWS: u16 = 2;
 pub(crate) const SHELF_ROWS: u16 = 1;
 /// The floor under that: a tile is never sized so generously that a row holds
 /// fewer than this, which is what stops a 16:9 still from taking a third of a
-/// wide screen on its own.
+/// wide screen on its own. A level with fewer items than that spreads over its
+/// own count instead — there is nothing left for a wide tile to crowd out.
 const MIN_COLUMNS: u16 = 4;
+
+/// What a grid has to lay out: the rows of tiles it aims to fill the height
+/// with, and how many items there are to fill them. Both bound the answer.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Shape {
+    pub(crate) target_rows: u16,
+    pub(crate) item_count: usize,
+}
 
 /// The narrowest a tile may be, whatever the height says. A 2:3 poster stays
 /// legible narrow; a 16:9 still does not.
@@ -60,17 +69,20 @@ fn cover_height_budget(
 /// What a tile would like to be before the columns are evened out across the
 /// area: whatever the height budget affords, bounded by both [`MIN_COLUMNS`]
 /// and [`minimum_tile_width`].
-fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize, target_rows: u16) -> u16 {
+fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> u16 {
     let minimum = minimum_tile_width(aspect);
-    let Some(budget) = cover_height_budget(area, aspect, font_size, target_rows) else {
+    let Some(budget) = cover_height_budget(area, aspect, font_size, shape.target_rows) else {
         return minimum;
     };
-    let widest = (area.width.saturating_sub(GAP * (MIN_COLUMNS - 1)) / MIN_COLUMNS).max(minimum);
+    let spread = u16::try_from(shape.item_count)
+        .unwrap_or(MIN_COLUMNS)
+        .clamp(1, MIN_COLUMNS);
+    let widest = (area.width.saturating_sub(GAP * (spread - 1)) / spread).max(minimum);
     let wanted = cover::columns_for(budget, aspect, font_size) + 2;
     // A shelf is bound by its height, so its cover is already as large as it
     // can be: widening the tile to the floor would only fit fewer of them at
     // the same size.
-    if target_rows == 1 {
+    if shape.target_rows == 1 {
         return wanted.min(widest);
     }
     wanted.clamp(minimum, widest)
@@ -95,15 +107,15 @@ impl Metrics {
 }
 
 /// Tile geometry for the grid's *inner* area — see [`inner`].
-pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, target_rows: u16) -> Metrics {
-    let preferred = preferred_tile_width(area, aspect, font_size, target_rows);
+pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> Metrics {
+    let preferred = preferred_tile_width(area, aspect, font_size, shape);
     let columns = (area.width.saturating_add(GAP) / preferred.saturating_add(GAP)).max(1);
     let tile_width = ((area.width.saturating_sub(GAP * (columns - 1))) / columns).max(1);
     // Evening the tiles out across the width can hand a tile more columns than
     // it asked for, and a poster obeying its aspect would grow out of the
     // height budget with them — so the cover is fitted to both.
     let cover_width = tile_width.saturating_sub(2).max(1);
-    let max_rows = cover_height_budget(area, aspect, font_size, target_rows)
+    let max_rows = cover_height_budget(area, aspect, font_size, shape.target_rows)
         .unwrap_or_else(|| cover::rows_for(cover_width, aspect, font_size));
     let cover = cover::fit(
         Rect::new(0, 0, cover_width, max_rows),
@@ -112,9 +124,13 @@ pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, target_rows:
         max_rows,
     );
     let tile_height = cover.height + LABEL_HEIGHT;
+    let columns = usize::from(columns);
+    let fits = usize::from((area.height / tile_height).clamp(1, shape.target_rows.max(1)));
     Metrics {
-        columns: usize::from(columns),
-        rows: usize::from((area.height / tile_height).clamp(1, target_rows.max(1))),
+        columns,
+        // Rows the grid draws, not rows it could hold: a level too short to
+        // fill it must not reserve the height of an empty row.
+        rows: fits.min(shape.item_count.div_ceil(columns).max(1)),
         tile: Size::new(tile_width, tile_height),
         cover: cover.as_size(),
     }
@@ -180,13 +196,13 @@ pub(crate) fn render(
         area_inner,
         cover::primary_aspect(first),
         covers.font_size(),
-        view.rows,
+        Shape {
+            target_rows: view.rows,
+            item_count: items.len(),
+        },
     );
     let start = view.offset * metrics.columns;
-    // Leftover height is split above and below the tiles, and measured against
-    // the rows the grid holds so a short last page does not slide up the screen.
-    let used = u16::try_from(metrics.rows).unwrap_or(1) * metrics.tile.height;
-    let top = area_inner.y + area_inner.height.saturating_sub(used) / 2;
+    let top = area_inner.y;
     for (index, item) in items.iter().enumerate().skip(start).take(metrics.page()) {
         let slot = index - start;
         let column = u16::try_from(slot % metrics.columns).unwrap_or(0);

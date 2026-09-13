@@ -36,7 +36,19 @@ Flag:
 - A doc comment added merely because an item is public. Doc comments are not owed to every item.
 - A comment that lists its own call sites, or anything else that goes stale the moment someone adds a fourth one. Invariants age well; inventories of the current code do not.
 
-**On length, calibrate against the file you are reading, not a fixed number.** Three-to-five-line doc comments carrying a real invariant are established practice here (`src/runtime/state.rs`, `src/runtime/session.rs`, `src/app/instance.rs`) and are not violations. What `AGENTS.md` actually rules out is a *paragraph* — a narrative that belongs in `specs/` or the commit message. Flag length only when the comment is long *and* the extra lines are narration; name where the content should go instead.
+**On length, the ceiling is two lines, doc comments included, and one sentence is the target.** A third line is justified only when a single invariant genuinely does not fit in two and every word of it is that invariant. Flag anything longer, and flag a two-line comment whose second line is not pulling its weight.
+
+The shape to catch is a comment that names its constraint and then keeps going — a second clause restating the first, an aside about which endpoint the data came from or how the value is used elsewhere, a consequence the reader can derive from the code. Example of what to flag, from `crates/jellytui/src/nav.rs`:
+
+```rust
+/// Whether a level's rows carry artwork worth a grid. Decided by kind rather
+/// than by [`Source`], so a folder full of movies gets the grid whichever route
+/// reached it. Only the first row is asked, so the kinds that share a screen —
+/// a library and a `UserView` both come back from `/UserViews` — have to answer
+/// alike or the screen would change shape with its sort order.
+```
+
+Five lines where the first sentence carried the point. The fix is a **cut, not a rewrite**: keep the opening sentence, delete the rest, and say which clause you would keep if one of the later ones is the real invariant. Anything that still will not fit belongs in `specs/` or the commit message — name which.
 
 Also flag the inverse, but only when you can state the specific thing a reader would be guessing about: a real invariant or rejected alternative left undocumented.
 

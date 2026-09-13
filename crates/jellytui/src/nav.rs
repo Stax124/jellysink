@@ -70,13 +70,18 @@ pub(super) enum End {
     Bottom,
 }
 
-/// Whether a level's rows are poster-shaped enough to be worth a grid.
-/// Decided by kind rather than by [`Source`], so a folder full of movies gets
-/// the grid whichever route reached it.
+/// Whether a level's rows carry artwork worth a grid. Decided by kind rather
+/// than by [`Source`], so a folder full of movies gets the grid whichever route
+/// reached it. Only the first row is asked, so the kinds that share a screen —
+/// a library and a `UserView` both come back from `/UserViews` — have to answer
+/// alike or the screen would change shape with its sort order.
 pub(super) fn is_grid(items: &[Item]) -> bool {
-    items
-        .first()
-        .is_some_and(|item| matches!(item.kind(), "Series" | "Season" | "Movie" | "BoxSet"))
+    items.first().is_some_and(|item| {
+        matches!(
+            item.kind(),
+            "Series" | "Season" | "Movie" | "BoxSet" | "CollectionFolder" | "UserView"
+        )
+    })
 }
 
 /// The level Enter on `item` should push, if it is not something to play.

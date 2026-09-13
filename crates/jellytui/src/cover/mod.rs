@@ -174,19 +174,17 @@ fn repicker(picker: &Picker, cell: Size) -> Picker {
 }
 
 /// The shape of an item's primary image, as width ÷ height. The server's own
-/// measurement wins where it sent one: a library's primary image is a 16:9
-/// banner, and a box reserved for the 2:3 poster its kind suggests is drawn as
-/// a gap between the picture and the text under it. Where it sent none, an
-/// episode has a 16:9 still and everything else a poster.
+/// measurement wins where it sent one, and the kind answers for the rest: an
+/// episode's still and a library's banner are 16:9, everything else a poster.
+/// A box reserved for the wrong shape is drawn as a gap between the picture and
+/// the text under it — and a grid sizes every tile from its first row, so a
+/// library the server sent no ratio for would mis-shape the whole screen.
 pub(super) fn primary_aspect(item: &Item) -> f32 {
+    let wide = matches!(item.kind(), "Episode" | "CollectionFolder" | "UserView");
     item.primary_image_aspect_ratio
         .map(|ratio| ratio as f32)
         .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
-        .unwrap_or(if item.kind() == "Episode" {
-            16.0 / 9.0
-        } else {
-            2.0 / 3.0
-        })
+        .unwrap_or(if wide { 16.0 / 9.0 } else { 2.0 / 3.0 })
 }
 
 /// How many rows a cover `width` cells wide needs to hold `aspect`. A cell is
