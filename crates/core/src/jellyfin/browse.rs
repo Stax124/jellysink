@@ -1,19 +1,15 @@
-//! Library browsing: the listing endpoints a frontend needs to walk a library
-//! down to a playable item.
-
 use super::auth::Api;
 use super::encode_query_value;
 use color_eyre::eyre::{Result, WrapErr};
 use serde_json::Value;
 
-/// Requested on every listing, so a row renders without a second round trip.
-/// `UserData` is not here: the server returns it unasked, but leaves
-/// `PlayedPercentage` null without `RecursiveItemCount`.
 const ITEM_FIELDS: &str = "Overview,ProductionYear,RecursiveItemCount,ChildCount,Genres";
-
-/// Jellyfin pages `/Shows/{id}/Episodes` without this; 500 covers a long
-/// running series in one request.
 pub const EPISODE_LIMIT: u32 = 500;
+
+/// Sizes are rounded up to this so the server's resize cache is hit rather
+/// than re-encoded per terminal; `specs/tui.md` has the why.
+const IMAGE_BUCKET_PIXELS: u32 = 64;
+const IMAGE_QUALITY: u32 = 85;
 
 /// The `/Items` parameters that vary between screens. Constructors rather than
 /// a literal: getting `Recursive` wrong silently returns the whole library.
@@ -91,14 +87,6 @@ impl ItemQuery {
     }
 }
 
-/// Sizes are rounded up to this so the server's resize cache is hit rather
-/// than re-encoded per terminal; `specs/tui.md` has the why.
-const IMAGE_BUCKET_PIXELS: u32 = 64;
-
-/// Left off, the server answers far above 90 — a grid cover measured 33 KB
-/// unasked against 12 KB here. 100 is a cliff: WebP turns near-lossless.
-const IMAGE_QUALITY: u32 = 85;
-
 pub fn bucket_pixels(pixels: u32) -> u32 {
     pixels.max(1).div_ceil(IMAGE_BUCKET_PIXELS) * IMAGE_BUCKET_PIXELS
 }
@@ -124,8 +112,6 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// `Fields` for the same reason [`ITEM_FIELDS`] carries it: a season's
-    /// `PlayedPercentage` is null without it.
     pub async fn seasons(&self, series_id: &str) -> Result<Value> {
         let path = format!(
             "/Shows/{series_id}/Seasons?userId={}&Fields=RecursiveItemCount",
@@ -147,8 +133,7 @@ impl Api {
             .await
     }
 
-    /// The whole series in aired order. No `StartItemId`: it is a forward-only
-    /// `SkipWhile`, so the caller splits the listing itself.
+    /// The whole series in aired order
     pub async fn episodes_all(&self, series_id: &str) -> Result<Value> {
         self.episodes_listing(series_id, None, EPISODE_LIMIT, false)
             .await
@@ -176,9 +161,6 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// The item's primary image, bounded to the box it is drawn in and rounded
-    /// up to a bucket. `maxWidth`/`maxHeight` keep the aspect ratio;
-    /// `fillWidth`/`fillHeight` do not.
     pub async fn primary_image(
         &self,
         item_id: &str,
@@ -211,9 +193,7 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// Continue Watching; the modern path only exists from Jellyfin 10.9. The
-    /// first error rides along on the second rather than being logged, because
-    /// jellytui installs no tracing subscriber.
+    /// Continue Watching; the modern path only exists from Jellyfin 10.9
     pub async fn resume(&self, limit: u32) -> Result<Value> {
         let user_id = encode_query_value(&self.user_id);
         let path = format!("/UserItems/Resume?userId={user_id}&Limit={limit}&MediaTypes=Video");

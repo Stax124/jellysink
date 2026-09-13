@@ -14,9 +14,8 @@ pub struct Credentials {
     pub device_id: String,
 }
 
+/// Hand-written so `access_token` cannot reach a log line
 impl fmt::Debug for Credentials {
-    /// Hand-written so `access_token` cannot reach a log line. Serialization is
-    /// unaffected — cred.json still holds the token.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials")
             .field("server", &self.server)

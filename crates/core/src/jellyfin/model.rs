@@ -1,7 +1,3 @@
-//! The item and session shapes a frontend reads back — only the fields
-//! something renders. The playback path still works in `serde_json::Value`,
-//! because it forwards rather than displays.
-
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]

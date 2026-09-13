@@ -64,9 +64,6 @@ impl Paths {
         self.config_dir.join("mpv_args.conf")
     }
 
-    /// Artwork jellytui keeps between sessions. Under the cache directory: it
-    /// is derived data the user may delete at any moment, and none of it is
-    /// private the way the access token is.
     pub fn cover_cache_dir(&self) -> PathBuf {
         self.cache_dir.join("covers")
     }

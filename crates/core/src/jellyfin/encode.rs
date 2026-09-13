@@ -1,7 +1,3 @@
-//! Query-string escaping shared by the URL builders.
-
-/// Percent-encodes a value for a query string (RFC 3986 unreserved set). Ids
-/// are usually GUIDs, but `LiveStreamId` can contain `+` and `=`.
 pub fn encode_query_value(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for b in value.bytes() {

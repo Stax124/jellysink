@@ -36,8 +36,7 @@ impl MpvArgs {
     }
 }
 
-/// Split a value into mpv arguments. Whitespace-separated, like a shell
-/// command line without quoting.
+/// Split a value into mpv arguments. Newline-separated, ignoring blank lines and `#` comments.
 fn parse_mpv_args(value: &str) -> Vec<String> {
     value
         .lines()

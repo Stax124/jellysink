@@ -5,8 +5,7 @@ use color_eyre::eyre::WrapErr;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-/// Every user-facing configuration key. Matching on it is exhaustive, so a new
-/// key is a compile error until every place that handles keys handles it.
+/// Every user-facing configuration key
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     MpvPath,
@@ -61,7 +60,6 @@ pub struct Config {
     pub log_level: String,
     pub autoplay: bool,
     pub prepend_previous: bool,
-    /// How much disk jellytui's cover cache may use. `0` turns it off.
     pub cover_cache_mb: u64,
 }
 
@@ -78,7 +76,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Reads config.toml, or the defaults when there is none. Pure;
+    /// Reads config.toml, or the defaults when there is none.
     /// [`Self::load_or_create`] is the version that writes.
     pub fn load(paths: &Paths) -> color_eyre::Result<Self> {
         let path = paths.config_file();
@@ -92,14 +90,10 @@ impl Config {
         Ok(cfg)
     }
 
-    /// The log level to start tracing with, before a config error has anywhere
-    /// to be reported.
     pub fn configured_log_level(paths: &Paths) -> String {
         Self::load(paths).map_or_else(|_| Self::default().log_level, |cfg| cfg.log_level)
     }
 
-    /// For the daemon, which is a reasonable moment to materialise a config
-    /// file the user can then edit by hand.
     pub fn load_or_create(paths: &Paths) -> color_eyre::Result<Self> {
         let cfg = Self::load(paths)?;
         if !paths.config_file().exists() {

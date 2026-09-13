@@ -6,8 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::fmt;
 
-/// The server rejected our access token. Typed so the reconnect loop does not
-/// have to look for `"401"` in an error chain that also carries the URL.
+/// The server rejected our access token
 #[derive(Debug)]
 pub(crate) struct AuthExpired;
 
@@ -19,8 +18,7 @@ impl fmt::Display for AuthExpired {
 
 impl std::error::Error for AuthExpired {}
 
-/// Whether `err` was caused by an expired token at any depth; `downcast_ref`
-/// would only see the outermost error.
+/// Whether `err` was caused by an expired token at any depth
 pub fn is_auth_expired(err: &color_eyre::Report) -> bool {
     err.chain().any(|cause| cause.is::<AuthExpired>())
 }
@@ -62,7 +60,6 @@ pub struct Api {
     pub device_id: String,
     device_name: String,
     pub user_id: String,
-    /// Precomputed: constant for the process, and needed once a second.
     auth_header: String,
 }
 
@@ -138,7 +135,7 @@ impl Api {
             .await
     }
 
-    /// A POST whose parameters all live in the query string.
+    /// A `POST` whose parameters all live in the query string.
     pub(crate) async fn post(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
         let url = format!("{}{path}", self.server);
         self.send(self.http.post(&url), "POST", &url).await
