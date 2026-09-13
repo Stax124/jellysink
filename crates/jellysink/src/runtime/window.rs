@@ -2,18 +2,9 @@ use crate::mpv::EndFileReason;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-/// The queue, plus how much of it mpv currently holds. See `specs/playlist.md`.
-///
-/// mpv's playlist is always a contiguous slice of the queue:
-///
-/// ```text
-/// mpv playlist == queue.items[origin .. origin + head + 1 + tail]
-/// ```
-///
-/// The `+ 1` is the current item, whose mpv position is therefore
-/// `queue.index - origin` ([`Self::expected_pos`]) — not `head`, which only
-/// coincides with it until a playlist jump moves `index`. A prepend leaves
-/// `origin` alone, since the index and the mpv position shift together.
+/// The queue, plus how much of it mpv currently holds: mpv's playlist is always
+/// the contiguous slice `items[origin .. origin + head + 1 + tail]`. See
+/// `specs/playlist.md`.
 #[derive(Debug, Default)]
 pub(super) struct PlaylistWindow {
     queue: Queue,
@@ -138,15 +129,8 @@ impl PlaylistWindow {
         self.rebuild_now_playing();
     }
 
-    /// Splices `ids` into the queue right after the current item, and returns
-    /// the mpv playlist position they must land at to match --
-    /// `expected_pos + 1`. Valid whether mpv already holds a tail or not: with
-    /// `tail == 0` that position is exactly the end of mpv's playlist, so an
-    /// insert there and an append coincide.
-    ///
-    /// `tail` grows here, at the same moment the queue does, mirroring how
-    /// `prepend` grows `head` immediately rather than waiting on the mpv
-    /// splice: the queue is the source of truth and the mpv side follows it.
+    /// Splices `ids` into the queue after the current item, returning the mpv
+    /// position they must land at. `tail` grows with the queue, not the splice.
     pub(super) fn insert_next(&mut self, ids: Vec<String>) -> usize {
         let mpv_pos = self.expected_pos() + 1;
         let n = ids.len();
@@ -296,10 +280,8 @@ pub(super) fn queue_index_at(
     origin.checked_add(playlist_pos).filter(|i| *i < queue_len)
 }
 
-/// After EOF (caller already applied `end_file_action`). `expected_pos` is the
-/// playlist index of the file that just ended; `from_eof` separates mpv's own
-/// `end-file` from a user Next, because `keep-open=yes` already auto-plays the
-/// next entry and a `playlist-next` on top of it would skip to N+2.
+/// After EOF, `end_file_action` already applied. `from_eof` separates mpv's own
+/// `end-file` from a user Next, which `keep-open=yes` would turn into N+2.
 pub(super) fn playlist_eof(
     playlist_pos: usize,
     playlist_count: usize,

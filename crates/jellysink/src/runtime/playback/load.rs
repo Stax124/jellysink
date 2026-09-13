@@ -1,6 +1,5 @@
-//! Getting a prepared play into mpv: the stream URL, whether the access
-//! token rides in the Authorization header or the query string, and spawning
-//! mpv when there is none.
+//! Getting a prepared play into mpv: the stream URL, where the access token
+//! rides, and spawning mpv when there is none.
 
 use crate::media::PreparedPlay;
 use crate::mpv::MpvSession;
@@ -68,9 +67,8 @@ impl Runtime {
         self.mpv_gen = self.mpv_gen.wrapping_add(1);
         let generation = self.mpv_gen;
         let tx = self.mpv_tx.clone();
-        // The assignment drops — and so aborts — the previous forwarder. The
-        // events it already queued stay on the shared channel; `generation` is
-        // how the main loop discards those.
+        // The assignment drops — and so aborts — the previous forwarder. Events
+        // it already queued stay on the shared channel; `generation` drops those.
         self.mpv_events = Some(AbortOnDrop(tokio::spawn(async move {
             let mut events = events;
             while let Some(ev) = events.recv().await {
@@ -100,8 +98,7 @@ fn stream_url_with_token(api: &Api, item_id: &str, prep: &PreparedPlay) -> Strin
 }
 
 /// The URL to hand mpv, plus whether mpv now carries the Authorization header.
-/// The header is global, so it covers later playlist rows too and keeps the
-/// token out of the URLs mpv writes to its watch_later files.
+/// The header is global, so it keeps the token out of watch_later files.
 struct AppliedAuth {
     url: String,
     header_set: bool,

@@ -33,10 +33,8 @@ impl Runtime {
         }
     }
 
-    /// Pushes the current state onto the status watch channel. Called at the
-    /// same points that already report to Jellyfin (`send_start`,
-    /// `send_progress`) plus the end of `stop_playback`, so `jellysink status`
-    /// never needs to poll `Runtime` directly.
+    /// Pushes the current state onto the status watch channel, so `jellysink
+    /// status` never needs to poll `Runtime` directly.
     pub(super) fn publish_status(&self) {
         self.status_tx.send_replace(self.build_status());
     }

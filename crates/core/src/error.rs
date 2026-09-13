@@ -1,8 +1,7 @@
 use std::fmt;
 
-/// A mistake in how jellysink was invoked — not logged in, already running, an
-/// unknown config key. The binaries print it and exit 1 instead of dumping a
-/// color-eyre report.
+/// A mistake in how jellysink was invoked. The binaries print it and exit 1
+/// instead of dumping a color-eyre report.
 #[derive(Debug)]
 pub struct UsageError(pub String);
 

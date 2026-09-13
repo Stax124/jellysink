@@ -3,10 +3,8 @@ use super::atomic_write;
 use color_eyre::eyre::WrapErr;
 use std::fs;
 
-/// Extra mpv argv, kept in its own file and re-read on every spawn.
-///
-/// One argument per line (`--title=My Movie` is one line, not two words);
-/// blank lines and `#` comments are ignored.
+/// Extra mpv argv, re-read on every spawn. One argument per line (`--title=My
+/// Movie` is one line, not two words); blank lines and `#` comments ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MpvArgs(pub Vec<String>);
 

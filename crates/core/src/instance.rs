@@ -52,9 +52,8 @@ pub fn parse_instance_command(buf: &str) -> Option<InstanceCommand> {
     }
 }
 
-/// Whether another jellysink currently holds the instance lock. The lock, not
-/// the socket file, which a SIGKILL leaves behind — the kernel releases a flock
-/// when its holder dies.
+/// Whether another jellysink holds the instance lock — the lock, not the socket
+/// file, which a SIGKILL leaves behind.
 pub fn is_running(paths: &Paths) -> bool {
     // Not `create(true)`: probing should not leave a lock file behind.
     let Ok(file) = File::open(paths.lock_file()) else {

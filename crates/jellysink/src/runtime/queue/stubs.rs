@@ -9,8 +9,7 @@ enum Fill {
     /// At position 0. Does not interrupt playback; mpv shifts `playlist-pos`.
     Prepend,
     /// Right after the current item, at the mpv position
-    /// `PlaylistWindow::insert_next` returned. Same non-interrupting splice as
-    /// `Prepend`, just not pinned to 0.
+    /// `PlaylistWindow::insert_next` returned.
     Next(usize),
 }
 
@@ -30,10 +29,8 @@ impl Runtime {
         self.load_stub_rows(ids, Fill::Append).await;
     }
 
-    /// Splices `ids` into mpv's playlist right after the current item, at the
-    /// mpv position `PlaylistWindow::insert_next` returned. `PlayNext`'s mpv
-    /// side: unlike the prepend, there is no upcoming `loadfile ... replace`
-    /// to wait out, so this runs immediately instead of being deferred.
+    /// Splices `ids` into mpv's playlist right after the current item. Runs
+    /// immediately: unlike the prepend, no `loadfile ... replace` follows it.
     pub(in crate::runtime) async fn insert_next_into_mpv(
         &mut self,
         ids: Vec<String>,
@@ -75,8 +72,7 @@ impl Runtime {
             return;
         }
         // A prepend or a play-next insert already grew `head`/`tail` when the
-        // ids entered the queue, in `PlaylistWindow::prepend` /
-        // `PlaylistWindow::insert_next`.
+        // ids entered the queue.
         if fill == Fill::Append {
             self.window.note_appended(n);
         }
@@ -98,9 +94,8 @@ impl Runtime {
     }
 }
 
-/// `(title, url)` for one playlist row. `token` is `Some` only when the
-/// Authorization header is not covering mpv, since mpv persists playlist
-/// entries to watch_later files; the title fallback never carries it at all.
+/// `(title, url)` for one playlist row. `token` is `Some` only when the header
+/// is not covering mpv, which persists these rows to watch_later files.
 fn playlist_stub_entry(
     server: &str,
     id: &str,

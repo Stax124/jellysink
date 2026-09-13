@@ -14,15 +14,11 @@ use std::collections::HashMap;
 /// so they are two values of one type rather than four separate fields.
 #[derive(Debug, Default)]
 pub(super) struct TrackState {
-    /// mpv's selection as of the last time it was *ours* — the end of
-    /// `configure_streams`, or an `apply_track`. A property change reporting
-    /// anything else is the user picking a track in the mpv window.
-    ///
-    /// Per-mpv-session: `stop_playback` resets it.
+    /// mpv's selection as of the last time it was *ours*. A property change
+    /// reporting anything else is the user picking a track in the mpv window.
     pub(super) settled: SelectedTrack,
     /// The track the user last picked by hand, re-applied to the next episode
-    /// by identity rather than by index. In memory only, and deliberately never
-    /// cleared by `start_current`, `adopt_playlist_pos` or `stop_playback`.
+    /// by identity rather than by index. In memory only, and never cleared.
     pub(super) remembered: Option<TrackPreference>,
 }
 

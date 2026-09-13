@@ -126,8 +126,7 @@ fn a_short_area_keeps_its_tiles_rather_than_shrinking_them_for_a_second_row() {
 #[test]
 fn a_level_too_short_to_fill_the_grid_reserves_no_row_for_what_it_has_not_got() {
     // Three libraries on a wide screen: the tiles spread over their own count
-    // rather than a quarter each, and the height of a second row is not held
-    // back for rows that will never be drawn.
+    // rather than a quarter each, and no height is held back for a second row.
     let area = Rect::new(0, 0, 158, 39);
     let shape = Shape {
         target_rows: TARGET_ROWS,

@@ -23,9 +23,8 @@ pub(crate) fn capabilities() -> Value {
     })
 }
 
-/// Permissive DirectPlay profile. Empty container/codec means "any".
-/// TranscodingProfiles are present so the server is happy; we never play a
-/// TranscodingUrl.
+/// Permissive DirectPlay profile; empty container/codec means "any".
+/// TranscodingProfiles are there to satisfy the server; we never play one.
 pub(crate) fn device_profile() -> Value {
     json!({
         "Name": "jellysink",

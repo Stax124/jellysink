@@ -15,9 +15,8 @@ pub(super) enum Msg {
         item_id: String,
         ticks: i64,
     },
-    /// Both carry the item id they were asked for, so a reply that arrives
-    /// after playback moved on is dropped rather than describing the wrong
-    /// episode — the rule `specs/tui.md` already sets for search and levels.
+    /// Both carry the item id they were asked for, so a reply arriving after
+    /// playback moved on is dropped rather than describing the wrong episode.
     PlayingItem {
         item_id: String,
         item: Box<Item>,
@@ -32,8 +31,7 @@ pub(super) enum Msg {
         protocol: Option<Box<Protocol>>,
     },
     /// The request failed rather than answered. It carries the error because
-    /// the tile stays blank either way, and a blank tile is otherwise the only
-    /// evidence there was one.
+    /// the tile stays blank either way, which is no evidence of a failure.
     CoverFailed {
         key: CoverKey,
         error: String,
@@ -97,8 +95,7 @@ impl App {
     }
 
     /// Every load goes through here, so no request can block key handling.
-    /// `label` names it in the log pane; it is also where a request's cost
-    /// gets timed.
+    /// `label` names it in the log pane and in the timing.
     pub(super) fn spawn<F>(
         &self,
         label: &'static str,

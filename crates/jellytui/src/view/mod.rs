@@ -41,8 +41,7 @@ pub(super) fn leave() {
 }
 
 /// The four horizontal bands of the screen. `App` needs the body to work out
-/// which covers are on screen, so the split lives here rather than inline in
-/// [`render`].
+/// which covers are on screen, so the split is not inline in [`render`].
 pub(super) struct Panes {
     pub(super) header: Rect,
     pub(super) body: Rect,
@@ -114,9 +113,8 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
     }
     let tabs = Line::from(spans);
     let status = daemon_status(app);
-    // The message rides here rather than on the hint row: the bindings are
-    // worth more than any complaint, and a complaint has to fit what is left
-    // between the tabs and the dot.
+    // The message rides here rather than on the hint row, where it would cost
+    // the bindings their space.
     let room = area
         .width
         .saturating_sub(width_of(&tabs) + width_of(&status));
@@ -136,9 +134,8 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(status), status_area);
 }
 
-/// Whether the daemon answered its status socket, which is the one thing the
-/// whole frontend depends on. Before the first poll the answer is not yet
-/// known, and saying "absent" then would be a lie for the first second.
+/// Whether the daemon answered its status socket. Before the first poll the
+/// answer is unknown, and saying "absent" then would be a lie for a second.
 fn daemon_status(app: &App) -> Line<'static> {
     let colour = match (app.player_polled, app.player.is_some()) {
         (false, _) => DIM,

@@ -12,9 +12,8 @@ impl Runtime {
         self.send_progress();
     }
 
-    /// Re-announces the current play on a freshly connected session: a server
-    /// that dropped the session needs a start to show a now-playing again.
-    /// Resampled first, since nothing polled mpv while the socket was down.
+    /// Re-announces the current play on a freshly connected session. Resampled
+    /// first, since nothing polled mpv while the socket was down.
     pub(in crate::runtime) async fn reannounce(&mut self) {
         if self.mpv.is_none() || self.current.is_none() {
             return;

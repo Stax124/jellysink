@@ -6,19 +6,17 @@ use super::encode_query_value;
 use color_eyre::eyre::{Result, WrapErr};
 use serde_json::Value;
 
-/// Requested on every listing, so a row can be rendered without a second
-/// round trip. `UserData` is not here: the server returns it unasked — but it
-/// leaves `PlayedPercentage` null unless `RecursiveItemCount` was asked for,
-/// and that percentage is the only progress a folder has.
+/// Requested on every listing, so a row renders without a second round trip.
+/// `UserData` is not here: the server returns it unasked, but leaves
+/// `PlayedPercentage` null without `RecursiveItemCount`.
 const ITEM_FIELDS: &str = "Overview,ProductionYear,RecursiveItemCount,ChildCount,Genres";
 
 /// Jellyfin pages `/Shows/{id}/Episodes` without this; 500 covers a long
 /// running series in one request.
 pub const EPISODE_LIMIT: u32 = 500;
 
-/// The `/Items` parameters that vary between screens. Private fields with
-/// constructors instead of a literal, because `search` and `in_folder` differ
-/// in `Recursive` and getting that wrong silently returns the whole library.
+/// The `/Items` parameters that vary between screens. Constructors rather than
+/// a literal: getting `Recursive` wrong silently returns the whole library.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ItemQuery {
     parent_id: Option<String>,
@@ -97,9 +95,8 @@ impl ItemQuery {
 /// than re-encoded per terminal; `specs/tui.md` has the why.
 const IMAGE_BUCKET_PIXELS: u32 = 64;
 
-/// Left off, the server answers far above 90 whatever its API documents — a
-/// grid cover measured 33 KB unasked against 12 KB here. 100 is a cliff rather
-/// than a step: WebP turns near-lossless and quadruples.
+/// Left off, the server answers far above 90 — a grid cover measured 33 KB
+/// unasked against 12 KB here. 100 is a cliff: WebP turns near-lossless.
 const IMAGE_QUALITY: u32 = 85;
 
 pub fn bucket_pixels(pixels: u32) -> u32 {
@@ -137,9 +134,9 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// One season, for a frontend that shows a synopsis. `/Shows/…/Episodes`
-    /// omits `Overview` unless asked, and asking costs a few hundred bytes an
-    /// episode — worth it here, not in [`Api::episodes_all`].
+    /// One season, for a frontend that shows a synopsis. `Overview` costs a
+    /// few hundred bytes an episode — worth it here, not in
+    /// [`Api::episodes_all`].
     pub async fn episodes(
         &self,
         series_id: &str,
@@ -179,13 +176,9 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// The item's primary image, bounded to the box it will be drawn in and
-    /// rounded up to a bucket. `maxWidth`/`maxHeight` cap both sides and keep
-    /// the aspect ratio; `fillWidth`/`fillHeight` do neither, and hand back a
-    /// full-height poster however narrow the box is.
-    ///
-    /// `Ok(None)` means the server has no such image, which is ordinary and
-    /// permanent; an `Err` is worth retrying when the item is looked at again.
+    /// The item's primary image, bounded to the box it is drawn in and rounded
+    /// up to a bucket. `maxWidth`/`maxHeight` keep the aspect ratio;
+    /// `fillWidth`/`fillHeight` do not.
     pub async fn primary_image(
         &self,
         item_id: &str,
@@ -218,11 +211,9 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// Continue Watching. Falls back like [`Api::get_item`]: the modern path
-    /// only exists from Jellyfin 10.9. The first error rides along on the
-    /// second instead of being logged — jellytui installs no tracing
-    /// subscriber, so a debug line here reaches nobody and the legacy 404
-    /// would be all the user ever saw of, say, an expired token.
+    /// Continue Watching; the modern path only exists from Jellyfin 10.9. The
+    /// first error rides along on the second rather than being logged, because
+    /// jellytui installs no tracing subscriber.
     pub async fn resume(&self, limit: u32) -> Result<Value> {
         let user_id = encode_query_value(&self.user_id);
         let path = format!("/UserItems/Resume?userId={user_id}&Limit={limit}&MediaTypes=Video");

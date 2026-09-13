@@ -7,9 +7,8 @@ fn a_stub_row_with_a_known_title_never_carries_the_token_in_the_title() {
     assert!(url.contains("ApiKey=tok"));
 }
 
-/// The leak this guards: the fallback used to be the playable URL, so an
-/// episode missing from the series listing showed the access token in mpv's
-/// playlist selector and wrote it to the user's watch_later files.
+/// The leak this guards: a fallback of the playable URL shows the access token
+/// in mpv's playlist selector and writes it to the user's watch_later files.
 #[test]
 fn a_stub_row_without_a_title_falls_back_to_a_tokenless_url() {
     let (title, url) = playlist_stub_entry("http://s", "e1", None, Some("tok"));

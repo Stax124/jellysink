@@ -26,8 +26,7 @@ const BACKOFF_MAX: Duration = Duration::from_secs(60);
 const SESSION_HEALTHY_AFTER: Duration = Duration::from_secs(60);
 
 /// How long to wait before the next reconnect attempt. The healthy-session
-/// reset is what stops a bad startup pinning the backoff at [`BACKOFF_MAX`]
-/// for the rest of the process.
+/// reset stops a bad startup pinning the backoff at [`BACKOFF_MAX`].
 fn reconnect_delay(current: Duration, session_lasted: Duration, auth_expired: bool) -> Duration {
     if auth_expired {
         BACKOFF_MAX
@@ -39,10 +38,8 @@ fn reconnect_delay(current: Duration, session_lasted: Duration, auth_expired: bo
 }
 
 /// The daemon loop: one long-lived player, a WebSocket that comes and goes.
-///
-/// `Runtime` is built once and reused by every session, so a dropped WebSocket
-/// is invisible to the user. Only the socket, its reader and the keepalive are
-/// per-session — not the mpv channel or the report sink.
+/// Only the socket, its reader and the keepalive are per-session, so a dropped
+/// WebSocket is invisible to the user. See `specs/session.md`.
 pub(crate) async fn run(
     config: Config,
     creds: Credentials,
@@ -126,8 +123,7 @@ where
 }
 
 /// Serialises session reports onto one task, so a Stopped can never overtake
-/// the Start that preceded it. The task owns the [`Api`], so reporting costs
-/// neither a clone nor an `Arc` bump per report.
+/// the Start before it. The task owns the [`Api`], so a report costs no clone.
 fn spawn_report_sink(
     api: Api,
 ) -> (
@@ -150,9 +146,8 @@ fn spawn_report_sink(
     (tx, task)
 }
 
-/// One WebSocket session against the given, already-running [`Runtime`].
-/// `Ok(())` only for shutdown; every other end is an `Err` the caller
-/// reconnects from, leaving `rt` untouched.
+/// One WebSocket session against an already-running [`Runtime`]. `Ok(())` only
+/// for shutdown; every other end is an `Err` the caller reconnects from.
 async fn run_session(
     rt: &mut Runtime,
     mpv_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(u64, MpvEvent)>,
@@ -179,9 +174,8 @@ async fn run_session(
     keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    // Not `Some(cmd_tx)`-fatal like the websocket/mpv channels above: MPRIS is
-    // optional infrastructure, and every clone of its sender living forever
-    // (kept in `cmd_run`) means this should never actually flip to `true`.
+    // Not fatal like the websocket/mpv channels above: MPRIS is optional, and
+    // every clone of its sender lives forever in `cmd_run`.
     let mut ext_closed = false;
 
     loop {
@@ -217,9 +211,8 @@ async fn run_session(
                     Some(WsIncoming::Ignored { message_type }) => {
                         tracing::debug!(message_type, "ignored websocket message");
                     }
-                    // The reader owns the sender, so this means it is gone.
-                    // Must return: a closed receiver is ready forever, and an
-                    // empty body here spins the loop.
+                    // The reader owns the sender, so this means it is gone. Must
+                    // return: a closed receiver is ready forever and spins the loop.
                     None => return Err(eyre!("websocket closed")),
                 }
             }

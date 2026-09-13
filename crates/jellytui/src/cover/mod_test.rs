@@ -127,8 +127,7 @@ fn a_terminal_that_reports_no_pixel_size_is_left_alone() {
 #[test]
 fn a_display_of_another_scale_encodes_against_it_and_drops_the_old_grid() {
     // The columns and rows do not have to move: the same cell box on a 1.5x
-    // display is half again as many pixels, and the cover cached for the old
-    // grid is the wrong encoding rather than a stale one.
+    // display is half again as many pixels, so the cached encoding is wrong.
     let mut covers = covers();
     let box_ = Size::new(10, 8);
     let before = covers.key(&item("s1", Some("tag")), box_).unwrap();
@@ -147,9 +146,8 @@ fn a_display_of_another_scale_encodes_against_it_and_drops_the_old_grid() {
 
 #[test]
 fn the_terminals_padding_is_not_mistaken_for_a_display_scale() {
-    // The window is a few pixels wider than the cells it holds, so a
-    // measurement is a hair over — and re-encoding every cover for that would
-    // be a round trip each time the window moved by a pixel.
+    // The window is a few pixels wider than the cells it holds, so re-encoding
+    // on that would cost a round trip each time it moved by a pixel.
     let mut covers = covers();
     let key = covers
         .key(&item("s1", Some("tag")), Size::new(10, 8))

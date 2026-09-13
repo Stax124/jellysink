@@ -1,7 +1,5 @@
-//! mpv's playlist is the contiguous window
-//! `items[origin .. origin + head + 1 + tail]`, and the current item sits at
-//! `index - origin`. These tests pin that invariant across a prepend, against
-//! the real `PlaylistWindow` rather than a model of it.
+//! These pin mpv's playlist window `items[origin .. origin + head + 1 + tail]`
+//! against the real `PlaylistWindow` rather than a model of it.
 
 use super::*;
 use serde_json::json;
@@ -84,9 +82,8 @@ fn prepend_from_a_mid_series_start_index() {
 
 #[test]
 fn prepend_happens_even_though_jellyfin_sent_a_full_queue() {
-    // Reproduces the reported bug: Jellyfin sends e6..e20, so has_next is
-    // true and the forward gate bails. The prepend must still run, and the
-    // forward append must not duplicate e7..e20.
+    // Reproduces the reported bug: with has_next true the forward gate bails,
+    // but the prepend must still run and must not duplicate e7..e20.
     let mut w = start(&["e6", "e7", "e8"], 0);
     assert!(w.queue.has_next(), "forward gate would bail here");
 
@@ -126,9 +123,8 @@ fn advancing_then_prepending_does_not_duplicate() {
 
 #[test]
 fn expected_pos_follows_a_playlist_jump_not_the_head() {
-    // Jumping to e7 via the playlist selector moves the queue index but
-    // leaves `head` at 5. Deriving the position from `head` would report
-    // 5 and misread every subsequent EOF.
+    // Jumping to e7 moves the queue index but leaves `head` at 5; deriving the
+    // position from `head` would misread every subsequent EOF.
     let mut w = start(&["e6", "e7", "e8"], 0);
     prepend(&mut w, &["e1", "e2", "e3", "e4", "e5"]);
     assert_eq!(w.head(), 5);
@@ -236,9 +232,8 @@ fn play_next_with_nothing_queued_appends_like_before() {
 
 #[test]
 fn play_next_keeps_the_window_in_sync_with_mpvs_playlist_when_a_tail_is_already_loaded() {
-    // Casting mid-series sends the whole remaining season, which
-    // `start_current` immediately forward-fills into mpv -- tail > 0 is the
-    // common case for PlayNext, not the exception the old code assumed.
+    // Casting mid-series forward-fills the whole remaining season, so tail > 0
+    // is the common case for PlayNext rather than the exception.
     let mut w = start(&["e6", "e7", "e8"], 0);
     w.note_appended(2); // e7, e8 already sit in mpv's tail
     assert_eq!(w.mpv_playlist(), ["e6", "e7", "e8"]);
@@ -247,18 +242,16 @@ fn play_next_keeps_the_window_in_sync_with_mpvs_playlist_when_a_tail_is_already_
 
     assert_eq!(w.queue.items, ["e6", "x", "e7", "e8"]);
     assert_eq!(mpv_pos, 1, "right after the current item, e6");
-    // The window's belief about what mpv holds must track the splice: e8
-    // must not silently fall out of it, and "x" must not appear to have
-    // replaced e7 in a window mpv was never told to change.
+    // e8 must not silently fall out of the window, and "x" must not appear to
+    // have replaced e7 in a window mpv was never told to change.
     assert_eq!(w.mpv_playlist(), ["e6", "x", "e7", "e8"]);
     assert_eq!(w.tail(), 3, "x plus the original e7, e8 tail");
 }
 
 #[test]
 fn play_next_after_a_playlist_jump_uses_expected_pos_not_head() {
-    // Mirrors `expected_pos_follows_a_playlist_jump_not_the_head`: jumping to
-    // e7 moves the queue index but leaves `head` at 5, so the insertion point
-    // must be derived from `expected_pos`, not `head`.
+    // Jumping to e7 moves the queue index but leaves `head` at 5, so the
+    // insertion point must come from `expected_pos` rather than `head`.
     let mut w = start(&["e6", "e7", "e8"], 0);
     prepend(&mut w, &["e1", "e2", "e3", "e4", "e5"]);
     w.queue.advance(); // adopt_playlist_pos jumps to e7
@@ -368,9 +361,8 @@ fn eof_does_not_playlist_next_if_mpv_already_advanced() {
 
 #[test]
 fn eof_lets_mpv_autoplay_when_next_is_already_appended() {
-    // keep-open=yes unloads the current file and starts the next one, which
-    // is what emits end-file. playlist-next on top of that skips to N+2;
-    // keep-open=always would pause on the last frame and never emit it.
+    // keep-open=yes unloads the current file and starts the next, which is what
+    // emits end-file; playlist-next on top of that skips to N+2.
     assert_eq!(playlist_eof(0, 3, true, 0, true), PlaylistEof::WaitForMpv);
     assert_eq!(playlist_eof(2, 3, true, 2, true), PlaylistEof::NextNotInMpv);
     assert_eq!(playlist_eof(2, 3, false, 2, true), PlaylistEof::Stop);

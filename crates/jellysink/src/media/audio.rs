@@ -1,9 +1,5 @@
 //! The audio side of the track memory: names and log `kind` only, with the
 //! matching in [`crate::media::track`].
-//!
-//! Needed because a dual-audio release flags whichever track it likes as
-//! `DefaultAudioStreamIndex`, so a user who picks the original gets the dub
-//! back next episode.
 
 use super::streams::AudioId;
 use super::track::{TrackKind, TrackPreference, resolve_track_index};

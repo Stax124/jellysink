@@ -25,9 +25,8 @@ fn only_the_observed_track_properties_become_events() {
     );
 }
 
-/// The whole point of [`SelectedTrack`]: `no` and `auto` are different
-/// answers, and reading `auto` as "off" would record a file that is still
-/// loading as the user switching subtitles off.
+/// The whole point of [`SelectedTrack`]: reading `auto` as "off" would record a
+/// file that is still loading as the user switching subtitles off.
 
 #[test]
 fn a_track_property_tells_off_apart_from_not_yet_decided() {

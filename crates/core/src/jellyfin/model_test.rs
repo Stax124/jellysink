@@ -46,9 +46,8 @@ fn an_episode_without_a_season_number_still_gets_a_label() {
     assert_eq!(item.label(), "E03  Paradise, Once More");
 }
 
-/// Trimmed from a real `/Items` response, which is where the percentage that
-/// answers for a folder comes from — the ticks are zero on a series however
-/// much of it has been watched.
+/// Trimmed from a real `/Items` response: the ticks are zero on a series
+/// however much of it has been watched.
 fn part_watched_series() -> serde_json::Value {
     json!({
         "Id": "ae3555401a49fc006fd79fdad5b1966b",

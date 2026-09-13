@@ -1,8 +1,6 @@
-//! The item and session shapes a frontend reads back.
-//!
-//! Deliberately narrow: only the fields something renders or acts on. The
-//! playback path still works in `serde_json::Value`, because it forwards most
-//! of what it receives rather than displaying it.
+//! The item and session shapes a frontend reads back — only the fields
+//! something renders. The playback path still works in `serde_json::Value`,
+//! because it forwards rather than displays.
 
 use serde::Deserialize;
 
@@ -88,9 +86,8 @@ impl Item {
         self.user_data.as_ref().is_some_and(|data| data.played)
     }
 
-    /// How far in, 0.0..=1.0, for the progress bar on a partly watched row.
-    /// A series or a season has no position of its own, so the server's
-    /// percentage over its children is the only thing that answers for one.
+    /// How far in, 0.0..=1.0. A series or a season has no position of its own,
+    /// so the server's percentage over its children answers for one.
     pub fn watched_fraction(&self) -> Option<f64> {
         if let Some(percentage) = self
             .user_data
@@ -104,9 +101,8 @@ impl Item {
         (position > 0).then(|| (position as f64 / ticks as f64).clamp(0.0, 1.0))
     }
 
-    /// How many children are still unwatched, for a container. `None` rather
-    /// than `Some(0)` when there is nothing left, so a caller can leave the
-    /// field out instead of printing a zero.
+    /// How many children are still unwatched. `None` rather than `Some(0)`, so
+    /// a caller can leave the field out instead of printing a zero.
     pub fn unplayed_count(&self) -> Option<i64> {
         self.user_data
             .as_ref()

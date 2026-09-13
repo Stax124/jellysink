@@ -1,10 +1,5 @@
 //! MPRIS (`org.mpris.MediaPlayer2`) media-key and desktop-widget integration.
-//!
-//! Two small interfaces sharing one [`Shared`] handle: reads mirror the same
-//! [`PlayerStatus`] `jellysink status` uses, and every method just forwards a
-//! [`CastEvent`] into `Runtime::handle` — the same dispatcher the WebSocket
-//! path already uses. Fail-open like the tray: no session bus is a warning,
-//! not a fatal error.
+//! Fail-open like the tray: no session bus is a warning, not a fatal error.
 
 use crate::daemon::signal::Signal;
 use jellysink_core::cast::CastEvent;

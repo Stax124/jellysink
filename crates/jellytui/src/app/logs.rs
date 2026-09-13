@@ -4,8 +4,7 @@ use super::*;
 
 impl App {
     /// The lines to draw and whether the view is still following the tail.
-    /// Anchored by sequence number, so eviction under a pinned view slides the
-    /// window rather than jumping it.
+    /// Anchored by sequence number, so eviction slides rather than jumps it.
     pub(crate) fn log_window(&self, height: u16) -> (Vec<LogLine>, bool) {
         let height = usize::from(height);
         let (first_seq, len) = self.logs.extent();

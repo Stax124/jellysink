@@ -141,8 +141,8 @@ async fn spawn_launches(launches: &[TerminalLaunch]) -> std::io::Result<()> {
     Err(last_err)
 }
 
-/// Ok if the child is still running or exited 0 (double-fork), Err if it exited
-/// non-zero before `timeout`. Awaited, not polled: fifteen candidate terminals
+/// Ok if the child still runs or exited 0 (double-fork), Err if it exited
+/// non-zero before `timeout`. Awaited: polling fifteen candidate terminals
 /// would busy-wait seconds of the daemon's one runtime thread.
 async fn spawn_looks_ok(child: &mut Child, timeout: Duration) -> std::io::Result<()> {
     match tokio::time::timeout(timeout, child.wait()).await {

@@ -96,9 +96,8 @@ fn prepare_play_happy_path() {
 
 #[test]
 fn prepare_play_keeps_server_default_of_off() {
-    // Jellyfin SubtitleMode=Default with no default/forced/external
-    // streams returns DefaultSubtitleStreamIndex=-1. That is Off, not
-    // "unspecified".
+    // SubtitleMode=Default with no default/forced/external streams returns
+    // DefaultSubtitleStreamIndex=-1. That is Off, not "unspecified".
     let info = json!({
         "PlaySessionId": "sess",
         "MediaSources": [{

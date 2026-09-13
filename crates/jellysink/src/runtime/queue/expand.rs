@@ -136,9 +136,8 @@ impl Runtime {
         }
     }
 
-    /// Splices already-aired episodes into the queue so the playlist selector
-    /// can reach them. Queue only — [`Self::fill_previous_into_mpv`] does the
-    /// mpv side later, because `loadfile ... replace` would wipe it.
+    /// Splices already-aired episodes into the queue only:
+    /// [`Self::fill_previous_into_mpv`] follows, since `replace` would wipe it.
     fn prepend_previous_episodes(&mut self, previous: Vec<String>) {
         let n = self.window.prepend(previous);
         tracing::info!(n, head = self.window.head(), "prepended previous episodes");
@@ -169,8 +168,7 @@ pub(in crate::runtime) fn split_episode_ids(
 }
 
 /// Whether this item could have previous episodes worth prepending. Ignores
-/// `has_next` and `autoplay`, unlike [`series_expand_skip_reason`]: both are
-/// about continuing forward, not what the playlist selector can reach.
+/// `has_next` and `autoplay`: both are about continuing forward.
 pub(in crate::runtime) fn prepend_skip_reason(
     item_type: Option<&str>,
     series_id: Option<&str>,

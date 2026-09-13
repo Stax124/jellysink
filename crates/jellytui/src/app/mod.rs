@@ -38,10 +38,8 @@ const PAGE_JUMP: isize = 10;
 /// Long enough that typing a word is one request, short enough to feel live.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// The shortest gap between two batches of cover requests. It is a rate limit
-/// rather than a settling delay: a cursor that has been still fetches at once,
-/// and only a held key is held back — otherwise scrolling a library would ask
-/// for a cover per row it passed through.
+/// The shortest gap between two batches of cover requests. A rate limit rather
+/// than a settling delay: a still cursor fetches at once, only a held key waits.
 const COVER_THROTTLE: Duration = Duration::from_millis(120);
 const SEARCH_TYPES: &str = "Movie,Series,Episode";
 
@@ -116,10 +114,8 @@ pub(crate) struct App {
     pub(crate) message: String,
     search_generation: u64,
     search_due: Option<tokio::time::Instant>,
-    /// Armed by a playback change and fired by the *following* poll. The
-    /// daemon queues its `Stopped` report and publishes the new status without
-    /// waiting for it, so at the instant the change is visible the server can
-    /// still answer with the watched state the report is about to replace.
+    /// Armed by a playback change and fired by the *following* poll: the daemon
+    /// publishes the new status before its `Stopped` report reaches the server.
     reload_due: bool,
     quit: bool,
 }

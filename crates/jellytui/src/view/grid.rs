@@ -13,23 +13,19 @@ use ratatui_image::FontSize;
 use ratatui_image::Image;
 
 const GAP: u16 = 1;
-/// The per-tile progress track. An eighth block (`▔`) is a hairline at any
-/// font size; an upper half block is four times the height and still sits
-/// against the cover above it rather than floating in its own row.
+/// The per-tile progress track. An eighth block (`▔`) is a hairline at any font
+/// size; an upper half block is four times the height.
 const TRACK: &str = "🮂";
 /// Under every cover: the shelf rule, the name, and the year/runtime line.
 const LABEL_HEIGHT: u16 = 3;
 
-/// Rows of tiles a grid aims to fill the height with. Height is what a big
-/// monitor has most of, so spending it on bigger covers and longer captions
-/// reads better than stacking five rows of thumbnails.
+/// Rows of tiles a grid aims to fill the height with. Spending a big monitor's
+/// height on bigger covers reads better than five rows of thumbnails.
 pub(crate) const TARGET_ROWS: u16 = 2;
 /// A Home shelf is one row of tiles in half the body.
 pub(crate) const SHELF_ROWS: u16 = 1;
-/// The floor under that: a tile is never sized so generously that a row holds
-/// fewer than this, which is what stops a 16:9 still from taking a third of a
-/// wide screen on its own. A level with fewer items than that spreads over its
-/// own count instead — there is nothing left for a wide tile to crowd out.
+/// The floor under that, which stops a 16:9 still taking a third of a wide
+/// screen. A level with fewer items than this spreads over its own count.
 const MIN_COLUMNS: u16 = 4;
 
 /// What a grid has to lay out: the rows of tiles it aims to fill the height
@@ -47,11 +43,8 @@ fn minimum_tile_width(aspect: f32) -> u16 {
 }
 
 /// The tallest a cover may be if `target_rows` of them are to fit, or `None`
-/// when the area is too short for that many at the minimum tile width. Capping
-/// a cover that was never going to reach two rows would only shrink it, so a
-/// short terminal keeps the tiles it has. A single row has nowhere to overflow
-/// into — a tile taller than its area is not drawn at all — so there the cap
-/// is the area's own height and there is no `None` to return.
+/// when the area is too short for that many at the minimum tile width. A single
+/// row is capped by the area instead, since a taller tile is not drawn at all.
 fn cover_height_budget(
     area: Rect,
     aspect: f32,
@@ -66,9 +59,8 @@ fn cover_height_budget(
     (budget >= floor).then_some(budget)
 }
 
-/// What a tile would like to be before the columns are evened out across the
-/// area: whatever the height budget affords, bounded by both [`MIN_COLUMNS`]
-/// and [`minimum_tile_width`].
+/// What a tile would like to be before the columns are evened out: whatever the
+/// height budget affords, bounded by [`MIN_COLUMNS`] and [`minimum_tile_width`].
 fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> u16 {
     let minimum = minimum_tile_width(aspect);
     let Some(budget) = cover_height_budget(area, aspect, font_size, shape.target_rows) else {
@@ -79,9 +71,8 @@ fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize, shape: Sha
         .clamp(1, MIN_COLUMNS);
     let widest = (area.width.saturating_sub(GAP * (spread - 1)) / spread).max(minimum);
     let wanted = cover::columns_for(budget, aspect, font_size) + 2;
-    // A shelf is bound by its height, so its cover is already as large as it
-    // can be: widening the tile to the floor would only fit fewer of them at
-    // the same size.
+    // A shelf is bound by its height, so widening the tile to the floor would
+    // only fit fewer covers at the same size.
     if shape.target_rows == 1 {
         return wanted.min(widest);
     }
@@ -111,9 +102,8 @@ pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape
     let preferred = preferred_tile_width(area, aspect, font_size, shape);
     let columns = (area.width.saturating_add(GAP) / preferred.saturating_add(GAP)).max(1);
     let tile_width = ((area.width.saturating_sub(GAP * (columns - 1))) / columns).max(1);
-    // Evening the tiles out across the width can hand a tile more columns than
-    // it asked for, and a poster obeying its aspect would grow out of the
-    // height budget with them — so the cover is fitted to both.
+    // Evening the tiles out can hand a tile more columns than it asked for, and
+    // a poster obeying its aspect would grow out of the height budget with them.
     let cover_width = tile_width.saturating_sub(2).max(1);
     let max_rows = cover_height_budget(area, aspect, font_size, shape.target_rows)
         .unwrap_or_else(|| cover::rows_for(cover_width, aspect, font_size));
@@ -240,9 +230,8 @@ fn render_tile(
     caption: Style,
     covers: &Covers,
 ) {
-    // A cover can come out narrower than the tile it sits in, because the
-    // height budget bounds it before the width does. Centring it centres the
-    // caption with it, since both are drawn against this rect.
+    // A cover can come out narrower than its tile, because the height budget
+    // bounds it first. Centring the rect centres the caption with it.
     let cover = Rect {
         x: tile.x + 1 + (tile.width.saturating_sub(2 + metrics.cover.width)) / 2,
         y: tile.y,
@@ -282,9 +271,8 @@ fn render_tile(
     }
 }
 
-/// The shelf rule under a cover, doubling as the progress bar a partly
-/// watched item would show its percentage for in a list. Selection is carried
-/// by the caption's highlight, so this is free to mean one thing only.
+/// The shelf rule under a cover, doubling as a partly watched item's progress
+/// bar. Selection is carried by the caption's highlight, not by this.
 fn watched_rule(item: &Item, width: u16) -> Line<'static> {
     let fraction = if item.played() {
         1.0

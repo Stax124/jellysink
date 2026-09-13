@@ -1,6 +1,5 @@
 //! Cover art: which image an item wants, and the bounded cache of decoded
-//! terminal protocols behind it. The encoded bytes underneath it are kept on
-//! disk instead — see [`disk`].
+//! terminal protocols behind it. The bytes underneath live in [`disk`].
 
 mod disk;
 
@@ -22,16 +21,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// few screens of scrollback without the encoded frames adding up.
 pub(super) const CACHE_CAPACITY: usize = 64;
 
-/// How far a measured cell has to be from the one the covers are encoded with
-/// before it counts as another display rather than as the window's padding,
-/// which is in its pixel size but not in a cell. A scale factor is at least a
+/// How far a measured cell must be from the encoded one to count as another
+/// display rather than the window's padding. A scale factor is at least a
 /// quarter away, so this only has to clear the padding.
 const NEW_GRID_THRESHOLD: f32 = 0.05;
 
-/// Which image to draw, how large, and against which pixel grid. Both sizes
-/// belong to the identity because a protocol is encoded against one rect at one
-/// cell size — after a resize, or a move to a display of another scale, the old
-/// encoding is the wrong one rather than a stale one.
+/// Which image to draw, how large, and against which pixel grid. Both sizes are
+/// part of the identity: a protocol is encoded against one rect at one cell
+/// size, so after a resize the old encoding is wrong rather than stale.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct CoverKey {
     item_id: String,
@@ -73,11 +70,9 @@ impl Covers {
         })
     }
 
-    /// Takes the terminal's current pixels per cell, and encodes against that
-    /// grid from here on. Everything encoded against the previous one goes: a
-    /// key carries the cell, so those entries could never be looked up again,
-    /// and the requests still in flight land under the old key rather than on
-    /// screen.
+    /// Takes the terminal's current pixels per cell and encodes against that
+    /// grid from here on. A key carries the cell, so everything encoded against
+    /// the previous one goes: it could never be looked up again.
     pub(super) fn set_cell_size(&mut self, cell: Option<Size>) {
         let Some(cell) = cell else { return };
         if !self.is_new_grid(cell) {
@@ -141,9 +136,8 @@ impl Covers {
         }
     }
 
-    /// One request is all a cover gets. Asking again would cost a request per
-    /// throttle window for as long as the tile is on screen, because the gate
-    /// that starts one is the tile being blank.
+    /// One request is all a cover gets: the gate that starts one is the tile
+    /// being blank, so asking again costs a request per throttle window.
     pub(super) fn give_up(&mut self, key: &CoverKey) {
         self.in_flight.remove(key);
         self.unavailable.insert(key.clone());
@@ -163,9 +157,8 @@ impl Covers {
 }
 
 /// The picker again at `cell` pixels per cell, keeping the protocol the startup
-/// query settled on. Deprecated in favour of that query, which cannot be run a
-/// second time with the alternate screen up — and 11.x has no way to hand a new
-/// font size to the picker it already returned.
+/// query settled on. Deprecated in favour of that query, which cannot run a
+/// second time with the alternate screen up.
 fn repicker(picker: &Picker, cell: Size) -> Picker {
     #[allow(deprecated)]
     let mut rebuilt = Picker::from_fontsize(FontSize::new(cell.width, cell.height));
@@ -174,11 +167,8 @@ fn repicker(picker: &Picker, cell: Size) -> Picker {
 }
 
 /// The shape of an item's primary image, as width ÷ height. The server's own
-/// measurement wins where it sent one, and the kind answers for the rest: an
-/// episode's still and a library's banner are 16:9, everything else a poster.
-/// A box reserved for the wrong shape is drawn as a gap between the picture and
-/// the text under it — and a grid sizes every tile from its first row, so a
-/// library the server sent no ratio for would mis-shape the whole screen.
+/// measurement wins where it sent one; a grid sizes every tile from its first
+/// row, so the kind has to answer for the rest.
 pub(super) fn primary_aspect(item: &Item) -> f32 {
     let wide = matches!(item.kind(), "Episode" | "CollectionFolder" | "UserView");
     item.primary_image_aspect_ratio
@@ -219,9 +209,8 @@ pub(super) fn fit(area: Rect, aspect: f32, font_size: FontSize, max_rows: u16) -
     }
 }
 
-/// The terminal's pixels per cell, worked out from the size the tty reports for
-/// the window. `None` where it leaves the pixel fields at zero — tmux and a
-/// plain xterm do, and there is nothing to measure against then.
+/// The terminal's pixels per cell, from the size the tty reports for the
+/// window. `None` where it leaves the pixel fields at zero, as tmux does.
 pub(super) fn cell_size(window: WindowSize) -> Option<Size> {
     let (grid, pixels) = (window.columns_rows, window.pixels);
     if grid.width == 0 || grid.height == 0 || pixels.width == 0 || pixels.height == 0 {
@@ -235,20 +224,14 @@ pub(super) fn cell_size(window: WindowSize) -> Option<Size> {
 
 /// Queries the terminal for its graphics protocol and cell size. Has to run
 /// before the alternate screen is taken: the query goes out on stdout and the
-/// answer comes back on stdin. Halfblocks are the fallback rather than a
-/// failure — tmux and a plain xterm land there and still get a picture.
+/// answer comes back on stdin.
 pub(super) fn detect_picker() -> Picker {
     Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
 }
 
-/// One cover, resized by the server rather than downloaded whole — the same
-/// lesson `specs/tui.md` records about `/Sessions`, at a smaller scale.
-/// `Ok(None)` for an item the server has no artwork for. Decode and encode are
-/// real CPU work on the thread that draws, so they go to `spawn_blocking`,
-/// which is also where the disk cache is read and written.
-///
-/// The server answers with a bucket rather than the exact box, so every cover
-/// is rescaled here now and the default `Nearest` would show it.
+/// One cover, resized by the server rather than downloaded whole. Decode and
+/// encode are real CPU work on the thread that draws, so they go to
+/// `spawn_blocking` along with the disk cache.
 pub(super) async fn fetch(
     api: &Api,
     picker: Picker,

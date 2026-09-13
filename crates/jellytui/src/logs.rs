@@ -1,7 +1,5 @@
 //! The tracing subscriber jellytui installs and the ring buffer it writes to.
-//!
-//! Its only sink is memory: a `fmt` layer would write to stdout, which is the
-//! alternate screen. See `specs/tui.md`.
+//! Memory is its only sink: a `fmt` layer would write to the alternate screen.
 
 use color_eyre::eyre::Result;
 use std::collections::VecDeque;
@@ -30,8 +28,7 @@ pub(crate) struct LogLine {
 struct Ring {
     lines: VecDeque<LogLine>,
     /// Sequence number of `lines.front()`. Eviction moves every index, so the
-    /// scroll anchor keys on this instead — the rule `specs/tui.md` already
-    /// sets for search generations and level depths.
+    /// scroll anchor keys on this instead.
     first_seq: u64,
 }
 
@@ -91,8 +88,7 @@ impl LogBuffer {
 }
 
 /// A `Layer` on the registry rather than a bespoke `Subscriber`: the registry
-/// is what stores span data, so `#[instrument]` keeps working and another
-/// layer can still be added. It costs `jellytui` 557 KB (+10.6%).
+/// stores span data, so `#[instrument]` keeps working. Costs 557 KB (+10.6%).
 struct Capture {
     buffer: LogBuffer,
     started: Instant,

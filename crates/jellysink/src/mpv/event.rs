@@ -93,17 +93,11 @@ pub(crate) enum MpvEvent {
         reason: EndFileReason,
     },
     FileLoaded,
-    /// mpv's selected subtitle track changed — `j` in the mpv window, its track
-    /// menu, or mpv auto-selecting one as a file loads.
-    ///
-    /// Carries no track id on purpose: these are handled a whole file load
-    /// after they are emitted, so the runtime re-reads `sid` instead.
+    /// mpv's selected subtitle track changed. Carries no track id on purpose:
+    /// this is handled a whole file load later, so the runtime re-reads `sid`.
     SubtitleTrackChanged,
-    /// mpv's selected audio track changed — `#` in the mpv window, its track
-    /// menu, or mpv auto-selecting one as a file loads.
-    ///
-    /// Carries no track id, for the same reason
-    /// [`MpvEvent::SubtitleTrackChanged`] does not.
+    /// mpv's selected audio track changed. Carries no track id, for the same
+    /// reason [`MpvEvent::SubtitleTrackChanged`] does not.
     AudioTrackChanged,
     Exited,
 }

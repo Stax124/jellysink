@@ -24,8 +24,7 @@ static TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn atomic_write(path: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {
     // Two writers can share a destination — the cover cache maps a range of
-    // sizes onto one file — and a tmp name derived from it alone would have
-    // them writing the same bytes over each other.
+    // sizes onto one file — so a tmp name derived from the path alone collides.
     let tmp = path.with_extension(format!(
         "tmp.{}.{}",
         std::process::id(),

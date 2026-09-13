@@ -1,10 +1,6 @@
 //! Covers kept between sessions: the bytes the server sent, not the protocol
-//! they were encoded into. A `Protocol` belongs to one rect at one cell size
-//! and is worthless the moment either moves; these bytes are the round trip,
-//! which is the part worth not paying twice.
-//!
-//! Nothing here is allowed to fail a cover. Every path degrades to a miss, and
-//! a miss is a fetch.
+//! they were encoded into, which belongs to one rect at one cell size. Nothing
+//! here may fail a cover — every path degrades to a miss, and a miss is a fetch.
 
 use super::CoverKey;
 use jellysink_core::config::atomic_write;
@@ -16,17 +12,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 /// How much may be written between two prunes, as a fraction of the budget. A
-/// scan is a stat per entry, so it is worth amortising, and a quarter over
-/// budget is a few tens of megabytes rather than a full library.
+/// scan is a stat per entry, so it is worth amortising.
 const PRUNE_AFTER: f64 = 0.25;
 
 /// How far under budget a prune goes. Stopping exactly at the budget would
 /// leave the next cover to prune again.
 const PRUNE_TO: f64 = 0.9;
 
-/// A handle onto the cover directory, cloned into the task that fetches a
-/// cover so the read, the write and the decode all happen on the one blocking
-/// thread.
+/// A handle onto the cover directory, cloned into the task that fetches a cover
+/// so the read, the write and the decode share one blocking thread.
 #[derive(Clone)]
 pub(crate) struct CoverDisk {
     dir: PathBuf,
@@ -104,8 +98,7 @@ impl CoverDisk {
     }
 
     /// Drops the least recently read covers until the directory is back under
-    /// budget. Also what trims a budget the user has just lowered, which is why
-    /// it runs once at startup as well.
+    /// budget, including a budget the user has just lowered.
     pub(crate) fn prune(&self) {
         if !self.enabled() {
             return;
@@ -152,8 +145,7 @@ impl CoverDisk {
 }
 
 /// A read is what makes a cover recent, so eviction keeps what is being looked
-/// at rather than what was fetched last. Best-effort: an unbumped mtime costs
-/// the entry its place in the queue and nothing else.
+/// at rather than what was fetched last. Best-effort by design.
 fn touch(path: &Path) {
     if let Ok(file) = fs::File::open(path) {
         let _ = file.set_modified(SystemTime::now());

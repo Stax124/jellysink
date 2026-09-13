@@ -174,9 +174,8 @@ fn a_subtitle_identity_carries_the_raw_track_title_not_only_the_display_title() 
     );
 }
 
-/// A stream we cannot point mpv at must not become a remembered choice —
-/// the user would pick it once and every later episode would silently fall
-/// back to the server default.
+/// A stream we cannot point mpv at must not become a remembered choice, or
+/// every later episode silently falls back to the server default.
 #[test]
 fn an_unselectable_subtitle_is_not_offered_as_an_identity() {
     let source = media_source(json!({

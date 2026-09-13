@@ -44,14 +44,9 @@ const MPRIS_ART_MAX_PIXELS: u32 = 600;
 /// Named rather than left to the server, for the reason `IMAGE_QUALITY` gives.
 const MPRIS_ART_QUALITY: u32 = 85;
 
-/// The item's primary image (cover art / thumbnail), for MPRIS `mpris:artUrl`.
-/// Carries the token in the query string like [`direct_stream_url`] — this
-/// URL is handed to a desktop widget to fetch itself, not read server-side by
-/// jellysink, so it is redacted by [`redact_api_key`] wherever it is logged.
-///
-/// The format is named because a size parameter makes the server re-encode,
-/// and it would otherwise pick one by `Accept` negotiation — WebP heads that
-/// list, and a widget is not guaranteed to decode it.
+/// The item's primary image, for MPRIS `mpris:artUrl`. The format is named
+/// because `Accept` negotiation would otherwise hand a widget WebP, which it is
+/// not guaranteed to decode.
 pub fn image_url(server: &str, item_id: &str, token: &str) -> String {
     let server = server.trim_end_matches('/');
     format!(

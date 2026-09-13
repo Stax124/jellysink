@@ -4,10 +4,9 @@
 use super::*;
 
 impl App {
-    /// Footer state comes from the daemon's own status socket, not from
-    /// `GET /Sessions`: that response embeds `NowPlayingQueueFullItems` and
-    /// runs to megabytes once a series is queued, which cannot be trimmed by
-    /// any request parameter. This is a few dozen bytes over a Unix socket.
+    /// Footer state comes from the daemon's status socket, not `GET /Sessions`:
+    /// that response embeds `NowPlayingQueueFullItems` and runs to megabytes
+    /// once a series is queued, and no request parameter trims it.
     pub(super) fn poll_player(&self) {
         let (paths, tx) = (self.paths.clone(), self.tx.clone());
         tokio::spawn(async move {
@@ -59,8 +58,7 @@ impl App {
         self.player_polled = true;
         self.player = player;
         // Firing before arming is what makes the deferral one poll rather than
-        // none: a change arming and firing in the same poll would read the
-        // server before the daemon's report reached it.
+        // none, so the read cannot outrun the daemon's report.
         if std::mem::take(&mut self.reload_due) {
             self.reload_after_playback();
         }
@@ -80,9 +78,8 @@ impl App {
         }
     }
 
-    /// Home is reloaded whatever the screen: Continue Watching and Next Up are
-    /// what finishing an episode invalidates, and they are rarely the screen
-    /// that was up when it finished.
+    /// Home is reloaded whatever the screen: finishing an episode invalidates
+    /// Continue Watching and Next Up, rarely the screen that was up.
     fn reload_after_playback(&mut self) {
         tracing::info!(screen = ?self.screen, "reloading after a playback change");
         self.reload_current_screen();

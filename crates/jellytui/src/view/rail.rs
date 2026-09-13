@@ -15,9 +15,8 @@ use ratatui_image::Image;
 /// stays the full-width list it is today.
 const MIN_BODY_WIDTH: u16 = 90;
 
-/// Splits a body area into the list and the rail beside it. Half each: a row
-/// is a line of text and elides gracefully, while the cover beside it is the
-/// thing worth the width.
+/// Splits a body area into the list and the rail beside it. Half each: a row is
+/// text and elides gracefully, where the cover is worth the width.
 pub(crate) fn split(body: Rect) -> (Rect, Option<Rect>) {
     if body.width < MIN_BODY_WIDTH {
         return (body, None);
@@ -26,9 +25,8 @@ pub(crate) fn split(body: Rect) -> (Rect, Option<Rect>) {
     (list, Some(rail))
 }
 
-/// The box the cover occupies inside the rail. Height is capped at three
-/// fifths so a 2:3 poster leaves room for the text under it; a 16:9 still is
-/// bounded by the width first anyway.
+/// The box the cover occupies inside the rail. Height is capped at three fifths
+/// so a 2:3 poster leaves room for the text under it.
 pub(crate) fn cover_rect(rail: Rect, item: &Item, font_size: FontSize) -> Rect {
     let inner = block().inner(rail);
     cover::fit(
@@ -40,8 +38,7 @@ pub(crate) fn cover_rect(rail: Rect, item: &Item, font_size: FontSize) -> Rect {
 }
 
 /// The size a rail cover is encoded for, or `None` when this body has no rail.
-/// The fetch and the renderer both come through [`cover_rect`], so what is
-/// downloaded is the size it is drawn at.
+/// Both the fetch and the renderer come through [`cover_rect`].
 pub(crate) fn cover_size(body: Rect, item: &Item, font_size: FontSize) -> Option<Size> {
     Some(cover_rect(split(body).1?, item, font_size).as_size())
 }
@@ -111,10 +108,9 @@ fn lines(item: &Item) -> Vec<Line<'static>> {
     lines
 }
 
-/// The one line under the title, skipping whatever the server did not send.
-/// A folder counts its children where a playable item gives its runtime: a
-/// series' `RunTimeTicks` is the nominal length of one episode, so printing it
-/// beside a season list claims the whole show is over in twenty-four minutes.
+/// The one line under the title, skipping whatever the server did not send. A
+/// folder counts children rather than printing a runtime, because a series'
+/// `RunTimeTicks` is the nominal length of one episode.
 pub(crate) fn meta(item: &Item) -> String {
     let year = item.production_year.map(|year| year.to_string());
     let left = item.unplayed_count().map(|count| format!("{count} left"));

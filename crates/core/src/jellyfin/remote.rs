@@ -1,7 +1,5 @@
-//! Driving another Jellyfin session — here, the jellysink daemon.
-//!
-//! Every call lands in [`crate::cast`] on the other side, so the command names
-//! and parameter spellings must match what `CastEvent::from_ws` parses.
+//! Driving another Jellyfin session — here, the jellysink daemon. Every call
+//! lands in [`crate::cast`], so the names must match `CastEvent::from_ws`.
 
 use super::auth::Api;
 use super::encode_query_value;
@@ -10,14 +8,13 @@ use color_eyre::eyre::{Result, WrapErr};
 use serde::Deserialize;
 
 /// The `PlayCommand` value [`Api::play_now`] sends. Named so the round-trip
-/// test can hold it against what `cast.rs` parses: the two halves are joined
-/// through the server, so a typo here fails silently at runtime.
+/// test can hold it against what `cast.rs` parses — a typo fails at runtime.
 const PLAY_NOW: &str = "PlayNow";
 
 impl Api {
     /// jellysink's own session, or `None` when the daemon is not connected.
     /// Filtered by device id: an earlier install leaves a same-named session
-    /// behind, and commands sent to that one go nowhere.
+    /// behind that commands go nowhere through.
     pub async fn session_for_device(&self) -> Result<Option<Session>> {
         let path = format!("/Sessions?deviceId={}", encode_query_value(&self.device_id));
         let body = self.get_json(&path).await?;

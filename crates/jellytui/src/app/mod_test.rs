@@ -223,10 +223,8 @@ async fn a_resting_cursor_fetches_its_covers_at_once() {
     );
 }
 
-/// The reason the throttle exists: scrolling a library must not ask for a
-/// cover per row the cursor passes through. The rows that go by inside the
-/// window are scheduled, and only the last of them is still standing when it
-/// opens.
+/// The reason the throttle exists: scrolling a library must not ask for a cover
+/// per row the cursor passes through, only the last one it rests on.
 #[tokio::test(start_paused = true)]
 async fn a_moving_cursor_does_not_fetch_a_cover_per_row() {
     let mut app = app();

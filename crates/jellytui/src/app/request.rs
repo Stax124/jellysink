@@ -40,9 +40,8 @@ impl App {
         );
     }
 
-    /// Every cover the current screen wants. Recomputed each iteration, which
-    /// is what makes a terminal resize ask for the new size without anything
-    /// having to notice the resize itself.
+    /// Every cover the current screen wants. Recomputed each iteration, so a
+    /// resize asks for the new size without anything having to notice it.
     pub(super) fn visible_covers(&self) -> Vec<CoverKey> {
         if self.screen == Screen::Playing {
             let (body, font_size) = (self.body_area(), self.covers.font_size());
@@ -103,9 +102,8 @@ impl App {
         let now = tokio::time::Instant::now();
         match self.cover_ready_at {
             // Inside the window: wait it out rather than asking for a row the
-            // cursor is only passing through. The last change to arrive is the
-            // one still standing when it opens, so a cursor coming to rest is
-            // always fetched.
+            // cursor is only passing through. A cursor at rest is the last
+            // change standing when the window opens, so it is always fetched.
             Some(ready_at) if ready_at > now => self.cover_due = Some(ready_at),
             _ => {
                 self.cover_due = None;

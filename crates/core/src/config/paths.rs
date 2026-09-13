@@ -30,9 +30,8 @@ impl Paths {
         })
     }
 
-    /// Creates the config directory, mode 0700 — `mpv.sock` is created by mpv
-    /// under its own umask and hands out the access token, so the directory
-    /// around it is what keeps it private. Re-applied on every run.
+    /// Creates the config directory, mode 0700: `mpv.sock` is created by mpv
+    /// under its own umask and hands out the access token.
     pub fn ensure(&self) -> color_eyre::Result<()> {
         fs::create_dir_all(&self.config_dir)
             .wrap_err_with(|| format!("creating {}", self.config_dir.display()))?;
@@ -65,9 +64,9 @@ impl Paths {
         self.config_dir.join("mpv_args.conf")
     }
 
-    /// Artwork jellytui keeps between sessions. Under the cache directory
-    /// rather than beside the config: it is derived data the user may delete at
-    /// any moment, and nothing in it is private the way the access token is.
+    /// Artwork jellytui keeps between sessions. Under the cache directory: it
+    /// is derived data the user may delete at any moment, and none of it is
+    /// private the way the access token is.
     pub fn cover_cache_dir(&self) -> PathBuf {
         self.cache_dir.join("covers")
     }

@@ -28,9 +28,8 @@ fn block() -> Block<'static> {
         .title(" Playing ")
 }
 
-/// The still's box, or `None` when the body is too narrow to carry one. Half
-/// the height is the cap that leaves the season its own half; a 16:9 still is
-/// bounded by the width first anyway.
+/// The still's box, or `None` when the body is too narrow to carry one. Capped
+/// at half the height, which leaves the season its own half.
 fn still_rect(body: Rect, item: &Item, font_size: FontSize) -> Option<Rect> {
     if body.width < MIN_BANNER_WIDTH {
         return None;

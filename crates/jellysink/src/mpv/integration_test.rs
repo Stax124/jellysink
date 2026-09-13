@@ -1,24 +1,17 @@
-//! Integration tests that drive a real mpv process over its real IPC socket.
-//!
-//! mpv is forced headless here (`--vo=null --ao=null`) and given `--no-config`.
-//! That is the opposite of what the daemon does on purpose — the product
-//! promise is the *user's* mpv config and video output (see `AGENTS.md`), but a
-//! test that inherited either would fail differently on every machine.
+//! Integration tests driving a real mpv over its real IPC socket. Headless and
+//! `--no-config`, unlike the daemon: inheriting either would fail per machine.
 
 use super::*;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 
-/// How long a property is given to reach the value a command asked for. mpv
-/// applies most of them within a frame; this is generous so a loaded CI box
-/// does not fail the suite.
+/// How long a property is given to reach the value a command asked for.
+/// Generous so a loaded CI box does not fail the suite.
 const SETTLE: Duration = Duration::from_secs(5);
 
-/// `require_mpv!()` fails when no player is installed. `require_mpv!(0, 38)`
-/// additionally *skips* the test on an older mpv, so a distro that pins an
-/// mpv predating a command we use stays green instead of failing on syntax
-/// the player never understood.
+/// `require_mpv!()` fails when no player is installed; `require_mpv!(0, 38)`
+/// additionally *skips* on an older mpv rather than failing on syntax it lacks.
 macro_rules! require_mpv {
     () => {
         assert!(
@@ -42,12 +35,9 @@ macro_rules! require_mpv {
     }};
 }
 
-/// Polls until `$cond` holds, or fails the test naming what never happened.
-/// mpv acknowledges a `set_property` before the player has necessarily acted on
-/// it, so reading straight back is racy.
-///
-/// A macro rather than a method taking a closure: an `async` closure borrowing
-/// the session cannot name the lifetime it returns.
+/// Polls until `$cond` holds, or fails naming what never happened: mpv
+/// acknowledges a `set_property` before acting on it. A macro because an async
+/// closure borrowing the session cannot name the lifetime it returns.
 macro_rules! wait_until {
     ($mpv:expr, $what:expr, |$session:ident| $cond:expr) => {{
         let deadline = Instant::now() + SETTLE;
@@ -154,9 +144,8 @@ impl TestMpv {
         }
     }
 
-    /// Starts `title` the way the runtime starts an item -- `loadfile ...
-    /// replace`, which wipes the playlist -- and waits for it to load. Queue
-    /// entries are appended around it afterwards, as `queue.rs` does.
+    /// Starts `title` the way the runtime does -- `loadfile ... replace`, which
+    /// wipes the playlist -- and waits for it to load.
     async fn start_current(&mut self, title: &str) {
         self.session
             .loadfile(&fixture("sample.mkv"), Some(title))
@@ -474,10 +463,8 @@ async fn inserting_before_the_current_entry_shifts_the_position() {
 
 #[tokio::test]
 async fn inserting_at_the_end_of_the_playlist_behaves_like_append() {
-    // PlayNext's mpv position formula (`expected_pos + 1`) equals the
-    // playlist length when nothing is queued after the current item yet --
-    // this pins that `insert-at` there is just an append, so PlayNext needs
-    // no special case for an empty tail.
+    // Pins that `insert-at` at the playlist length is just an append, so
+    // PlayNext needs no special case for an empty tail.
     require_mpv!(0, 38);
     let mut mpv = TestMpv::start().await;
     let file = fixture("sample.mkv");
@@ -499,8 +486,7 @@ async fn inserting_at_the_end_of_the_playlist_behaves_like_append() {
 #[tokio::test]
 async fn play_next_splices_in_right_after_current_even_with_a_tail_already_queued() {
     // Reproduces the PlayNext desync: casting mid-series forward-fills the
-    // rest of the season into mpv before any PlayNext happens, so the
-    // insertion point is never the end of the playlist in practice.
+    // season, so the insertion point is never the end of the playlist.
     require_mpv!(0, 38);
     let mut mpv = TestMpv::start().await;
     let file = fixture("sample.mkv");
@@ -623,9 +609,8 @@ async fn keep_open_holds_the_last_item_and_says_nothing() {
     // on but the clock.
     sleep(Duration::from_secs(2)).await;
 
-    // With nothing left to autoplay, `keep-open` holds the window at the last
-    // frame and mpv emits no `end-file` at all -- the runtime therefore cannot
-    // learn the item finished from an event, and must not wait for one.
+    // With nothing left to autoplay, `keep-open` holds the last frame and mpv
+    // emits no `end-file` at all -- the runtime must not wait for one.
     assert_eq!(
         mpv.session.get_property("eof-reached").await.unwrap(),
         json!(true)

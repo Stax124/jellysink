@@ -1,9 +1,6 @@
 //! jellytui: a terminal frontend that browses Jellyfin and casts to a running
-//! jellysink. See `specs/tui.md`.
-//!
-//! It never calls `init_tracing`: that writes to stdout and would paint over
-//! the alternate screen. It installs a subscriber of its own instead, whose
-//! only sink is the ring buffer the `L` screen draws — see `crate::logs`.
+//! jellysink. Never calls `init_tracing`, which would paint over the alternate
+//! screen; see `crate::logs` and `specs/tui.md`.
 
 mod app;
 mod cover;
@@ -55,9 +52,8 @@ async fn main() -> Result<()> {
 }
 
 async fn run(paths: Paths) -> Result<()> {
-    // Before anything worth logging happens, and while a bad filter — or a
-    // config.toml that will not parse — can still be reported on the normal
-    // screen.
+    // Before anything worth logging happens, and while a bad filter can still
+    // be reported on the normal screen.
     let config = Config::load(&paths)?;
     let logs = logs::install(&config.log_level)?;
     let credentials = Credentials::load(&paths)?

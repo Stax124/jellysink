@@ -1,19 +1,9 @@
-//! Remembering the track the user picked, and finding it again in the next
-//! episode.
-//!
-//! A choice is remembered as an *identity* ([`TrackId`]) and re-matched against
-//! what the next item offers, because stream indexes are per-file and the
-//! server's defaults are exactly what the user is overriding. In memory only,
-//! most recent selection only.
-//!
-//! Audio and subtitles share this matcher; [`crate::media::audio`] and
-//! [`crate::media::subtitle`] are the two thin sides of it.
+//! Remembering the user's track pick and finding it again in the next episode,
+//! by identity rather than index since indexes are per-file. In memory only.
+//! See `specs/tracks.md`.
 
-/// One selectable stream, identified by what it *is* rather than where it sits,
-/// since "index 3" is not the same track twice.
-///
-/// `is_forced` and `is_external` are subtitle notions; for audio they are
-/// always `false`, so they cannot change a ranking.
+/// One selectable stream, identified by what it *is* rather than where it sits.
+/// `is_forced` and `is_external` are subtitle notions, always `false` for audio.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TrackId {
     pub(crate) index: i64,
@@ -52,10 +42,8 @@ pub(crate) enum TrackPreference {
 }
 
 impl TrackPreference {
-    /// What the user just picked, or `None` when it cannot be identified — an
-    /// unselectable index, or a stream with neither a language nor a name.
-    /// Forgotten rather than stored, so it falls back to the server default
-    /// instead of keeping a stale choice alive.
+    /// What the user just picked, or `None` when it cannot be identified.
+    /// Forgotten rather than stored, so it falls back to the server default.
     pub(crate) fn from_selection(candidates: &[TrackId], stream_index: i64) -> Option<Self> {
         // Off is a decision even for an item with no streams of this kind.
         if stream_index < 0 {
@@ -158,9 +146,8 @@ pub(crate) fn best_match<'a>(wanted: &TrackId, candidates: &'a [TrackId]) -> Opt
         .map(|(_, candidate)| candidate)
 }
 
-/// The Jellyfin stream index to play for this item. Precedence: `requested`
-/// (the remote just told us), then a matching remembered preference, then
-/// `server_default`.
+/// The Jellyfin stream index to play. Precedence: `requested`, then a matching
+/// remembered preference, then `server_default`.
 pub(crate) fn resolve_track_index(
     kind: TrackKind,
     requested: Option<i64>,

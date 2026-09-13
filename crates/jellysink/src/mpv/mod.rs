@@ -1,6 +1,5 @@
 //! The mpv process and its IPC socket. Never sets `vo`, `hwdec`, `scale` or
-//! `glsl-shaders`, and never passes `--no-config`: the user's own mpv config
-//! and upscalers are the point.
+//! `glsl-shaders`, and never passes `--no-config`.
 
 mod command;
 mod event;

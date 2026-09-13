@@ -75,8 +75,7 @@ fn a_folder_listing_omits_the_search_parameters_entirely() {
 }
 
 /// An already-aligned size staying put is the one that bites: `(n / 64 + 1) *
-/// 64` would push every one of them into the next bucket and never reuse a
-/// cached image. A zero box would ask the server for `maxWidth=0`.
+/// 64` would push every one into the next bucket and never reuse a cache entry.
 #[test]
 fn an_image_is_asked_for_at_the_next_bucket_up() {
     let query = image_query(144, 224);

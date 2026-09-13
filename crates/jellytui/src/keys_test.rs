@@ -89,8 +89,7 @@ fn the_log_pane_keys_are_still_text_in_the_search_box() {
 #[test]
 fn playback_keys_are_mpvs_and_are_not_bound_here() {
     // The stream plays in the user's own mpv, which already owns pause, seek,
-    // volume, mute and fullscreen. A second set of bindings for them is a
-    // second source of truth for state mpv is authoritative about.
+    // volume, mute and fullscreen — rebinding them is a second source of truth.
     for c in [' ', 's', 'n', 'p', 'm', 'f', '+', '=', '-'] {
         assert_eq!(map(press(c), false), None, "{c:?} is still bound");
     }

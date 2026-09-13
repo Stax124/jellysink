@@ -4,18 +4,15 @@ use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-/// Parse a `tracing` filter spec (`info`, `jellysink=debug,warn`, …).
-///
-/// `Targets` rather than `EnvFilter`: measured at +186 KB (+2.1%) of release
-/// binary, and all we give up is span-field filtering.
+/// Parse a `tracing` filter spec (`info`, `jellysink=debug,warn`, …). `Targets`
+/// rather than `EnvFilter`: +186 KB of binary for span-field filtering.
 pub(crate) fn parse_log_filter(spec: &str) -> Result<Targets> {
     spec.parse()
         .wrap_err_with(|| format!("invalid log filter {spec:?}"))
 }
 
 /// Validates a `log_level` before it is written to config.toml. Stricter than
-/// [`parse_log_filter`], which reads a bare `"banana"` as a target name and
-/// then silently filters out everything jellysink logs.
+/// [`parse_log_filter`], which reads a bare `"banana"` as a target name.
 pub(crate) fn validate_log_level(spec: &str) -> Result<()> {
     parse_log_filter(spec)?;
     let bare = spec.trim();
@@ -31,9 +28,8 @@ pub(crate) fn validate_log_level(spec: &str) -> Result<()> {
     Ok(())
 }
 
-/// The filter a binary should log through: `RUST_LOG` when it is set, the
-/// configured `log_level` otherwise. jellytui builds its own subscriber and
-/// still has to honour the same precedence.
+/// The filter a binary should log through: `RUST_LOG` when set, the configured
+/// `log_level` otherwise. jellytui builds its own subscriber and needs it too.
 pub fn log_filter(level: &str) -> Result<Targets> {
     match std::env::var("RUST_LOG") {
         Ok(spec) => parse_log_filter(&spec),

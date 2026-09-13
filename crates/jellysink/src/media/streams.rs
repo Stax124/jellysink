@@ -222,8 +222,7 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
             });
         }
         // Gated on IsExternal, not delivery: Jellyfin reports an in-file
-        // subtitle as External when it extracts a sidecar, and mpv still has an
-        // in-file track for it.
+        // subtitle as External when it extracts a sidecar, and mpv does not.
         if !sub.is_external {
             subtitle_track_id += 1;
         }
@@ -233,8 +232,8 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
 }
 
 /// Whether any subtitle stream comes from another origin, in which case the
-/// token goes on the stream URL: mpv applies `http-header-fields` to every
-/// request it makes, third-party hosts included.
+/// token goes on the stream URL rather than in `http-header-fields`, which mpv
+/// would send to the third-party host too.
 pub(crate) fn has_foreign_subtitle_host(server: &str, source: &MediaSource) -> bool {
     let Ok(base) = reqwest::Url::parse(server) else {
         return false;

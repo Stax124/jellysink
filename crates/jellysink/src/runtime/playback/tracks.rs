@@ -100,12 +100,8 @@ impl Runtime {
         }
     }
 
-    /// Adopts a track picked in the mpv window (`#` for audio, `j` for
-    /// subtitles), mapping mpv's track id back to the Jellyfin stream index the
-    /// rest of the code speaks.
-    ///
-    /// The event carries no value: it is handled long after it was emitted, so
-    /// only mpv's live selection against the last settled one says anything.
+    /// Adopts a track picked in the mpv window, mapping mpv's track id back to
+    /// a Jellyfin stream index against the last settled selection.
     pub(in crate::runtime) async fn adopt_mpv_track(&mut self, kind: TrackKind) {
         // A loading file reports neither the old selection nor the new one.
         if self.transitioning || self.stopping || self.current.is_none() {
@@ -125,9 +121,8 @@ impl Runtime {
             SelectedTrack::Id(track_id) => match self.jellyfin_index_of(kind, track_id) {
                 Some(jellyfin_index) => jellyfin_index,
                 None => {
-                    // A track Jellyfin does not have (a user's own sidecar, or
-                    // an external file mpv picked up). Unreportable, but still
-                    // the baseline so it stops re-firing.
+                    // A track Jellyfin does not have (a user's own sidecar).
+                    // Unreportable, but still the baseline so it stops re-firing.
                     tracing::debug!(
                         kind = kind.as_str(),
                         track_id,
@@ -151,9 +146,7 @@ impl Runtime {
     }
 
     /// Records the user's choice by identity, since the next episode numbers
-    /// its streams differently. An unidentifiable choice is forgotten rather
-    /// than kept: re-applying a track the user has already moved away from is
-    /// worse than falling back to the server default.
+    /// its streams differently. An unidentifiable choice is forgotten.
     pub(in crate::runtime) fn remember_track(&mut self, kind: TrackKind, jellyfin_index: i64) {
         let candidates = self.candidates(kind);
         let preference = TrackPreference::from_selection(candidates, jellyfin_index);
@@ -238,11 +231,8 @@ impl Runtime {
         }
     }
 
-    /// The Jellyfin stream index an mpv track id came from.
-    ///
-    /// `sub-add` appends, so external subtitle ids sit above the embedded
-    /// numbering and the two lookups cannot collide. Audio has one lookup
-    /// rather than two: there is no external audio.
+    /// The Jellyfin stream index an mpv track id came from. `sub-add` appends,
+    /// so external subtitle ids sit above the embedded numbering.
     fn jellyfin_index_of(&self, kind: TrackKind, track_id: i64) -> Option<i64> {
         if kind == TrackKind::Subtitle
             && let Some(jellyfin_index) = self

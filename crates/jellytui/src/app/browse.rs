@@ -140,8 +140,7 @@ impl App {
     }
 
     /// The grid the focused screen is drawing, if it is drawing one. Search
-    /// stays a list whatever it turned up, because its rows are mixed kinds,
-    /// and the Playing screen draws one still of its own.
+    /// stays a list whatever it turned up, because its rows are mixed kinds.
     pub(crate) fn grid_metrics(&self) -> Option<grid::Metrics> {
         match self.screen {
             Screen::Home => self.shelf_metrics(self.home_pane),

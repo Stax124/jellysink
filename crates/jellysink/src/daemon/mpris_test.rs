@@ -175,11 +175,8 @@ fn quit_fires_the_shutdown_signal() {
 const NO_BUS: &str = "no D-Bus session bus reachable: set DBUS_SESSION_BUS_ADDRESS, \
 or run the suite under `dbus-run-session -- cargo test`";
 
-/// A private, per-process well-known name for the live smoke test.
-///
-/// Not [`super::start`]: claiming the real `BUS_NAME` bumps a running jellysink
-/// off MPRIS, and this test bypasses `InstanceLock`. The pid suffix keeps two
-/// concurrent test runs from stealing the name from each other.
+/// A private, per-process well-known name: claiming the real `BUS_NAME` bumps a
+/// running jellysink off MPRIS, and this test bypasses `InstanceLock`.
 fn test_bus_name() -> String {
     format!(
         "org.mpris.MediaPlayer2.jellysink.selftest.p{}",

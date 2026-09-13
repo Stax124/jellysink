@@ -23,10 +23,8 @@ pub(crate) struct UpdateOffer {
     pub(crate) version: String,
 }
 
-/// The asset holding this binary. `self_update`'s default is a substring
-/// match on the target, which every asset of that release carries — the
-/// `jellytui-*` binary and the `.sha256` files included — so it would take
-/// whichever GitHub happens to list first.
+/// The asset holding this binary. `self_update`'s default is a substring match
+/// on the target, which every asset of the release carries.
 fn match_asset(assets: &[ReleaseAsset], target: &str) -> Option<ReleaseAsset> {
     let wanted = format!("{BIN_NAME}-{target}");
     assets.iter().find(|asset| asset.name() == wanted).cloned()
