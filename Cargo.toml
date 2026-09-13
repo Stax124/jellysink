@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/core", "crates/jellysink", "crates/jellytui"]
 
 [workspace.package]
-version = "0.8.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Stax124/jellysink"
@@ -34,18 +34,15 @@ dialoguer = { version = "0.12.0", default-features = false, features = [
 directories = "6"
 futures-util = { version = "0.3", features = ["sink"] }
 ico = "0.5"
-# JPEG stays alongside WebP: `format=Webp` is a request, and the server hands
-# back the original untouched when it cannot re-encode it.
-image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "webp",
+] }
 ksni = "0.3"
 ratatui = { version = "0.30.2", default-features = false, features = [
     "crossterm",
     "std",
 ] }
-# Defaults are wrong here twice over: `chafa-dyn` links libchafa through
-# pkg-config, which the all-musl build has no C library for, and
-# `image-defaults` pulls in every decoder when WebP and JPEG answer for
-# everything the server can send.
 ratatui-image = { version = "11", default-features = false, features = [
     "crossterm",
 ] }
