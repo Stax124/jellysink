@@ -264,6 +264,11 @@ impl App {
     }
 
     pub(super) fn refresh(&mut self) {
+        self.reload_current_screen();
+        self.poll_player();
+    }
+
+    pub(super) fn reload_current_screen(&mut self) {
         match self.screen {
             Screen::Home => self.load_home(),
             Screen::Browse => {
@@ -283,7 +288,6 @@ impl App {
             }
             Screen::Logs => {}
         }
-        self.poll_player();
     }
 
     /// The item whose art the rail is showing. Home has no rail.

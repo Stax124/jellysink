@@ -47,12 +47,24 @@ impl App {
         if self.player_polled && self.player.is_some() != player.is_some() {
             tracing::info!(connected = player.is_some(), "daemon");
         }
-        self.player_polled = true;
         let item_id = player
             .as_ref()
             .and_then(|status| status.now_playing.as_ref())
             .map(|now_playing| now_playing.item_id.clone());
+        let changed = self.player_polled
+            && item_id.as_deref()
+                != self
+                    .now_playing()
+                    .map(|now_playing| now_playing.item_id.as_str());
+        self.player_polled = true;
         self.player = player;
+        // Firing before arming is what makes the deferral one poll rather than
+        // none: a change arming and firing in the same poll would read the
+        // server before the daemon's report reached it.
+        if std::mem::take(&mut self.reload_due) {
+            self.reload_after_playback();
+        }
+        self.reload_due = changed;
         let Some(item_id) = item_id else {
             self.runtime_ticks = None;
             self.playing_item = None;
@@ -65,6 +77,17 @@ impl App {
         {
             self.load_runtime_ticks(item_id.clone());
             self.load_playing(item_id);
+        }
+    }
+
+    /// Home is reloaded whatever the screen: Continue Watching and Next Up are
+    /// what finishing an episode invalidates, and they are rarely the screen
+    /// that was up when it finished.
+    fn reload_after_playback(&mut self) {
+        tracing::info!(screen = ?self.screen, "reloading after a playback change");
+        self.reload_current_screen();
+        if self.screen != Screen::Home {
+            self.load_home();
         }
     }
 
@@ -103,56 +126,8 @@ impl App {
         });
     }
 
-    pub(super) fn send_playstate(&mut self, command: PlaystateCommand, seek_ticks: Option<i64>) {
-        let Some(session_id) = self.session_id() else {
-            return;
-        };
-        tracing::info!(?command, ?seek_ticks, "playstate");
-        let (api, tx) = (self.api.clone(), self.tx.clone());
-        tokio::spawn(async move {
-            if let Err(e) = api.playstate(&session_id, command, seek_ticks).await {
-                let _ = tx.send(Msg::Error(format!("{e:#}")));
-            }
-        });
-    }
-
-    pub(super) fn send_general(&mut self, name: &'static str, arguments: serde_json::Value) {
-        let Some(session_id) = self.session_id() else {
-            return;
-        };
-        tracing::info!(name, %arguments, "command");
-        let (api, tx) = (self.api.clone(), self.tx.clone());
-        tokio::spawn(async move {
-            if let Err(e) = api.general_command(&session_id, name, arguments).await {
-                let _ = tx.send(Msg::Error(format!("{e:#}")));
-            }
-        });
-    }
-
-    pub(super) fn seek_by(&mut self, seconds: i64) {
-        let Some(position) = self.position_ticks() else {
-            return;
-        };
-        self.send_playstate(PlaystateCommand::Seek, Some(seek_target(position, seconds)));
-    }
-
-    pub(super) fn volume_by(&mut self, delta: i64) {
-        let current = self
-            .player
-            .as_ref()
-            .and_then(|status| status.now_playing.as_ref())
-            .map_or(100, |now_playing| now_playing.volume);
-        let volume = (current + delta).clamp(0, 100);
-        self.send_general("SetVolume", json!({ "Volume": volume.to_string() }));
-    }
-
     pub(crate) fn now_playing(&self) -> Option<&jellysink_core::status::NowPlaying> {
         self.player.as_ref()?.now_playing.as_ref()
-    }
-
-    pub(crate) fn position_ticks(&self) -> Option<i64> {
-        self.now_playing()
-            .map(|now_playing| now_playing.position_ticks)
     }
 
     /// The current item's duration, only if it belongs to the current item.
@@ -163,11 +138,4 @@ impl App {
             .filter(|(item_id, _)| *item_id == now_playing.item_id)
             .map(|(_, ticks)| *ticks)
     }
-}
-
-/// Seeking is absolute over the wire, so the target is computed from the last
-/// polled position — up to a second stale, which at ten-second steps is not
-/// noticeable.
-pub(super) fn seek_target(position_ticks: i64, seconds: i64) -> i64 {
-    (position_ticks + seconds_to_ticks(seconds as f64)).max(0)
 }

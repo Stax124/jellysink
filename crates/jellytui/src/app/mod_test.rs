@@ -1,4 +1,3 @@
-use super::player::seek_target;
 use super::*;
 use crate::test_support::app;
 use jellysink_core::status::NowPlaying;
@@ -74,10 +73,11 @@ fn a_shelf_that_arrives_shorter_than_the_cursor_pulls_it_back_into_range() {
 }
 
 #[tokio::test]
-async fn transport_keys_without_a_daemon_explain_themselves_instead_of_doing_nothing() {
+async fn playing_without_a_daemon_explains_itself_instead_of_doing_nothing() {
     let mut app = app();
     assert!(app.player.is_none());
-    app.apply(Intent::PlayPause);
+    app.on_msg(Msg::Home(HomePane::Resume, vec![episode("e1")]));
+    app.apply(Intent::Enter);
     assert!(
         app.message.contains("not connected"),
         "got {:?}",
@@ -89,20 +89,12 @@ async fn transport_keys_without_a_daemon_explain_themselves_instead_of_doing_not
 async fn a_command_before_the_session_lookup_lands_says_so_rather_than_blaming_the_daemon() {
     let mut app = app();
     app.on_player(Some(playing_status()));
-    app.apply(Intent::PlayPause);
+    app.play(&episode("e1"));
     assert!(
         app.message.contains("looking up the session"),
         "got {:?}",
         app.message
     );
-}
-
-#[tokio::test]
-async fn seeking_while_nothing_plays_is_a_no_op() {
-    let mut app = app();
-    app.on_player(Some(PlayerStatus::idle("s".into(), "u".into())));
-    app.apply(Intent::SeekBy(10));
-    assert!(app.message.is_empty());
 }
 
 #[tokio::test]
@@ -142,18 +134,6 @@ async fn a_new_item_drops_the_previous_items_duration() {
 }
 
 #[test]
-fn a_seek_is_relative_to_the_last_polled_position() {
-    // The wire command is absolute, so this arithmetic is ours to get right.
-    assert_eq!(seek_target(600_000_000, 10), 700_000_000);
-    assert_eq!(seek_target(600_000_000, -10), 500_000_000);
-}
-
-#[test]
-fn seeking_back_past_the_start_lands_on_zero_not_a_negative_position() {
-    assert_eq!(seek_target(30_000_000, -10), 0);
-}
-
-#[test]
 fn a_search_result_that_arrives_after_a_newer_query_is_discarded() {
     let mut app = app();
     app.search_generation = 2;
@@ -185,7 +165,8 @@ fn enter_on_an_empty_list_does_not_panic() {
 #[tokio::test]
 async fn a_message_is_retired_by_the_next_keypress() {
     let mut app = app();
-    app.apply(Intent::PlayPause);
+    app.on_msg(Msg::Home(HomePane::Resume, vec![episode("e1")]));
+    app.apply(Intent::Enter);
     assert!(
         !app.message.is_empty(),
         "the complaint should be shown once"
@@ -335,4 +316,45 @@ async fn a_cover_whose_request_failed_is_not_asked_for_once_a_window_forever() {
         Some(ready_at),
         "a second batch went out for a cover that had already failed"
     );
+}
+
+fn playing_episode(item_id: &str) -> PlayerStatus {
+    let mut status = playing_status();
+    if let Some(now_playing) = status.now_playing.as_mut() {
+        now_playing.item_id = item_id.into();
+    }
+    status
+}
+
+#[tokio::test]
+async fn an_episode_ending_reloads_on_the_poll_after_the_one_that_saw_it() {
+    let mut app = app();
+    app.on_player(Some(playing_episode("e1")));
+
+    app.on_player(Some(playing_episode("e2")));
+    assert!(app.reload_due, "the transition to e2 did not arm a reload");
+
+    app.on_player(Some(playing_episode("e2")));
+    assert!(
+        !app.reload_due,
+        "the reload stayed armed and will fire again next poll"
+    );
+}
+
+#[tokio::test]
+async fn closing_the_mpv_window_arms_a_reload_like_an_episode_ending() {
+    let mut app = app();
+    app.on_player(Some(playing_episode("e1")));
+
+    app.on_player(Some(PlayerStatus::idle("s".into(), "u".into())));
+    assert!(app.reload_due);
+}
+
+#[tokio::test]
+async fn the_first_poll_is_not_a_playback_change() {
+    // Startup has just loaded Home; finding something already playing is not
+    // news about it.
+    let mut app = app();
+    app.on_player(Some(playing_episode("e1")));
+    assert!(!app.reload_due);
 }

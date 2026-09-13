@@ -27,20 +27,9 @@ pub(super) enum Intent {
     Enter,
     Back,
     Refresh,
-    PlayPause,
-    Stop,
-    Next,
-    Previous,
-    SeekBy(i64),
-    VolumeBy(i64),
-    ToggleMute,
-    ToggleFullscreen,
     Type(char),
     Backspace,
 }
-
-const SEEK_SECONDS: i64 = 10;
-const VOLUME_STEP: i64 = 5;
 
 /// While the search box has focus, printable keys are text — only the keys
 /// that cannot be part of a query still act as commands.
@@ -51,13 +40,6 @@ pub(super) fn map(key: KeyEvent, typing: bool) -> Option<Intent> {
             KeyCode::Char('u') if typing => Some(Intent::Back),
             _ => None,
         };
-    }
-    if key.modifiers.contains(KeyModifiers::SHIFT) {
-        match key.code {
-            KeyCode::Left => return Some(Intent::SeekBy(-SEEK_SECONDS)),
-            KeyCode::Right => return Some(Intent::SeekBy(SEEK_SECONDS)),
-            _ => {}
-        }
     }
     match key.code {
         KeyCode::Up => Some(Intent::Up),
@@ -92,14 +74,6 @@ fn command(c: char) -> Option<Intent> {
         'l' => Some(Intent::Right),
         'h' => Some(Intent::Left),
         'r' => Some(Intent::Refresh),
-        ' ' => Some(Intent::PlayPause),
-        's' => Some(Intent::Stop),
-        'n' => Some(Intent::Next),
-        'p' => Some(Intent::Previous),
-        'm' => Some(Intent::ToggleMute),
-        'f' => Some(Intent::ToggleFullscreen),
-        '+' | '=' => Some(Intent::VolumeBy(VOLUME_STEP)),
-        '-' => Some(Intent::VolumeBy(-VOLUME_STEP)),
         _ => None,
     }
 }

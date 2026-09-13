@@ -9,16 +9,30 @@ use ratatui::backend::TestBackend;
 use serde::Deserialize;
 
 fn drawn(app: &App) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(90, 24)).unwrap();
+    drawn_at(app, 90)
+}
+
+fn drawn_at(app: &App, width: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
     terminal.draw(|frame| render(app, frame)).unwrap();
     terminal
         .backend()
         .buffer()
         .content()
-        .chunks(90)
+        .chunks(usize::from(width))
         .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The bindings row is the last one drawn.
+fn hints_at(app: &App, width: u16) -> String {
+    drawn_at(app, width)
+        .lines()
+        .next_back()
+        .expect("a drawn screen has rows")
+        .trim_end()
+        .to_string()
 }
 
 fn playing(title: &str, position_ticks: i64, is_paused: bool) -> PlayerStatus {
@@ -265,4 +279,41 @@ fn a_captured_event_is_drawn_with_its_level_and_target() {
     let screen = drawn(&app);
     assert!(screen.contains("INFO"));
     assert!(screen.contains("played item=The Bear"));
+}
+
+#[test]
+fn the_hint_row_offers_reload_and_not_the_keys_mpv_already_owns() {
+    let mut app = app();
+    for screen in [Screen::Home, Screen::Browse, Screen::Playing] {
+        app.screen = screen;
+        let hints = hints_at(&app, 90);
+        assert!(hints.contains("r reload"), "{screen:?}: {hints}");
+        for gone in ["pause", "seek", "vol", "mute", "full", "track"] {
+            assert!(
+                !hints.contains(gone),
+                "{screen:?} still offers {gone}: {hints}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_hint_row_fits_an_eighty_column_terminal() {
+    // A row wider than the terminal is cut mid-word with no ellipsis, so the
+    // bindings nearest the end simply stop existing for the user.
+    let mut app = app();
+    for screen in [
+        Screen::Home,
+        Screen::Browse,
+        Screen::Search,
+        Screen::Playing,
+        Screen::Logs,
+    ] {
+        app.screen = screen;
+        let hints = hints_at(&app, 80);
+        assert!(
+            hints.chars().count() < 80,
+            "{screen:?} fills or overruns the row: {hints}"
+        );
+    }
 }

@@ -133,6 +133,10 @@ play, exactly as the web app does. So the daemon must be running, and everything
 already does — DirectPlay, series autoplay, remembered tracks, progress reporting —
 applies unchanged. It logs in with the credentials `jellysink login` already stored.
 
+Playback control stays in mpv: `jellytui` starts something playing and shows what is
+playing, but pause, seek, volume, mute and fullscreen are mpv's own keys in the mpv
+window, not a second set of bindings here.
+
 Quitting `jellytui` does not stop playback — it is only a remote.
 
 ## Configuration commands

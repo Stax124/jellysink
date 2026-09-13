@@ -240,15 +240,9 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
     // `q` is a character in the search box, so the quit key differs there.
     let keys = match app.screen {
         // A shelf is one row, so up and down move between the two of them.
-        Screen::Home => {
-            "h/l move · j/k shelf · Enter play · / search · space pause · ⇧←/⇧→ seek · +/- vol · q quit"
-        }
-        Screen::Playing => {
-            "j/k episode · Enter play · Esc back · space pause · ⇧←/⇧→ seek · n/p track · +/- vol · m mute · q quit"
-        }
-        Screen::Search => {
-            "type to search · ↑/↓ move · Enter play · Esc leave search · ⇧←/⇧→ seek · ^C quit"
-        }
+        Screen::Home => "←/→ move · ↑/↓ shelf · Enter play · / search · r reload · q quit",
+        Screen::Playing => "↑/↓ episode · Enter play · Esc back · r reload · q quit",
+        Screen::Search => "type to search · ↑/↓ move · Enter play · Esc leave search · ^C quit",
         Screen::Logs => {
             let following = if app.log_window(area.height).1 {
                 "following"
@@ -258,7 +252,7 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
             return frame.render_widget(
                 Paragraph::new(Span::styled(
                     format!(
-                        "j/k scroll · g/G top/bottom · c clear · L/Esc back · q quit · {following}"
+                        "↑/↓ scroll · g/G top/bottom · c clear · L/Esc back · q quit · {following}"
                     ),
                     Style::default().fg(DIM),
                 )),
@@ -267,11 +261,9 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
         }
         // In a grid every arrow moves, so back and open need naming.
         _ if app.grid_metrics().is_some() => {
-            "h/j/k/l move · Enter open · Esc back · / search · space pause · ⇧←/⇧→ seek · +/- vol · q quit"
+            "arrows move · Enter open · Esc back · / search · r reload · q quit"
         }
-        _ => {
-            "j/k move · Enter play · Esc back · / search · space pause · ⇧←/⇧→ seek · n/p track · +/- vol · m mute · f full · q quit"
-        }
+        _ => "↑/↓ move · Enter play · Esc back · / search · r reload · q quit",
     };
     frame.render_widget(
         Paragraph::new(Span::styled(keys, Style::default().fg(DIM))),

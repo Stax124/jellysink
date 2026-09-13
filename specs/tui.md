@@ -8,20 +8,30 @@ per-second state comes from a Unix socket rather than the obvious HTTP call.
 ## It is a remote, not a player
 
 The daemon already registers as a controllable Jellyfin session
-(`post_capabilities` at the top of every `run_session`) and `core`'s `cast.rs`
-already parses the whole remote-control vocabulary, so the frontend needs none
-of the playback machinery — it sends what the web app sends and the server
+(`post_capabilities` at the top of every `run_session`), so the frontend needs
+none of the playback machinery — it sends what the web app sends and the server
 relays it:
 
 ```
 jellytui ──HTTP──> Jellyfin ──WebSocket──> jellysink ──> mpv
 ```
 
-| jellytui                  | HTTP                                                        | arrives as                               |
-| ------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
-| Enter on a row            | `POST /Sessions/{id}/Playing?PlayCommand=PlayNow&ItemIds=…` | `CastEvent::PlayNow`                     |
-| space, `s`, `n`, `p`, seek | `POST /Sessions/{id}/Playing/{command}`                     | `CastEvent::PlayPause`, `Stop`, `Next`, … |
-| volume, mute, fullscreen  | `POST /Sessions/{id}/Command`                               | `CastEvent::SetVolume`, …                |
+| jellytui       | HTTP                                                        | arrives as           |
+| -------------- | ----------------------------------------------------------- | -------------------- |
+| Enter on a row | `POST /Sessions/{id}/Playing?PlayCommand=PlayNow&ItemIds=…` | `CastEvent::PlayNow` |
+
+**That row is the whole table, and deliberately so.** The stream plays in the
+user's own mpv, which owns pause, seek, volume, mute and fullscreen already,
+and the daemon adopts mpv's own playlist navigation for free
+(`adopt_playlist_pos`, `specs/playlist.md`) while a closed window is already a
+stop. Binding any of them here as well is two sources of truth for state mpv is
+authoritative about, and the second one is always the stale one. `cast.rs` still
+parses the full vocabulary — the web app, a phone and MPRIS all send it — so
+that coverage belongs in `cast_test.rs`, not beside a sender.
+
+The one capability with no mpv equivalent is Next when the following episode is
+not yet loaded into mpv's window (`NextNotInMpv`); stubs normally keep an entry
+either side, so it is reachable from the web app and rare in practice.
 
 Queue building, series autoplay, remembered tracks and progress reporting stay
 the daemon's. The alternative — a `jellysink browse` subcommand owning its own
@@ -33,8 +43,9 @@ users have under systemd, and it would mean two ways to be a player.
 so rather than failing obscurely (`session_id` sets the "jellysink is not
 connected" line). And anything it sends must be something `cast.rs` parses —
 the two halves are joined through a third process, so a misspelled command name
-fails silently at runtime. `core`'s `jellyfin/remote_test.rs` round-trips every
-command through `CastEvent::from_ws` to catch that in CI.
+fails silently at runtime. `core`'s `jellyfin/remote_test.rs` holds the
+`PLAY_NOW` constant against `CastEvent::from_ws` to catch that in CI, and takes
+a row per command sent.
 
 ## Finding the daemon's session
 
@@ -102,6 +113,41 @@ Two things follow:
 Seeking is computed from the last polled position, so it can be up to a second
 stale; invisible at ten-second steps.
 
+## Reloading on a playback change
+
+Browse rows are fetched once, when the level is opened, so an episode watched
+through jellysink leaves every view that names it wrong — an unticked row, a
+resume point that has moved, a Next Up that has advanced a week. The poll above
+already carries the answer: `on_player` compares the polled item id with the
+previous one, and any difference is a playback change. `Some` → `None` is a
+stop or a closed mpv window, `Some(a)` → `Some(b)` an episode handing over,
+`None` → `Some` a start — one comparison covers all three, so there is nothing
+to subscribe to and no second connection to keep up.
+
+**The reload is deferred by one poll.** `stop_playback` queues its `Stopped`
+report onto the report sink and calls `publish_status` without waiting for the
+POST, so at the instant jellytui can see the change the server may still answer
+with the watched state that report is about to replace. The change therefore
+arms `reload_due` and the *following* poll fires it, which is why `on_player`
+fires before it arms — doing it the other way round collapses the deferral to
+nothing. A second is free here: the poll ticks anyway, so this costs a `bool`
+and no timer.
+
+The first poll is exempt, by the same `player_polled` guard the daemon-connected
+log line uses: startup has just loaded Home, and finding something already
+playing is not news about it.
+
+What reloads is the current screen plus Home, always — Continue Watching and
+Next Up are what finishing an episode invalidates, and they are rarely the
+screen that was up when it finished. `refresh` (the `r` key) is the same
+`reload_current_screen` call followed by a poll, so the two cannot drift.
+
+The cost is one duplicate pair of requests when the Playing screen is up as an
+episode hands over: the existing `load_playing` chain fires on the change
+itself. That is deliberate — the immediate fetch is what keeps the footer's
+duration right, and the deferred one is what corrects the episode list's
+watched marks, which the immediate fetch reads too early.
+
 ## Where a complaint goes
 
 The bottom row is the key bindings and nothing else — a message there hides
@@ -109,6 +155,15 @@ every binding the user might need to recover with. `App::message` (a failed
 request, a command sent before the session id landed) is drawn in the
 **header**, between the tabs and the daemon dot, elided by `view::to_width`, and
 retired by the next keypress.
+
+**Every row has to fit 80 columns**, and a test holds each screen to it.
+`render_hint` draws a `Paragraph` with no wrap, so an overrun is cut mid-word
+with no ellipsis and the bindings nearest the end stop existing for the user —
+`q quit` sits at the end of most rows. That budget is why the rows name arrows
+rather than `h`/`j`/`k`/`l`: the vim keys are bound, and spending columns on a
+second spelling of a key that already has one buys nothing. `g`/`G` is the
+exception and stays visible in the log pane, because no arrow reaches top or
+bottom.
 
 The dot (`view::daemon_status`) answers the one question the whole frontend
 rests on: did the status socket reply. Green for a daemon that answered, red for

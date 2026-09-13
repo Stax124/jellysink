@@ -47,9 +47,9 @@ fn navigation_keys_keep_working_inside_the_search_box() {
 }
 
 #[test]
-fn arrows_navigate_bare_and_seek_with_shift() {
-    // Bare arrows are movement; what left and right *mean* is the focused
-    // view's business, not this mapping's.
+fn arrows_navigate() {
+    // What left and right *mean* is the focused view's business, not this
+    // mapping's.
     assert_eq!(
         map(key(KeyCode::Left, KeyModifiers::NONE), false),
         Some(Intent::Left)
@@ -57,15 +57,6 @@ fn arrows_navigate_bare_and_seek_with_shift() {
     assert_eq!(
         map(key(KeyCode::Right, KeyModifiers::NONE), false),
         Some(Intent::Right)
-    );
-    assert_eq!(
-        map(key(KeyCode::Left, KeyModifiers::SHIFT), false),
-        Some(Intent::SeekBy(-10))
-    );
-    assert_eq!(
-        map(key(KeyCode::Right, KeyModifiers::SHIFT), true),
-        Some(Intent::SeekBy(10)),
-        "seeking must survive the search box, where arrows are still navigation"
     );
 }
 
@@ -93,4 +84,24 @@ fn the_log_pane_keys_are_still_text_in_the_search_box() {
     assert_eq!(map(press('c'), false), Some(Intent::ClearLogs));
     assert_eq!(map(press('L'), true), Some(Intent::Type('L')));
     assert_eq!(map(press('c'), true), Some(Intent::Type('c')));
+}
+
+#[test]
+fn playback_keys_are_mpvs_and_are_not_bound_here() {
+    // The stream plays in the user's own mpv, which already owns pause, seek,
+    // volume, mute and fullscreen. A second set of bindings for them is a
+    // second source of truth for state mpv is authoritative about.
+    for c in [' ', 's', 'n', 'p', 'm', 'f', '+', '=', '-'] {
+        assert_eq!(map(press(c), false), None, "{c:?} is still bound");
+    }
+    // Shift is not special-cased, so a shifted arrow is plain movement and
+    // nothing downstream has to know about the modifier.
+    assert_eq!(
+        map(key(KeyCode::Left, KeyModifiers::SHIFT), false),
+        Some(Intent::Left)
+    );
+    assert_eq!(
+        map(key(KeyCode::Right, KeyModifiers::SHIFT), false),
+        Some(Intent::Right)
+    );
 }

@@ -62,6 +62,23 @@ fn playstate_seek_and_pause() {
 }
 
 #[test]
+fn the_transport_commands_other_clients_send_all_parse() {
+    // These reach the daemon from the web app, a phone and MPRIS. jellytui
+    // sends none of them: playback control is mpv's, see `specs/tui.md`.
+    let playstate = |command: &str| CastEvent::from_ws("Playstate", &json!({"Command": command}));
+    assert_eq!(playstate("Stop"), Some(CastEvent::Stop));
+    assert_eq!(playstate("NextTrack"), Some(CastEvent::Next));
+    assert_eq!(playstate("PreviousTrack"), Some(CastEvent::Previous));
+
+    let general = |name: &str| CastEvent::from_ws("GeneralCommand", &json!({"Name": name}));
+    assert_eq!(general("ToggleMute"), Some(CastEvent::ToggleMute));
+    assert_eq!(
+        general("ToggleFullscreen"),
+        Some(CastEvent::ToggleFullscreen)
+    );
+}
+
+#[test]
 fn general_volume_accepts_string() {
     let ev = CastEvent::from_ws(
         "GeneralCommand",

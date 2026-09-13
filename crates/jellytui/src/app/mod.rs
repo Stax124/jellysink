@@ -22,16 +22,13 @@ use jellysink_core::instance;
 use jellysink_core::jellyfin::auth::Api;
 use jellysink_core::jellyfin::browse::{EPISODE_LIMIT, ItemQuery};
 use jellysink_core::jellyfin::model::{Item, ItemList};
-use jellysink_core::jellyfin::remote::PlaystateCommand;
 use jellysink_core::status::PlayerStatus;
-use jellysink_core::ticks::seconds_to_ticks;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{Event, KeyEventKind};
 use ratatui::layout::{Rect, Size};
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::Protocol;
 use serde::Deserialize;
-use serde_json::json;
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -119,6 +116,11 @@ pub(crate) struct App {
     pub(crate) message: String,
     search_generation: u64,
     search_due: Option<tokio::time::Instant>,
+    /// Armed by a playback change and fired by the *following* poll. The
+    /// daemon queues its `Stopped` report and publishes the new status without
+    /// waiting for it, so at the instant the change is visible the server can
+    /// still answer with the watched state the report is about to replace.
+    reload_due: bool,
     quit: bool,
 }
 
@@ -160,6 +162,7 @@ impl App {
             message: String::new(),
             search_generation: 0,
             search_due: None,
+            reload_due: false,
             quit: false,
         }
     }
@@ -265,14 +268,6 @@ impl App {
                 self.query.pop();
                 self.schedule_search();
             }
-            Intent::PlayPause => self.send_playstate(PlaystateCommand::PlayPause, None),
-            Intent::Stop => self.send_playstate(PlaystateCommand::Stop, None),
-            Intent::Next => self.send_playstate(PlaystateCommand::NextTrack, None),
-            Intent::Previous => self.send_playstate(PlaystateCommand::PreviousTrack, None),
-            Intent::SeekBy(seconds) => self.seek_by(seconds),
-            Intent::VolumeBy(delta) => self.volume_by(delta),
-            Intent::ToggleMute => self.send_general("ToggleMute", json!({})),
-            Intent::ToggleFullscreen => self.send_general("ToggleFullscreen", json!({})),
         }
     }
 }

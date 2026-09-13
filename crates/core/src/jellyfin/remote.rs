@@ -8,30 +8,11 @@ use super::encode_query_value;
 use super::model::Session;
 use color_eyre::eyre::{Result, WrapErr};
 use serde::Deserialize;
-use serde_json::{Value, json};
 
-/// The `Playstate` commands jellysink acts on. An enum so a caller cannot
-/// invent a spelling the daemon silently drops.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlaystateCommand {
-    PlayPause,
-    Stop,
-    NextTrack,
-    PreviousTrack,
-    Seek,
-}
-
-impl PlaystateCommand {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::PlayPause => "PlayPause",
-            Self::Stop => "Stop",
-            Self::NextTrack => "NextTrack",
-            Self::PreviousTrack => "PreviousTrack",
-            Self::Seek => "Seek",
-        }
-    }
-}
+/// The `PlayCommand` value [`Api::play_now`] sends. Named so the round-trip
+/// test can hold it against what `cast.rs` parses: the two halves are joined
+/// through the server, so a typo here fails silently at runtime.
+const PLAY_NOW: &str = "PlayNow";
 
 impl Api {
     /// jellysink's own session, or `None` when the daemon is not connected.
@@ -46,43 +27,12 @@ impl Api {
 
     pub async fn play_now(&self, session_id: &str, item_id: &str, start_ticks: i64) -> Result<()> {
         let path = format!(
-            "/Sessions/{}/Playing?PlayCommand=PlayNow&ItemIds={}&StartPositionTicks={start_ticks}",
+            "/Sessions/{}/Playing?PlayCommand={PLAY_NOW}&ItemIds={}&StartPositionTicks={start_ticks}",
             encode_query_value(session_id),
             encode_query_value(item_id),
         );
         tracing::debug!(item_id, start_ticks, "PlayNow");
         self.post_command(&path).await
-    }
-
-    pub async fn playstate(
-        &self,
-        session_id: &str,
-        command: PlaystateCommand,
-        seek_ticks: Option<i64>,
-    ) -> Result<()> {
-        let mut path = format!(
-            "/Sessions/{}/Playing/{}",
-            encode_query_value(session_id),
-            command.as_str()
-        );
-        if let Some(seek_ticks) = seek_ticks {
-            path.push_str(&format!("?SeekPositionTicks={seek_ticks}"));
-        }
-        self.post_command(&path).await
-    }
-
-    pub async fn general_command(
-        &self,
-        session_id: &str,
-        name: &str,
-        arguments: Value,
-    ) -> Result<()> {
-        let path = format!("/Sessions/{}/Command", encode_query_value(session_id));
-        let body = json!({ "Name": name, "Arguments": arguments });
-        let resp = self.post_json(&path, &body).await?;
-        resp.error_for_status()
-            .wrap_err_with(|| format!("GeneralCommand {name}"))?;
-        Ok(())
     }
 
     async fn post_command(&self, path: &str) -> Result<()> {
