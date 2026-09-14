@@ -106,11 +106,31 @@ impl TestMpv {
         let (session, events) = MpvSession::spawn("mpv", &args, socket_dir.path().join("mpv.sock"))
             .await
             .expect("spawning mpv");
-        Self {
+        let mut mpv = Self {
             session,
             events,
             _socket_dir: socket_dir,
-        }
+        };
+        mpv.settle().await;
+        mpv
+    }
+
+    /// mpv finishes starting up only once its scripts have loaded, and adopts
+    /// the playlist's first entry when it does -- so an append sent before then
+    /// starts playing. Playing a file and stopping it waits that out.
+    async fn settle(&mut self) {
+        self.session
+            .loadfile(&fixture("sample.mkv"), None)
+            .await
+            .expect("loadfile");
+        self.wait_for_event(|event| matches!(event, MpvEvent::FileLoaded))
+            .await;
+        self.session
+            .command(vec![json!("stop")])
+            .await
+            .expect("stop");
+        self.wait_for_event(|event| matches!(event, MpvEvent::EndFile { .. }))
+            .await;
     }
 
     /// Loads the fixture and waits for mpv to report it loaded, so a following
