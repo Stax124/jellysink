@@ -11,10 +11,6 @@ pub(super) enum Msg {
     /// "not connected" — the only failure this socket really has.
     Player(Option<Box<PlayerStatus>>),
     SessionId(String),
-    Runtime {
-        item_id: String,
-        ticks: i64,
-    },
     /// Both carry the item id they were asked for, so a reply arriving after
     /// playback moved on is dropped rather than describing the wrong episode.
     PlayingItem {
@@ -56,7 +52,6 @@ impl App {
             }
             Msg::Player(player) => self.on_player(player.map(|boxed| *boxed)),
             Msg::SessionId(session_id) => self.session_id = Some(session_id),
-            Msg::Runtime { item_id, ticks } => self.runtime_ticks = Some((item_id, ticks)),
             Msg::PlayingItem { item_id, item } => {
                 if self.is_current(&item_id) {
                     if let Some((series_id, season_id)) =

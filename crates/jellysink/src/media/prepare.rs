@@ -20,6 +20,7 @@ pub(crate) struct PreparedPlay {
     pub(crate) subtitle_stream_index: Option<i64>,
     pub(crate) uses_auth_header: bool,
     pub(crate) external_sub_urls: Vec<(i64, String)>,
+    pub(crate) run_time_ticks: Option<i64>,
     pub(crate) title: String,
 }
 
@@ -36,6 +37,7 @@ impl fmt::Debug for PreparedPlay {
             .field("subtitle_stream_index", &self.subtitle_stream_index)
             .field("uses_auth_header", &self.uses_auth_header)
             .field("external_sub_urls", &self.external_sub_urls)
+            .field("run_time_ticks", &self.run_time_ticks)
             .field("title", &self.title)
             .finish()
     }
@@ -141,6 +143,7 @@ pub(crate) fn prepare_play(
         subtitle_stream_index,
         uses_auth_header,
         external_sub_urls,
+        run_time_ticks: source.run_time_ticks.filter(|ticks| *ticks > 0),
         // Overwritten from `/Items/{id}` when that optional fetch succeeds.
         title: "Jellyfin".to_string(),
     })

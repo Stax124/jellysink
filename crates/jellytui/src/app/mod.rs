@@ -87,9 +87,6 @@ pub(crate) struct App {
     /// Until the first poll answers, "no daemon" is not yet a fact about it,
     /// so the footer must not report one.
     pub(crate) player_polled: bool,
-    /// The playing item's duration, which the status socket does not carry.
-    /// Keyed by item id so a stale total never labels a new episode.
-    pub(crate) runtime_ticks: Option<(String, i64)>,
     /// The playing item and the rest of its season, both keyed by the item id
     /// they describe.
     pub(crate) playing_item: Option<(String, Item)>,
@@ -142,7 +139,6 @@ impl App {
             results: Level::loading("Search", Source::Libraries),
             player: None,
             player_polled: false,
-            runtime_ticks: None,
             playing_item: None,
             playing_episodes: Level::loading("Episodes", Source::Libraries),
             session_id: None,

@@ -6,6 +6,15 @@ pub fn seconds_to_ticks(seconds: f64) -> i64 {
     (seconds * 10_000_000.0).round() as i64
 }
 
+/// MPRIS speaks microseconds; a tick is 100 ns.
+pub fn ticks_to_micros(ticks: i64) -> i64 {
+    ticks / 10
+}
+
+pub fn micros_to_ticks(micros: i64) -> i64 {
+    micros.saturating_mul(10)
+}
+
 /// `hh:mm:ss`, dropping the hours when there are none.
 pub fn format_hms(ticks: i64) -> String {
     let total = ticks_to_seconds(ticks).max(0.0).round() as u64;

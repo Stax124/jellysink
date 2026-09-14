@@ -13,6 +13,7 @@ impl Runtime {
                     item_id: item_id.clone(),
                     title: prep.title.clone(),
                     position_ticks: self.last_ticks,
+                    run_time_ticks: prep.run_time_ticks,
                     is_paused: self.paused,
                     is_muted: self.muted,
                     volume: self.volume,

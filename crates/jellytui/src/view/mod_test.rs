@@ -43,6 +43,7 @@ fn playing(title: &str, position_ticks: i64, is_paused: bool) -> PlayerStatus {
             item_id: "e1".into(),
             title: title.to_string(),
             position_ticks,
+            run_time_ticks: Some(14_220_809_999),
             is_paused,
             is_muted: false,
             volume: 70,
@@ -75,7 +76,6 @@ fn the_footer_names_the_paused_item_with_its_position_and_volume() {
         true,
     ));
     app.player_polled = true;
-    app.runtime_ticks = Some(("e1".to_string(), 14_220_809_999));
     let screen = drawn(&app);
     assert!(
         screen.contains("Slime - s2e03 - Paradise, Once More"),
@@ -265,16 +265,15 @@ fn home_shows_both_shelves_at_once_rather_than_one_behind_a_key() {
 }
 
 #[test]
-fn the_total_is_blank_until_the_duration_arrives_then_fills_in() {
-    // The status socket carries no duration, so it is fetched separately and
-    // lands a paint later.
+fn an_item_the_server_gives_no_duration_for_draws_a_blank_total() {
     let mut app = app();
-    app.player = Some(playing("Slime - s2e03", 9_167_070_000, false));
+    let mut status = playing("Slime - s2e03", 9_167_070_000, false);
+    if let Some(now_playing) = status.now_playing.as_mut() {
+        now_playing.run_time_ticks = None;
+    }
+    app.player = Some(status);
     app.player_polled = true;
     assert!(drawn(&app).contains("15:17 / 00:00"));
-
-    app.runtime_ticks = Some(("e1".to_string(), 14_220_809_999));
-    assert!(drawn(&app).contains("15:17 / 23:42"));
 }
 
 #[test]

@@ -35,6 +35,7 @@ fn playing(app: &mut App, item_id: &str, title: &str) {
             item_id: item_id.into(),
             title: title.into(),
             position_ticks: 0,
+            run_time_ticks: Some(14_220_809_999),
             is_paused: false,
             is_muted: false,
             volume: 70,

@@ -12,6 +12,7 @@ fn playing_status() -> PlayerStatus {
             item_id: "e1".into(),
             title: "Paradise, Once More".into(),
             position_ticks: 600_000_000,
+            run_time_ticks: Some(14_220_809_999),
             is_paused: false,
             is_muted: false,
             volume: 50,
@@ -115,22 +116,6 @@ async fn an_item_lookup_that_lands_after_playback_moved_on_is_dropped() {
         item: Box::new(episode("e1")),
     });
     assert_eq!(app.current_item().map(|item| item.id.as_str()), Some("e1"));
-}
-
-#[tokio::test]
-async fn a_new_item_drops_the_previous_items_duration() {
-    let mut app = app();
-    app.on_player(Some(playing_status()));
-    app.runtime_ticks = Some(("e1".to_string(), 14_220_809_999));
-    assert_eq!(app.total_ticks(), Some(14_220_809_999));
-
-    let mut next = playing_status();
-    if let Some(now_playing) = next.now_playing.as_mut() {
-        now_playing.item_id = "e2".into();
-    }
-    app.on_player(Some(next));
-    // A stale total would mislabel the new episode until its own arrives.
-    assert_eq!(app.total_ticks(), None);
 }
 
 #[test]

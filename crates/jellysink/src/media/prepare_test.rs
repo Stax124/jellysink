@@ -197,6 +197,48 @@ fn prepare_play_records_the_subtitle_identities_for_later_matching() {
     );
 }
 
+/// The MPRIS bar needs a length; a live stream has none and must not get 0.
+#[test]
+fn run_time_ticks_comes_from_the_chosen_source_and_only_when_positive() {
+    let info = json!({
+        "PlaySessionId": "ps",
+        "MediaSources": [{
+            "Id": "src",
+            "SupportsDirectPlay": true,
+            "RunTimeTicks": 14_220_809_999i64,
+            "MediaStreams": []
+        }]
+    });
+    let prep = prepare_play(
+        "http://h:8096",
+        "item",
+        &info,
+        &PlayRequest::default(),
+        "tok",
+    )
+    .unwrap();
+    assert_eq!(prep.run_time_ticks, Some(14_220_809_999));
+
+    let live = json!({
+        "PlaySessionId": "ps",
+        "MediaSources": [{
+            "Id": "src",
+            "SupportsDirectPlay": true,
+            "RunTimeTicks": 0,
+            "MediaStreams": []
+        }]
+    });
+    let prep = prepare_play(
+        "http://h:8096",
+        "item",
+        &live,
+        &PlayRequest::default(),
+        "tok",
+    )
+    .unwrap();
+    assert_eq!(prep.run_time_ticks, None);
+}
+
 #[test]
 fn prepared_play_debug_never_prints_the_token() {
     let prep = PreparedPlay {
@@ -209,6 +251,7 @@ fn prepared_play_debug_never_prints_the_token() {
         subtitle_stream_index: None,
         uses_auth_header: false,
         external_sub_urls: vec![],
+        run_time_ticks: None,
         title: "t".into(),
     };
     let rendered = format!("{prep:?}");

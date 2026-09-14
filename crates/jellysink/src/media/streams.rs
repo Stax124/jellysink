@@ -105,6 +105,7 @@ pub(crate) struct MediaSource {
     pub(crate) supports_direct_play: bool,
     pub(crate) supports_direct_stream: bool,
     pub(crate) bitrate: Option<f64>,
+    pub(crate) run_time_ticks: Option<i64>,
     pub(crate) default_audio_stream_index: Option<i64>,
     pub(crate) default_subtitle_stream_index: Option<i64>,
     pub(crate) media_streams: Vec<MediaStream>,

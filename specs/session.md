@@ -34,7 +34,7 @@ everything cooperatively scheduled.
 | WebSocket reader  | `ws_rx` (`WsIncoming`)               | `run_session`                    | One WebSocket connection.           |
 | Update check      | nothing; badges the tray             | `cmd_run` (`spawn_update_check`) | Detached; ends after one check.     |
 | Tray update apply | nothing; consumes `apply`            | `cmd_run`                        | Detached; the process.              |
-| MPRIS emitter     | `PropertiesChanged` from `status_rx` | `mpris::start`                   | Detached; the D-Bus connection.     |
+| MPRIS emitter     | `PropertiesChanged`/`Seeked` from `status_rx` | `mpris::start`          | Detached; the D-Bus connection.     |
 
 Two channels cross layers: `status_tx`/`status_rx` (a `watch` of `PlayerStatus`,
 written by `Runtime`, read by `instance::listen_stop` for `jellysink status` and

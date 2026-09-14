@@ -199,9 +199,8 @@ fn render_now_playing(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(meta), meta_area);
 
     let position = now_playing.position_ticks;
-    // The duration arrives a moment after the item does; until then the bar
-    // stays empty rather than jumping.
-    let total = app.total_ticks().unwrap_or(0);
+    // An item the server gives no duration for gets an empty bar, not a full one.
+    let total = now_playing.run_time_ticks.unwrap_or(0);
     let ratio = if total > 0 {
         (position as f64 / total as f64).clamp(0.0, 1.0)
     } else {

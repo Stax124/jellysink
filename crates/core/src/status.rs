@@ -23,6 +23,8 @@ pub struct NowPlaying {
     pub item_id: String,
     pub title: String,
     pub position_ticks: i64,
+    /// The item's total length; `None` when the server reports none.
+    pub run_time_ticks: Option<i64>,
     pub is_paused: bool,
     pub is_muted: bool,
     pub volume: i64,

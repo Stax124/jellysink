@@ -4,6 +4,7 @@
 use crate::daemon::signal::Signal;
 use jellysink_core::cast::CastEvent;
 use jellysink_core::status::PlayerStatus;
+use jellysink_core::ticks::{micros_to_ticks, ticks_to_micros};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
@@ -111,6 +112,9 @@ impl PlayerIface {
                 owned(track_id(&now_playing.item_id)),
             );
             map.insert("xesam:title".to_string(), owned(now_playing.title.clone()));
+            if let Some(ticks) = now_playing.run_time_ticks {
+                map.insert("mpris:length".to_string(), owned(ticks_to_micros(ticks)));
+            }
             map.insert(
                 "mpris:artUrl".to_string(),
                 owned(now_playing.art_url.clone()),
@@ -139,7 +143,25 @@ impl PlayerIface {
         self.status()
             .now_playing
             .as_ref()
-            .map_or(0, |now_playing| now_playing.position_ticks / 10)
+            .map_or(0, |now_playing| ticks_to_micros(now_playing.position_ticks))
+    }
+
+    #[zbus(property)]
+    fn rate(&self) -> f64 {
+        1.0
+    }
+
+    #[zbus(property)]
+    fn set_rate(&self, _value: f64) {}
+
+    #[zbus(property)]
+    fn minimum_rate(&self) -> f64 {
+        1.0
+    }
+
+    #[zbus(property)]
+    fn maximum_rate(&self) -> f64 {
+        1.0
     }
 
     #[zbus(property)]
@@ -206,11 +228,19 @@ impl PlayerIface {
         if let Some(now_playing) = &self.status().now_playing {
             let ticks = now_playing
                 .position_ticks
-                .saturating_add(offset.saturating_mul(10))
+                .saturating_add(micros_to_ticks(offset))
                 .max(0);
             self.0.send(CastEvent::Seek { ticks });
         }
     }
+
+    /// Emitted when the position moves in a way the clock does not explain, so
+    /// a widget's bar follows a seek made in the mpv window or from a phone.
+    #[zbus(signal)]
+    async fn seeked(
+        emitter: &zbus::object_server::SignalEmitter<'_>,
+        position: i64,
+    ) -> zbus::Result<()>;
 
     /// A no-op when `track_id` does not name the current track, per the spec.
     fn set_position(&self, track_id_arg: OwnedObjectPath, position: i64) {
@@ -218,14 +248,34 @@ impl PlayerIface {
             && track_id(&now_playing.item_id).as_str() == track_id_arg.as_str()
         {
             self.0.send(CastEvent::Seek {
-                ticks: position.saturating_mul(10).max(0),
+                ticks: micros_to_ticks(position).max(0),
             });
         }
     }
 }
 
+/// Playback advances by one progress tick of a second between publishes, so
+/// twice that is past any sampling jitter and can only be a seek.
+const SEEK_JUMP_MICROS: i64 = 2_000_000;
+
+/// The new position, when it is one no client could have predicted. A changed
+/// item is not a seek: the metadata change already re-bases the bar.
+fn seeked_position(previous: &PlayerStatus, current: &PlayerStatus) -> Option<i64> {
+    let before = previous.now_playing.as_ref()?;
+    let after = current.now_playing.as_ref()?;
+    if before.item_id != after.item_id {
+        return None;
+    }
+    let before_micros = ticks_to_micros(before.position_ticks);
+    let after_micros = ticks_to_micros(after.position_ticks);
+    (after_micros < before_micros || after_micros > before_micros + SEEK_JUMP_MICROS)
+        .then_some(after_micros)
+}
+
 async fn emit_changes(connection: zbus::Connection, mut status_rx: watch::Receiver<PlayerStatus>) {
+    let mut previous = status_rx.borrow().clone();
     while status_rx.changed().await.is_ok() {
+        let current = status_rx.borrow().clone();
         let Ok(iface_ref) = connection
             .object_server()
             .interface::<_, PlayerIface>(OBJECT_PATH)
@@ -243,6 +293,10 @@ async fn emit_changes(connection: zbus::Connection, mut status_rx: watch::Receiv
         let _ = iface.can_pause_changed(ctx).await;
         let _ = iface.can_seek_changed(ctx).await;
         let _ = iface.volume_changed(ctx).await;
+        if let Some(position) = seeked_position(&previous, &current) {
+            let _ = PlayerIface::seeked(ctx, position).await;
+        }
+        previous = current;
     }
 }
 

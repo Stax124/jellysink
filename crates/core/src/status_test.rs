@@ -11,6 +11,7 @@ fn status_serializes_the_field_names_its_readers_expect() {
             item_id: "1".into(),
             title: "Ep 1".into(),
             position_ticks: 12345,
+            run_time_ticks: Some(14_220_809_999),
             is_paused: false,
             is_muted: false,
             volume: 80,
@@ -36,6 +37,7 @@ fn status_serializes_the_field_names_its_readers_expect() {
             "position_ticks",
             "queue_index",
             "queue_len",
+            "run_time_ticks",
             "title",
             "volume",
         ]

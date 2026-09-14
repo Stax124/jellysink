@@ -210,23 +210,4 @@ impl App {
             move |items| Msg::PlayingEpisodes { item_id, items },
         );
     }
-
-    /// One small request per item change, rather than a duration in every
-    /// status poll.
-    pub(super) fn load_runtime_ticks(&self, item_id: String) {
-        let (api, tx) = (self.api.clone(), self.tx.clone());
-        tokio::spawn(async move {
-            let msg = match api.get_item(&item_id).await {
-                Ok(value) => match value
-                    .get("RunTimeTicks")
-                    .and_then(serde_json::Value::as_i64)
-                {
-                    Some(ticks) => Msg::Runtime { item_id, ticks },
-                    None => Msg::Error(format!("item {item_id} has no RunTimeTicks")),
-                },
-                Err(e) => Msg::Error(format!("{e:#}")),
-            };
-            let _ = tx.send(msg);
-        });
-    }
 }

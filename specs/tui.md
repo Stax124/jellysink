@@ -102,9 +102,8 @@ still needed for the session id that addresses commands, but that is fetched
 
 Two things follow:
 
-- The status socket carries no duration, so the total for the progress bar is
-  one `/Items/{id}` per item change, cached against that item id — a stale total
-  must never label a new episode.
+- The status carries the duration alongside the position, so the progress bar
+  needs no request of its own and no key to guard against a stale total.
 - The footer's title is the daemon's `display_title`, not `Item::label`, so it
   reads the same as the mpv window title regardless of who started playback —
   which also means the footer works for playback started from a phone or the web
@@ -144,9 +143,9 @@ screen that was up when it finished. `refresh` (the `r` key) is the same
 
 The cost is one duplicate pair of requests when the Playing screen is up as an
 episode hands over: the existing `load_playing` chain fires on the change
-itself. That is deliberate — the immediate fetch is what keeps the footer's
-duration right, and the deferred one is what corrects the episode list's
-watched marks, which the immediate fetch reads too early.
+itself. That is deliberate — the immediate fetch is what fills the Playing
+screen, and the deferred one is what corrects the episode list's watched marks,
+which the immediate fetch reads too early.
 
 ## Where a complaint goes
 

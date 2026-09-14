@@ -64,16 +64,14 @@ impl App {
         }
         self.reload_due = changed;
         let Some(item_id) = item_id else {
-            self.runtime_ticks = None;
             self.playing_item = None;
             return;
         };
         if self
-            .runtime_ticks
+            .playing_item
             .as_ref()
             .is_none_or(|(id, _)| *id != item_id)
         {
-            self.load_runtime_ticks(item_id.clone());
             self.load_playing(item_id);
         }
     }
@@ -125,14 +123,5 @@ impl App {
 
     pub(crate) fn now_playing(&self) -> Option<&jellysink_core::status::NowPlaying> {
         self.player.as_ref()?.now_playing.as_ref()
-    }
-
-    /// The current item's duration, only if it belongs to the current item.
-    pub(crate) fn total_ticks(&self) -> Option<i64> {
-        let now_playing = self.now_playing()?;
-        self.runtime_ticks
-            .as_ref()
-            .filter(|(item_id, _)| *item_id == now_playing.item_id)
-            .map(|(_, ticks)| *ticks)
     }
 }

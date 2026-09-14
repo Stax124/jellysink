@@ -10,6 +10,7 @@ fn playing_status(paused: bool, has_next: bool, has_previous: bool) -> PlayerSta
             item_id: "item-1".into(),
             title: "Ep 1".into(),
             position_ticks: 1_200_000_000,
+            run_time_ticks: Some(14_220_809_999),
             is_paused: paused,
             is_muted: false,
             volume: 80,
@@ -69,6 +70,57 @@ fn metadata_is_empty_when_idle_and_carries_the_title_when_playing() {
     assert_eq!(title, "Ep 1");
     let art = <&str>::try_from(meta.get("mpris:artUrl").unwrap()).unwrap();
     assert_eq!(art, "http://x/Items/item-1/Images/Primary?ApiKey=tok");
+}
+
+/// No length, no seek bar in any desktop widget.
+#[test]
+fn metadata_carries_the_length_in_microseconds_and_omits_it_when_unknown() {
+    let (iface, _rx) = player(playing_status(false, true, true));
+    let length = i64::try_from(iface.metadata().get("mpris:length").unwrap()).unwrap();
+    assert_eq!(length, 1_422_080_999);
+
+    let mut status = playing_status(false, true, true);
+    if let Some(now_playing) = status.now_playing.as_mut() {
+        now_playing.run_time_ticks = None;
+    }
+    let (iface, _rx) = player(status);
+    assert!(!iface.metadata().contains_key("mpris:length"));
+}
+
+#[test]
+fn a_seek_is_signalled_but_ordinary_playback_progress_is_not() {
+    let (before, mut after) = (
+        playing_status(false, true, true),
+        playing_status(false, true, true),
+    );
+
+    if let Some(now_playing) = after.now_playing.as_mut() {
+        now_playing.position_ticks += 10_000_000; // one second of playback
+    }
+    assert_eq!(seeked_position(&before, &after), None);
+
+    if let Some(now_playing) = after.now_playing.as_mut() {
+        now_playing.position_ticks = 1_800_000_000;
+    }
+    assert_eq!(seeked_position(&before, &after), Some(180_000_000));
+
+    if let Some(now_playing) = after.now_playing.as_mut() {
+        now_playing.position_ticks = 600_000_000;
+    }
+    assert_eq!(seeked_position(&before, &after), Some(60_000_000));
+}
+
+/// The next episode starts at 0, which is backwards but not a seek — the
+/// metadata change is what re-bases the bar.
+#[test]
+fn a_new_item_is_not_a_seek() {
+    let before = playing_status(false, true, true);
+    let mut after = playing_status(false, true, true);
+    if let Some(now_playing) = after.now_playing.as_mut() {
+        now_playing.item_id = "item-2".into();
+        now_playing.position_ticks = 0;
+    }
+    assert_eq!(seeked_position(&before, &after), None);
 }
 
 #[test]
@@ -223,6 +275,24 @@ async fn live_smoke_test_against_the_real_session_bus() {
     let status: zbus::zvariant::OwnedValue = reply.body().deserialize().unwrap();
     eprintln!("PlaybackStatus = {status:?}");
     assert_eq!(String::try_from(status).unwrap(), "Playing");
+
+    // A widget reads the length off the wire as an int64; any other signature
+    // leaves it with no seek bar and no error to explain why.
+    let reply = conn
+        .call_method(
+            Some(bus_name.as_str()),
+            OBJECT_PATH,
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.mpris.MediaPlayer2.Player", "Metadata"),
+        )
+        .await
+        .unwrap();
+    let metadata: OwnedValue = reply.body().deserialize().unwrap();
+    let metadata = HashMap::<String, OwnedValue>::try_from(metadata).unwrap();
+    let length = metadata.get("mpris:length").expect("mpris:length");
+    assert_eq!(length.value_signature().to_string(), "x", "{length:?}");
+    assert_eq!(i64::try_from(length).unwrap(), 1_422_080_999);
 
     conn.call_method(
         Some(bus_name.as_str()),
