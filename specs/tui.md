@@ -457,12 +457,12 @@ somewhere to browse.
 
 `logs::install` builds the subscriber in `main`, before the alternate screen is
 taken and while a bad filter can still be reported on the normal one. It is
-`Targets` plus one `Layer` writing `LogLine`s into a bounded `VecDeque` — no
+an `EnvFilter` plus one `Layer` writing `LogLine`s into a bounded `VecDeque` — no
 `fmt` layer, so nothing can reach stdout. The filter comes from `core`'s
-`log_filter`, so `log_level` and `RUST_LOG` mean here what they mean for the
-daemon, and `jellysink_core=debug` turns on the Jellyfin HTTP layer's own events
-too. The daemon's logs are **not** here: it is another process, and `stop.sock`
-has no command that would carry them.
+`log_filter`, so `RUST_LOG` means here what it means for the daemon, and
+`jellysink_core=debug` turns on the Jellyfin HTTP layer's own events too. The
+daemon's logs are **not** here: it is another process, and `stop.sock` has no
+command that would carry them.
 
 Levels are split so the default `info` is already worth reading: `info` is what
 the user did that had an effect (a play, a command sent, a search, a level

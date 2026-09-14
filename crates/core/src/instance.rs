@@ -1,6 +1,3 @@
-//! The instance lock and the `stop.sock` client: `jellysink stop`, the tray's
-//! restart, and the status poll both the CLI and jellytui make.
-
 use crate::config::Paths;
 use crate::error::usage_err;
 use crate::status::PlayerStatus;

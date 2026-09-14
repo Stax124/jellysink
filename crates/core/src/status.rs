@@ -1,6 +1,3 @@
-//! A snapshot of what the daemon is doing right now: the wire format of
-//! `jellysink status` and of jellytui's once-a-second footer poll.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

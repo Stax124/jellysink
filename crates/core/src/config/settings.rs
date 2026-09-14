@@ -11,7 +11,6 @@ pub enum Field {
     MpvPath,
     /// Lives in `mpv_args.conf`, re-read on every mpv spawn.
     MpvArgs,
-    LogLevel,
     Autoplay,
     PrependPrevious,
     CoverCacheMb,
@@ -21,7 +20,6 @@ impl Field {
     pub const ALL: &'static [Field] = &[
         Field::MpvPath,
         Field::MpvArgs,
-        Field::LogLevel,
         Field::Autoplay,
         Field::PrependPrevious,
         Field::CoverCacheMb,
@@ -31,7 +29,6 @@ impl Field {
         match self {
             Field::MpvPath => "mpv_path",
             Field::MpvArgs => "mpv_args",
-            Field::LogLevel => "log_level",
             Field::Autoplay => "autoplay",
             Field::PrependPrevious => "prepend_previous",
             Field::CoverCacheMb => "cover_cache_mb",
@@ -57,7 +54,6 @@ impl Field {
 #[serde(default)]
 pub struct Config {
     pub mpv_path: String,
-    pub log_level: String,
     pub autoplay: bool,
     pub prepend_previous: bool,
     pub cover_cache_mb: u64,
@@ -67,7 +63,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             mpv_path: "mpv".into(),
-            log_level: "info".into(),
             autoplay: true,
             prepend_previous: true,
             cover_cache_mb: 256,
@@ -88,10 +83,6 @@ impl Config {
         let cfg: Self =
             toml::from_str(&text).wrap_err_with(|| format!("parsing {}", path.display()))?;
         Ok(cfg)
-    }
-
-    pub fn configured_log_level(paths: &Paths) -> String {
-        Self::load(paths).map_or_else(|_| Self::default().log_level, |cfg| cfg.log_level)
     }
 
     pub fn load_or_create(paths: &Paths) -> color_eyre::Result<Self> {
@@ -115,7 +106,6 @@ impl Config {
         match field {
             Field::MpvArgs => None,
             Field::MpvPath => Some(self.mpv_path.clone()),
-            Field::LogLevel => Some(self.log_level.clone()),
             Field::Autoplay => Some(self.autoplay.to_string()),
             Field::PrependPrevious => Some(self.prepend_previous.to_string()),
             Field::CoverCacheMb => Some(self.cover_cache_mb.to_string()),
@@ -132,12 +122,6 @@ impl Config {
         match field {
             Field::MpvArgs => return Ok(false),
             Field::MpvPath => self.mpv_path = value.to_string(),
-            // Rejected here rather than at the next startup.
-            Field::LogLevel => {
-                crate::logging::validate_log_level(value)
-                    .map_err(|e| usage_err(format!("invalid log_level {value:?}: {e}")))?;
-                self.log_level = value.to_string();
-            }
             Field::Autoplay => self.autoplay = parse_bool(value)?,
             Field::PrependPrevious => self.prepend_previous = parse_bool(value)?,
             Field::CoverCacheMb => {

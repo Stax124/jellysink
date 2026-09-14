@@ -1,4 +1,3 @@
-//! Building — and redacting — Jellyfin URLs.
 use super::encode_query_value;
 
 /// Stream URLs carry the access token whenever the Authorization header is not
@@ -40,13 +39,9 @@ pub fn direct_stream_url(
 /// A desktop widget draws the art at a few hundred pixels; the untouched
 /// original behind it runs to megabytes.
 const MPRIS_ART_MAX_PIXELS: u32 = 600;
-
-/// Named rather than left to the server, for the reason `IMAGE_QUALITY` gives.
 const MPRIS_ART_QUALITY: u32 = 85;
 
-/// The item's primary image, for MPRIS `mpris:artUrl`. The format is named
-/// because `Accept` negotiation would otherwise hand a widget WebP, which it is
-/// not guaranteed to decode.
+/// The item's primary image, for MPRIS `mpris:artUrl`. Using JPEG format rather than WebP to ensure compatibility with all clients.
 pub fn image_url(server: &str, item_id: &str, token: &str) -> String {
     let server = server.trim_end_matches('/');
     format!(

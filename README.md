@@ -145,7 +145,6 @@ Quitting `jellytui` does not stop playback — it is only a remote.
 jellysink config path
 jellysink config get
 jellysink config set mpv_path /usr/bin/mpv
-jellysink config set log_level debug
 jellysink config set autoplay false
 jellysink logout
 ```
@@ -155,13 +154,14 @@ jellysink logout
 | Key                | Default   | Notes                                                                                                                                    |
 | ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `mpv_path`         | `mpv`     | Binary used to spawn the player                                                                                                          |
-| `log_level`        | `info`    | `tracing` filter (`error`, `warn`, `info`, `debug`, `trace`); `RUST_LOG` overrides this if set. Also sets what jellytui's `L` pane shows |
 | `autoplay`         | `true`    | Next episode in aired order; `false` stops after the current item                                                                        |
 | `prepend_previous` | `true`    | Also load the episodes that aired *before* the current one, so mpv's playlist selector can reach them                                    |
 | `cover_cache_mb`   | `256`     | Disk jellytui's cover cache may use, in `~/.cache/jellysink/covers`; `0` turns it off                                                    |
 | `mpv_args`         | _(empty)_ | Extra argv on top of your mpv config, never instead of it                                                                                |
 
 `--config DIR` (global) uses a different configuration directory. The default is `~/.config/jellysink`.
+
+Logging is `info` unless `RUST_LOG` says otherwise (`error`, `warn`, `info`, `debug`, `trace`, or a `tracing` filter like `jellysink=debug,warn`). It sets what jellytui's `L` pane shows too.
 
 `mpv_args` is stored in `~/.config/jellysink/mpv_args.conf` (one argument per line; `#` comments allowed) and re-read every time mpv is spawned, so a running daemon picks up changes on the next play — no restart needed. You can also edit the file directly.
 

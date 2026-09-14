@@ -1,53 +1,20 @@
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::Result;
+use tracing::level_filters::LevelFilter;
 use tracing_error::ErrorLayer;
-use tracing_subscriber::filter::Targets;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-/// Parse a `tracing` filter spec (`info`, `jellysink=debug,warn`, …). `Targets`
-/// rather than `EnvFilter`: +186 KB of binary for span-field filtering.
-pub(crate) fn parse_log_filter(spec: &str) -> Result<Targets> {
-    spec.parse()
-        .wrap_err_with(|| format!("invalid log filter {spec:?}"))
-}
-
-/// Validates a `log_level` before it is written to config.toml. Stricter than
-/// [`parse_log_filter`], which reads a bare `"banana"` as a target name.
-pub(crate) fn validate_log_level(spec: &str) -> Result<()> {
-    parse_log_filter(spec)?;
-    let bare = spec.trim();
-    if !bare.contains('=') && !bare.contains(',') {
-        const LEVELS: [&str; 6] = ["trace", "debug", "info", "warn", "error", "off"];
-        if !LEVELS.iter().any(|l| l.eq_ignore_ascii_case(bare)) {
-            return Err(color_eyre::eyre::eyre!(
-                "expected one of {} (or a target filter like `jellysink=debug,warn`)",
-                LEVELS.join(", ")
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// The filter a binary should log through: `RUST_LOG` when set, the configured
-/// `log_level` otherwise. jellytui builds its own subscriber and needs it too.
-pub fn log_filter(level: &str) -> Result<Targets> {
-    match std::env::var("RUST_LOG") {
-        Ok(spec) => parse_log_filter(&spec),
-        Err(_) => parse_log_filter(level),
-    }
-}
-
-pub fn init_tracing(level: &str) -> Result<()> {
-    let filter = log_filter(level)?;
+pub fn init_tracing() -> Result<()> {
     tracing_subscriber::registry()
-        .with(filter)
+        .with(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
         .with(tracing_subscriber::fmt::layer().without_time())
         .with(ErrorLayer::default())
         .init();
     color_eyre::install()?;
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "logging_test.rs"]
-mod tests;

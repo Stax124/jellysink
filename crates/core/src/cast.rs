@@ -1,3 +1,4 @@
+use crate::json;
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,18 +56,18 @@ impl CastEvent {
 }
 
 fn parse_play(data: &Value) -> Option<CastEvent> {
-    let item_ids = string_list(data.get("ItemIds")?);
+    let item_ids = json::string_list(data.get("ItemIds")?);
     if item_ids.is_empty() {
         return None;
     }
     let start_index = data
         .get("StartIndex")
-        .and_then(value_as_i64)
+        .and_then(json::coerce_i64)
         .unwrap_or(0)
         .max(0) as usize;
-    let start_ticks = data.get("StartPositionTicks").and_then(value_as_i64);
-    let audio_stream_index = data.get("AudioStreamIndex").and_then(value_as_i64);
-    let subtitle_stream_index = data.get("SubtitleStreamIndex").and_then(value_as_i64);
+    let start_ticks = data.get("StartPositionTicks").and_then(json::coerce_i64);
+    let audio_stream_index = data.get("AudioStreamIndex").and_then(json::coerce_i64);
+    let subtitle_stream_index = data.get("SubtitleStreamIndex").and_then(json::coerce_i64);
     let media_source_id = data
         .get("MediaSourceId")
         .and_then(Value::as_str)
@@ -95,7 +96,7 @@ fn parse_playstate(data: &Value) -> Option<CastEvent> {
         "NextTrack" => Some(CastEvent::Next),
         "PreviousTrack" => Some(CastEvent::Previous),
         "Seek" => Some(CastEvent::Seek {
-            ticks: data.get("SeekPositionTicks").and_then(value_as_i64)?,
+            ticks: data.get("SeekPositionTicks").and_then(json::coerce_i64)?,
         }),
         _ => None,
     }
@@ -124,27 +125,8 @@ fn parse_general(data: &Value) -> Option<CastEvent> {
     }
 }
 
-fn string_list(v: &Value) -> Vec<String> {
-    match v {
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect(),
-        Value::String(s) => vec![s.clone()],
-        _ => Vec::new(),
-    }
-}
-
-fn value_as_i64(v: &Value) -> Option<i64> {
-    v.as_i64()
-        .or_else(|| v.as_u64().and_then(|n| i64::try_from(n).ok()))
-        .or_else(|| v.as_f64().map(|f| f as i64))
-        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-}
-
 fn nested_i64(args: &Value, key: &str) -> Option<i64> {
-    args.get(key).and_then(value_as_i64)
+    args.get(key).and_then(json::coerce_i64)
 }
 
 #[cfg(test)]

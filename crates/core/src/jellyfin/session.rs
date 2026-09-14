@@ -1,4 +1,5 @@
 use crate::cast::CastEvent;
+use crate::json;
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::Deserialize;
 use serde_json::Value;
@@ -48,7 +49,7 @@ pub fn parse_ws_message(text: &str) -> color_eyre::Result<WsIncoming> {
             let seconds = raw
                 .data
                 .as_ref()
-                .and_then(value_as_u64)
+                .and_then(json::coerce_u64)
                 .unwrap_or(60)
                 .max(1);
             WsIncoming::ForceKeepAlive { seconds }
@@ -60,12 +61,6 @@ pub fn parse_ws_message(text: &str) -> color_eyre::Result<WsIncoming> {
             },
         },
     })
-}
-
-fn value_as_u64(v: &Value) -> Option<u64> {
-    v.as_u64()
-        .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
-        .or_else(|| v.as_f64().map(|f| f as u64))
 }
 
 #[cfg(test)]

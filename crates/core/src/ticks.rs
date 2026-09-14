@@ -1,5 +1,3 @@
-//! Jellyfin position ticks (100 ns units) and seconds. Nothing about media.
-
 pub fn ticks_to_seconds(ticks: i64) -> f64 {
     ticks as f64 / 10_000_000.0
 }

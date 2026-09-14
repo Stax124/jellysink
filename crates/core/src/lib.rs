@@ -1,11 +1,9 @@
-//! What jellysink and jellytui both need: the config and credential files, the
-//! Jellyfin API client, the cast vocabulary, and the `stop.sock` protocol.
-
 pub mod cast;
 pub mod config;
 pub mod error;
 pub mod instance;
 pub mod jellyfin;
+pub mod json;
 pub mod logging;
 pub mod status;
 pub mod ticks;

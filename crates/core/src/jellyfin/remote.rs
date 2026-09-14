@@ -1,14 +1,9 @@
-//! Driving another Jellyfin session — here, the jellysink daemon. Every call
-//! lands in [`crate::cast`], so the names must match `CastEvent::from_ws`.
-
 use super::auth::Api;
 use super::encode_query_value;
 use super::model::Session;
 use color_eyre::eyre::{Result, WrapErr};
 use serde::Deserialize;
 
-/// The `PlayCommand` value [`Api::play_now`] sends. Named so the round-trip
-/// test can hold it against what `cast.rs` parses — a typo fails at runtime.
 const PLAY_NOW: &str = "PlayNow";
 
 impl Api {

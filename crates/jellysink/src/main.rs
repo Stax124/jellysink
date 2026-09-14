@@ -9,7 +9,7 @@ mod runtime;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use jellysink_core::UsageError;
-use jellysink_core::config::{Config, Paths};
+use jellysink_core::config::Paths;
 use jellysink_core::logging::init_tracing;
 use std::path::PathBuf;
 
@@ -68,8 +68,7 @@ enum ConfigCmd {
     Path,
     /// Print one key, or the whole file
     Get { key: Option<String> },
-    /// Set a key (mpv_path, mpv_args, log_level, autoplay, prepend_previous,
-    /// cover_cache_mb)
+    /// Set a key (mpv_path, mpv_args, autoplay, prepend_previous, cover_cache_mb)
     Set {
         key: String,
         /// Values may start with `-` (e.g. `mpv_args --fullscreen`). `mpv_args`
@@ -97,7 +96,7 @@ async fn try_main() -> Result<()> {
     let cli = Cli::parse();
     let paths = Paths::from_override(cli.config)?;
     jellysink_core::install_crypto_provider();
-    init_tracing(&Config::configured_log_level(&paths))?;
+    init_tracing()?;
 
     match cli.command.unwrap_or(Command::Run) {
         Command::Login => cli::cmd_login(&paths).await?,

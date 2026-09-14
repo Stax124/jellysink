@@ -10,18 +10,6 @@ fn encode_is_one_json_line() {
 }
 
 #[test]
-fn time_pos_parses_integer_and_float_seconds() {
-    assert_eq!(json_as_seconds(&json!(12)), Some(12.0));
-    assert_eq!(json_as_seconds(&json!(12.5)), Some(12.5));
-}
-
-#[test]
-fn time_pos_rejects_a_non_number_instead_of_zero() {
-    assert_eq!(json_as_seconds(&json!(null)), None);
-    assert_eq!(json_as_seconds(&json!("unavailable")), None);
-}
-
-#[test]
 fn parse_reply_and_event() {
     let r = parse_ipc_line(r#"{"error":"success","data":12.5,"request_id":1}"#).unwrap();
     assert_eq!(

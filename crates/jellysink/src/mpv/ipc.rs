@@ -80,12 +80,6 @@ pub(super) fn as_bool_property(name: &str, v: &Value) -> color_eyre::Result<bool
         .ok_or_else(|| eyre!("mpv property {name:?} was not a boolean: {v}"))
 }
 
-pub(crate) fn json_as_seconds(v: &Value) -> Option<f64> {
-    v.as_f64()
-        .or_else(|| v.as_i64().map(|n| n as f64))
-        .or_else(|| v.as_u64().map(|n| n as f64))
-}
-
 #[cfg(test)]
 #[path = "ipc_test.rs"]
 mod tests;

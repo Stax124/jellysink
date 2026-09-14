@@ -33,20 +33,6 @@ fn every_field_parses_back_from_its_own_name() {
 }
 
 #[test]
-fn an_invalid_log_level_is_rejected_at_set_time() {
-    let mut cfg = Config::default();
-    // This used to be accepted and only fail at the next startup.
-    let err = cfg.set(Field::LogLevel, "banana").unwrap_err();
-    assert!(
-        err.downcast_ref::<crate::UsageError>().is_some(),
-        "expected UsageError, got {err:?}"
-    );
-    assert_eq!(cfg.log_level, "info", "the bad value must not be stored");
-    cfg.set(Field::LogLevel, "jellysink=debug,warn").unwrap();
-    assert_eq!(cfg.log_level, "jellysink=debug,warn");
-}
-
-#[test]
 fn mpv_args_is_not_stored_in_config_toml() {
     let mut cfg = Config::default();
     assert_eq!(cfg.get(Field::MpvArgs), None);
@@ -86,13 +72,19 @@ fn missing_autoplay_key_defaults_on() {
     let tmp = TempDir::new().unwrap();
     let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
     paths.ensure().unwrap();
-    fs::write(
-        paths.config_file(),
-        "mpv_path = \"mpv\"\nlog_level = \"info\"\n",
-    )
-    .unwrap();
+    fs::write(paths.config_file(), "mpv_path = \"mpv\"\n").unwrap();
     let loaded = Config::load(&paths).unwrap();
     assert!(loaded.autoplay);
+}
+
+/// Guards a config.toml written before `log_level` was removed.
+#[test]
+fn a_key_that_is_no_longer_a_field_is_ignored() {
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
+    paths.ensure().unwrap();
+    fs::write(paths.config_file(), "log_level = \"debug\"\n").unwrap();
+    assert_eq!(Config::load(&paths).unwrap(), Config::default());
 }
 
 #[test]

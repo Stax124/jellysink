@@ -5,8 +5,8 @@ use super::event::{
     AUDIO_TRACK_OBSERVER_ID, AUDIO_TRACK_PROPERTY, SUBTITLE_TRACK_OBSERVER_ID,
     SUBTITLE_TRACK_PROPERTY, SelectedTrack, selected_track_from_property,
 };
-use super::ipc::json_as_seconds;
 use color_eyre::eyre::{WrapErr, eyre};
+use jellysink_core::json;
 use serde_json::{Value, json};
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
@@ -273,7 +273,7 @@ impl MpvSession {
 
     pub(crate) async fn time_pos(&mut self) -> color_eyre::Result<f64> {
         let v = self.get_property("time-pos").await?;
-        json_as_seconds(&v).ok_or_else(|| eyre!("time-pos was not a number"))
+        json::coerce_f64(&v).ok_or_else(|| eyre!("time-pos was not a number"))
     }
 
     pub(crate) async fn paused(&mut self) -> color_eyre::Result<bool> {
