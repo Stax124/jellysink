@@ -28,6 +28,7 @@ pub(super) enum Intent {
     Back,
     Refresh,
     ToggleWatched,
+    Update,
     Type(char),
     Backspace,
 }
@@ -76,6 +77,7 @@ fn command(c: char) -> Option<Intent> {
         'h' => Some(Intent::Left),
         'r' => Some(Intent::Refresh),
         't' => Some(Intent::ToggleWatched),
+        'u' => Some(Intent::Update),
         _ => None,
     }
 }

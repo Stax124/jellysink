@@ -106,3 +106,18 @@ fn playback_keys_are_mpvs_and_are_not_bound_here() {
         Some(Intent::Right)
     );
 }
+
+#[test]
+fn the_update_key_is_still_text_in_the_search_box() {
+    assert_eq!(map(press('u'), false), Some(Intent::Update));
+    assert_eq!(map(press('u'), true), Some(Intent::Type('u')));
+}
+
+/// `Ctrl-u` clears the query rather than starting an update.
+#[test]
+fn ctrl_u_while_typing_is_not_the_update_key() {
+    assert_eq!(
+        map(key(KeyCode::Char('u'), KeyModifiers::CONTROL), true),
+        Some(Intent::Back)
+    );
+}

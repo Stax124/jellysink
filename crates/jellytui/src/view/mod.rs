@@ -112,26 +112,40 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
         spans.extend(segment("L", "Logs", true));
     }
     let tabs = Line::from(spans);
+    let offer = update_offer(app);
     let status = daemon_status(app);
     // The message rides here rather than on the hint row, where it would cost
     // the bindings their space.
     let room = area
         .width
-        .saturating_sub(width_of(&tabs) + width_of(&status));
+        .saturating_sub(width_of(&tabs) + width_of(&offer) + width_of(&status));
     let wanted = u16::try_from(app.message.chars().count()).unwrap_or(u16::MAX);
     let message = Line::from(Span::styled(
         to_width(&app.message, room.min(wanted)),
         Style::default().fg(WARN),
     ));
-    let [tabs_area, message_area, status_area] = Layout::horizontal([
+    let [tabs_area, message_area, offer_area, status_area] = Layout::horizontal([
         Constraint::Fill(1),
         Constraint::Length(width_of(&message)),
+        Constraint::Length(width_of(&offer)),
         Constraint::Length(width_of(&status)),
     ])
     .areas(area);
     frame.render_widget(Paragraph::new(tabs), tabs_area);
     frame.render_widget(Paragraph::new(message), message_area);
+    frame.render_widget(Paragraph::new(offer), offer_area);
     frame.render_widget(Paragraph::new(status), status_area);
+}
+
+/// Names the key, because the hint rows are full and cannot.
+fn update_offer(app: &App) -> Line<'static> {
+    match &app.update_offer {
+        Some(version) => Line::from(Span::styled(
+            format!(" ↑{version} u "),
+            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+        )),
+        None => Line::default(),
+    }
 }
 
 /// Whether the daemon answered its status socket. Before the first poll the

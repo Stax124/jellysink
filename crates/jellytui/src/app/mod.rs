@@ -5,6 +5,7 @@ mod logs;
 mod msg;
 mod player;
 mod request;
+mod update;
 
 pub(crate) use browse::Shelf;
 use msg::Msg;
@@ -17,6 +18,7 @@ use crate::view::{grid, playing, rail};
 
 use crate::view;
 use color_eyre::eyre::Result;
+use jellysink_core::VERSION;
 use jellysink_core::config::Paths;
 use jellysink_core::instance;
 use jellysink_core::jellyfin::auth::Api;
@@ -42,6 +44,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// than a settling delay: a still cursor fetches at once, only a held key waits.
 const COVER_THROTTLE: Duration = Duration::from_millis(120);
 const SEARCH_TYPES: &str = "Movie,Series,Episode";
+
+/// Why the loop ended; an update installs only once the screen is back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Exit {
+    Quit,
+    Update,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Screen {
@@ -114,7 +123,9 @@ pub(crate) struct App {
     /// Armed by a playback change and fired by the *following* poll: the daemon
     /// publishes the new status before its `Stopped` report reaches the server.
     reload_due: bool,
-    quit: bool,
+    /// The offered version. Not `message`, which the next keypress clears.
+    pub(crate) update_offer: Option<String>,
+    quit: Option<Exit>,
 }
 
 impl App {
@@ -155,11 +166,12 @@ impl App {
             search_generation: 0,
             search_due: None,
             reload_due: false,
-            quit: false,
+            update_offer: None,
+            quit: None,
         }
     }
 
-    pub(crate) async fn run(mut self) -> Result<()> {
+    pub(crate) async fn run(mut self) -> Result<Exit> {
         let mut terminal = view::enter()?;
         let mut input = spawn_input_thread();
         let mut poll = tokio::time::interval(POLL_INTERVAL);
@@ -168,6 +180,7 @@ impl App {
         self.load_home();
         self.poll_player();
         self.load_session_id();
+        self.check_for_update();
 
         let result = loop {
             if let Ok(viewport) = terminal.size() {
@@ -186,7 +199,7 @@ impl App {
             tokio::select! {
                 event = input.recv() => match event {
                     Some(event) => self.on_event(event),
-                    None => break Ok(()),
+                    None => break Ok(Exit::Quit),
                 },
                 Some(msg) = self.rx.recv() => self.on_msg(msg),
                 _ = poll.tick() => self.poll_player(),
@@ -199,8 +212,8 @@ impl App {
                     self.request_covers();
                 }
             }
-            if self.quit {
-                break Ok(());
+            if let Some(exit) = self.quit {
+                break Ok(exit);
             }
         };
         view::leave();
@@ -230,7 +243,7 @@ impl App {
             return;
         }
         match intent {
-            Intent::Quit => self.quit = true,
+            Intent::Quit => self.quit = Some(Exit::Quit),
             Intent::Home => self.screen = Screen::Home,
             Intent::Libraries => self.open_libraries(),
             Intent::Playing => self.screen = Screen::Playing,
@@ -253,6 +266,7 @@ impl App {
             Intent::Back => self.back(),
             Intent::Refresh => self.refresh(),
             Intent::ToggleWatched => self.toggle_watched(),
+            Intent::Update => self.start_update(),
             Intent::Type(c) => {
                 self.query.push(c);
                 self.schedule_search();

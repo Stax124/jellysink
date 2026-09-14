@@ -62,16 +62,39 @@ that jellytui only drives a jellysink on the same machine.
 
 ## Updating
 
-`jellysink update` and the tray's Install update replace the **daemon only**:
-`daemon/update.rs` pins the release asset to `jellysink-<target>` by exact name,
-because every asset carries the target triple and `self_update`'s default
-substring match would otherwise be free to pick `jellytui-<target>` or a
-`.sha256`. `install.sh` installs and updates both.
+`core/src/update.rs` is the one updater, parameterised by binary name. It pins
+the release asset to `<bin_name>-<target>` by exact name, because every asset of
+the release carries the target triple and `self_update`'s default substring
+match would otherwise be free to pick the other binary or a `.sha256`.
 
-So a self-updated machine can run a newer daemon beside an older `jellytui`.
-That is expected to keep working: the two are joined only by the command names
-in `cast.rs`, which are Jellyfin's own. If that ever stops being true, the
-frontend needs a version check — not a shared updater.
+Either binary updates both. Each replaces itself with `self_replace` and then
+its neighbour with `install_sibling`, unconditionally — the two update
+separately, so either can be behind. A sibling's baseline is its own
+`--version` rather than the running process's, for that same reason.
+`bin_install_path` routes it through a plain move, which is also why it needs an
+explicit `chmod`: a bare-binary asset extracts 0644 and only `self_replace`
+carries the old mode over. A neighbour that cannot be replaced is reported, not
+raised; this binary's own update has already landed by then.
+
+**Replacing the daemon's binary is not stopping the daemon.** The install
+renames over the path, so a running jellysink keeps the inode it mapped and
+plays on; the new version waits for a restart. That is why `jellytui` may do it
+at all, and why it only prints the `systemctl --user restart` line rather than
+acting: ending playback is the user's call. The handoff over `stop.sock` stays
+`jellysink update`'s alone.
+
+The check runs once at startup and, when it finds something, sets the header
+badge; failure is a log line and nothing more. `u` ends the loop rather than
+downloading behind the TUI: `App::run` returns an `Exit`, `view::leave()` runs
+as it always does, and `main` installs on the normal screen before
+`exec_updated` brings the TUI back. Suspending and re-entering the alternate
+screen would leave the detached input thread parked in `read` with no way to
+hand stdin back.
+
+A machine can still end up running a daemon older than the `jellytui` driving
+it — the binary on disk is current but the process predates it. That keeps
+working: the two are joined only by the command names in `cast.rs`, which are
+Jellyfin's own.
 
 ## Staying responsive
 
@@ -161,8 +184,13 @@ which the immediate fetch reads too early.
 The bottom row is the key bindings and nothing else — a message there hides
 every binding the user might need to recover with. `App::message` (a failed
 request, a command sent before the session id landed) is drawn in the
-**header**, between the tabs and the daemon dot, elided by `view::to_width`, and
-retired by the next keypress.
+**header**, elided by `view::to_width`, and retired by the next keypress.
+
+The header holds four things: the tabs, that message, the update badge and the
+daemon dot. The tabs take `Fill(1)` and the other three fixed widths, so the
+message's elision budget is what is left after the badge — which is why the
+badge is only there when an update is offered, and why it carries the key
+(`↑<version> u`) that no hint row has the columns to name.
 
 **Every row has to fit 80 columns**, and a test holds each screen to it.
 `render_hint` draws a `Paragraph` with no wrap, so an overrun is cut mid-word

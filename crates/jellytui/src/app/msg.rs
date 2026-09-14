@@ -35,6 +35,7 @@ pub(super) enum Msg {
     /// Carries no item id: it triggers a refetch rather than writing into a
     /// row, so there is nothing an id could keep it from landing on.
     Watched,
+    UpdateAvailable(String),
     Error(String),
 }
 
@@ -86,6 +87,7 @@ impl App {
                 self.covers.give_up(&key);
             }
             Msg::Watched => self.reload_screen_and_home(),
+            Msg::UpdateAvailable(version) => self.update_offer = Some(version),
             Msg::Error(message) => {
                 tracing::warn!(%message, "request failed");
                 self.message = message;

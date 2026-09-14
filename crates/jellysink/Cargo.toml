@@ -21,7 +21,6 @@ ico.workspace = true
 ksni.workspace = true
 reqwest.workspace = true
 rustix.workspace = true
-self_update.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tikv-jemallocator.workspace = true

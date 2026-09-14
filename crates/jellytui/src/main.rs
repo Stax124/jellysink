@@ -3,6 +3,7 @@
 //! screen; see `crate::logs` and `specs/tui.md`.
 
 mod app;
+mod cli;
 mod cover;
 #[cfg(test)]
 mod test_support;
@@ -13,7 +14,7 @@ mod nav;
 
 mod view;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use jellysink_core::UsageError;
 use jellysink_core::config::{Config, Credentials, Paths};
@@ -29,8 +30,20 @@ use std::path::PathBuf;
 )]
 struct Cli {
     /// Configuration directory (default: ~/.config/jellysink)
-    #[arg(long)]
+    #[arg(long, global = true)]
     config: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Download and install the latest GitHub release
+    Update {
+        /// Only check; do not download
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -39,7 +52,11 @@ async fn main() -> Result<()> {
     let paths = Paths::from_override(cli.config)?;
     jellysink_core::install_crypto_provider();
 
-    match run(paths).await {
+    let result = match cli.command {
+        Some(Command::Update { check }) => cli::cmd_update(&paths, check).await,
+        None => run(paths).await,
+    };
+    match result {
         Ok(()) => Ok(()),
         Err(err) => {
             if let Some(usage) = err.downcast_ref::<UsageError>() {
@@ -67,5 +84,11 @@ async fn run(paths: Paths) -> Result<()> {
         let disk = disk.clone();
         move || disk.prune()
     });
-    app::App::new(api, paths, picker, disk, logs).run().await
+    match app::App::new(api, paths.clone(), picker, disk, logs)
+        .run()
+        .await?
+    {
+        app::Exit::Quit => Ok(()),
+        app::Exit::Update => cli::update_and_restart(&paths).await,
+    }
 }

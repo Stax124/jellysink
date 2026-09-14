@@ -1,10 +1,12 @@
 use crate::daemon::signal::Signal;
 use crate::daemon::terminal::spawn_in_terminal;
-use crate::daemon::update::{check, install};
 use jellysink_core::config::Paths;
 use jellysink_core::instance;
+use jellysink_core::update::{JELLYTUI_BIN, check, install, sibling_binary};
 use jellysink_core::{APP_NAME, VERSION};
 use std::ffi::OsStr;
+
+const BIN_NAME: &str = env!("CARGO_BIN_NAME");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AfterInstall {
@@ -29,10 +31,8 @@ pub(crate) async fn cmd_update(
     from_tray: bool,
 ) -> color_eyre::Result<()> {
     if check_only {
-        match check().await? {
-            Some(offer) => {
-                println!("update available: {} (running {VERSION})", offer.version);
-            }
+        match check(BIN_NAME).await? {
+            Some(version) => println!("update available: {version} (running {VERSION})"),
             None => println!("{APP_NAME} {VERSION} is up to date"),
         }
         return Ok(());
@@ -56,20 +56,29 @@ pub(crate) async fn cmd_update(
 
 async fn install_and_handoff(paths: &Paths, from_tray: bool) -> color_eyre::Result<()> {
     println!("Checking for updates...");
-    let Some(offer) = check().await? else {
-        println!("{APP_NAME} {VERSION} is up to date.");
-        return Ok(());
-    };
-    println!(
-        "Downloading {APP_NAME} v{} (running {VERSION})...",
-        offer.version
-    );
-    let status = install(true).await?;
-    let updated = status.is_updated();
-    if updated {
-        println!("Updated to version {}.", status.version());
-    } else {
-        println!("Already up to date.");
+    let mut updated = false;
+    match check(BIN_NAME).await? {
+        Some(offer) => {
+            println!("Downloading {APP_NAME} v{offer} (running {VERSION})...");
+            match install(BIN_NAME, None, true).await? {
+                Some(version) => {
+                    println!("Updated to version {version}.");
+                    updated = true;
+                }
+                None => println!("Already up to date."),
+            }
+        }
+        None => println!("{APP_NAME} {VERSION} is up to date."),
+    }
+    // Unconditional: the frontend updates separately, so it can be behind a
+    // daemon that is already current.
+    if let Some(path) = sibling_binary(JELLYTUI_BIN) {
+        match install(JELLYTUI_BIN, Some(&path), true).await {
+            Ok(Some(version)) => println!("Updated {JELLYTUI_BIN} to version {version}."),
+            Ok(None) => println!("{JELLYTUI_BIN} is up to date."),
+            // Our own update has landed by now, so this is reported not raised.
+            Err(e) => eprintln!("could not update {JELLYTUI_BIN}: {e:#}"),
+        }
     }
     match after_install(from_tray, instance::is_running(paths), updated) {
         AfterInstall::Restart => match instance::request_restart(paths) {
@@ -107,12 +116,18 @@ pub(super) async fn apply_update_from_daemon(
 ) {
     if let Err(e) = spawn_tray_update(&paths, &exe).await {
         tracing::warn!("could not open a terminal for the update ({e}); updating silently");
-        match install(false).await {
-            Ok(status) if status.is_updated() => {
-                tracing::info!(version = %status.version(), "updated; restarting");
+        let installed = install(BIN_NAME, None, false).await;
+        if let Some(path) = sibling_binary(JELLYTUI_BIN)
+            && let Err(e) = install(JELLYTUI_BIN, Some(&path), false).await
+        {
+            tracing::warn!("could not update {JELLYTUI_BIN}: {e:#}");
+        }
+        match installed {
+            Ok(Some(version)) => {
+                tracing::info!(%version, "updated; restarting");
                 restart.fire();
             }
-            Ok(_) => tracing::info!("already up to date"),
+            Ok(None) => tracing::info!("already up to date"),
             Err(e) => tracing::error!("installing update failed: {e:#}"),
         }
     }

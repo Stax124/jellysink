@@ -1,12 +1,12 @@
 use crate::cli::update::apply_update_from_daemon;
 use crate::daemon::instance::listen_stop;
 use crate::daemon::signal::Signal;
-use crate::daemon::update::{check, exec_updated, restart_exe_path};
 use crate::daemon::{mpris, tray};
 use color_eyre::eyre::WrapErr;
 use jellysink_core::VERSION;
 use jellysink_core::config::{Config, Credentials, Paths, device_name};
 use jellysink_core::instance::InstanceLock;
+use jellysink_core::update::{check, exec_updated, restart_exe_path};
 use jellysink_core::usage_err;
 
 pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
@@ -114,11 +114,11 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
 
 fn spawn_update_check(handle: Option<ksni::Handle<tray::CastTray>>) {
     tokio::spawn(async move {
-        match check().await {
-            Ok(Some(offer)) => {
-                tracing::info!(version = %offer.version, "update available");
+        match check(env!("CARGO_BIN_NAME")).await {
+            Ok(Some(version)) => {
+                tracing::info!(%version, "update available");
                 if let Some(handle) = handle {
-                    handle.update(|t| t.set_pending(offer.version)).await;
+                    handle.update(|t| t.set_pending(version)).await;
                 }
             }
             Ok(None) => tracing::debug!("already up to date"),

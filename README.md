@@ -57,7 +57,7 @@ This project is not trying to be a full replacement for jellyfin-mpv-shim. It is
 - Remaining episodes are appended to mpv’s playlist (`<` / `>` or the OSC playlist)
 - Optional StatusNotifier tray icon (KDE, GNOME AppIndicator, Waybar, …)
 - Optional MPRIS player (`org.mpris.MediaPlayer2`) — media keys, GNOME/KDE now-playing widgets, lock-screen controls, `playerctl`
-- Self-update from GitHub Releases (`jellysink update`, or **Install update** in the tray)
+- Self-update from GitHub Releases — any of `jellysink update`, **Install update** in the tray, or `u` in `jellytui` brings both binaries level
 
 ## Installation
 
@@ -76,7 +76,7 @@ systemctl --user enable --now jellysink
 
 Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink run` yourself.
 
-`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon gets a green-dot badge and the menu gets an **Install update** item; choosing it opens a terminal, shows download progress, replaces the binary, restarts the daemon, then waits for Enter so the window stays open. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way.
+`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon gets a green-dot badge and the menu gets an **Install update** item; choosing it opens a terminal, shows download progress, replaces the binary, restarts the daemon, then waits for Enter so the window stays open. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way. Either route also brings the `jellytui` sitting beside the daemon level, whether or not the daemon itself had an update.
 
 ### From source
 
@@ -118,6 +118,8 @@ jellysink update         # install the latest GitHub release
 jellysink update --check # print whether a newer release exists
 
 jellytui                 # browse and play from the terminal
+jellytui update          # install the latest GitHub release
+jellytui update --check  # print whether a newer release exists
 ```
 
 Cast a movie or episode to **jellysink** from the Jellyfin web/Android/iOS app. mpv opens with your normal config. Pause, seek, volume, mute, fullscreen, audio, and subtitles work from the controlling app. A series episode continues into the next one (aired order, across seasons) until the last episode or Stop, carrying the audio and subtitle tracks you last picked with it — picked in the controlling app, or with `#` and `j` in the mpv window.
@@ -138,6 +140,13 @@ playing, but pause, seek, volume, mute and fullscreen are mpv's own keys in the 
 window, not a second set of bindings here.
 
 Quitting `jellytui` does not stop playback — it is only a remote.
+
+It checks GitHub Releases once at startup. If a newer version exists the header shows
+`↑<version> u`; pressing `u` leaves the terminal UI, installs, and starts the new version
+straight back up. It updates the `jellysink` binary too, but never stops the daemon:
+replacing the file leaves a running jellysink on the copy it already has, so playback is
+undisturbed and it picks the new version up on its next restart — which it will tell you
+how to do.
 
 ## Configuration commands
 

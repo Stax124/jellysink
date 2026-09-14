@@ -150,6 +150,25 @@ fn a_message_too_long_for_the_header_is_elided_rather_than_pushing_the_tabs_off(
 }
 
 #[test]
+fn an_offered_update_is_named_in_the_header_with_the_key_that_takes_it() {
+    let mut app = app();
+    assert!(!drawn(&app).contains("9.9.9"));
+    app.update_offer = Some("9.9.9".into());
+    let screen = drawn(&app);
+    assert!(screen.contains("↑9.9.9 u"), "{screen}");
+}
+
+#[test]
+fn an_offered_update_elides_the_message_rather_than_the_tabs() {
+    let mut app = app();
+    app.update_offer = Some("9.9.9".into());
+    app.message = "x".repeat(200);
+    let screen = drawn_at(&app, 80);
+    assert!(screen.contains(" / Search "), "{screen}");
+    assert!(screen.contains("↑9.9.9 u"), "{screen}");
+}
+
+#[test]
 fn a_caption_is_exactly_as_wide_as_the_box_it_is_drawn_into() {
     // A grid caption is a filled highlight bar and the header's message slot
     // is a fixed width, so a short string is padded and a long one elided.

@@ -7,6 +7,7 @@ pub mod json;
 pub mod logging;
 pub mod status;
 pub mod ticks;
+pub mod update;
 
 pub use error::{UsageError, usage_err};
 
