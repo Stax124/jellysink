@@ -236,8 +236,8 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
     // `q` is a character in the search box, so the quit key differs there.
     let keys = match app.screen {
         // A shelf is one row, so up and down move between the two of them.
-        Screen::Home => "←/→ move · ↑/↓ shelf · Enter play · / search · r reload · q quit",
-        Screen::Playing => "↑/↓ episode · Enter play · Esc back · r reload · q quit",
+        Screen::Home => "←/→ move · ↑/↓ shelf · Enter play · t watched · r reload · q quit",
+        Screen::Playing => "↑/↓ episode · Enter play · Esc back · t watched · r reload · q quit",
         Screen::Search => "type to search · ↑/↓ move · Enter play · Esc leave search · ^C quit",
         Screen::Logs => {
             let following = if app.log_window(area.height).1 {
@@ -257,9 +257,9 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
         }
         // In a grid every arrow moves, so back and open need naming.
         _ if app.grid_metrics().is_some() => {
-            "arrows move · Enter open · Esc back · / search · r reload · q quit"
+            "↑/↓/←/→ move · Enter open · Esc back · t watched · r reload · q quit"
         }
-        _ => "↑/↓ move · Enter play · Esc back · / search · r reload · q quit",
+        _ => "↑/↓ move · Enter play · Esc back · t watched · r reload · q quit",
     };
     frame.render_widget(
         Paragraph::new(Span::styled(keys, Style::default().fg(DIM))),

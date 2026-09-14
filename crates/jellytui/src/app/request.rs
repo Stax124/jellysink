@@ -1,6 +1,3 @@
-//! Every outbound browse request. Each spawns a task so HTTP never blocks a
-//! keystroke; the answers come back as a [`Msg`].
-
 use super::*;
 
 impl App {
@@ -142,6 +139,18 @@ impl App {
         if spawned > 0 {
             self.cover_ready_at = Some(tokio::time::Instant::now() + COVER_THROTTLE);
         }
+    }
+
+    pub(super) fn set_played(&self, item_id: String, played: bool) {
+        tracing::info!(%item_id, played, "marking watched");
+        let (api, tx) = (self.api.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let msg = match api.set_played(&item_id, played).await {
+                Ok(()) => Msg::Watched,
+                Err(e) => Msg::Error(format!("{e:#}")),
+            };
+            let _ = tx.send(msg);
+        });
     }
 
     pub(super) fn schedule_search(&mut self) {

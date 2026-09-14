@@ -29,6 +29,10 @@ authoritative about, and the second one is always the stale one. `cast.rs` still
 parses the full vocabulary — the web app, a phone and MPRIS all send it — so
 that coverage belongs in `cast_test.rs`, not beside a sender.
 
+The table is session commands, and `t` (`Api::set_played`) is not one: it writes
+user data straight to the server and the daemon never sees it, which is also why
+it works with nothing playing and no daemon running at all.
+
 The one capability with no mpv equivalent is Next when the following episode is
 not yet loaded into mpv's window (`NextNotInMpv`); stubs normally keep an entry
 either side, so it is reachable from the web app and rare in practice.
@@ -141,6 +145,11 @@ Next Up are what finishing an episode invalidates, and they are rarely the
 screen that was up when it finished. `refresh` (the `r` key) is the same
 `reload_current_screen` call followed by a poll, so the two cannot drift.
 
+`reload_screen_and_home` has a second caller: a successful `t` reaches it too,
+because marking something watched invalidates exactly what finishing it does.
+There the reload is what makes the tick appear, so it is not deferred — the
+server has already answered.
+
 The cost is one duplicate pair of requests when the Playing screen is up as an
 episode hands over: the existing `load_playing` chain fires on the change
 itself. That is deliberate — the immediate fetch is what fills the Playing
@@ -159,8 +168,9 @@ retired by the next keypress.
 `render_hint` draws a `Paragraph` with no wrap, so an overrun is cut mid-word
 with no ellipsis and the bindings nearest the end stop existing for the user —
 `q quit` sits at the end of most rows. That budget is why the rows name arrows
-rather than `h`/`j`/`k`/`l`: the vim keys are bound, and spending columns on a
-second spelling of a key that already has one buys nothing. `g`/`G` is the
+rather than `h`/`j`/`k`/`l`, and why none of them names `/`: the vim keys are
+bound and Search is a header tab, and spending columns on a second spelling of a
+key that already has one buys nothing. `g`/`G` is the
 exception and stays visible in the log pane, because no arrow reaches top or
 bottom.
 

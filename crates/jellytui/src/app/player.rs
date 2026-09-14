@@ -60,7 +60,8 @@ impl App {
         // Firing before arming is what makes the deferral one poll rather than
         // none, so the read cannot outrun the daemon's report.
         if std::mem::take(&mut self.reload_due) {
-            self.reload_after_playback();
+            tracing::info!(screen = ?self.screen, "reloading after a playback change");
+            self.reload_screen_and_home();
         }
         self.reload_due = changed;
         let Some(item_id) = item_id else {
@@ -76,10 +77,9 @@ impl App {
         }
     }
 
-    /// Home is reloaded whatever the screen: finishing an episode invalidates
-    /// Continue Watching and Next Up, rarely the screen that was up.
-    fn reload_after_playback(&mut self) {
-        tracing::info!(screen = ?self.screen, "reloading after a playback change");
+    /// Home is reloaded whatever the screen: a watched item leaves Continue
+    /// Watching and Next Up, and those are rarely the screen that is up.
+    pub(super) fn reload_screen_and_home(&mut self) {
         self.reload_current_screen();
         if self.screen != Screen::Home {
             self.load_home();

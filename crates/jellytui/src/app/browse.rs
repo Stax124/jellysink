@@ -242,6 +242,16 @@ impl App {
         }
     }
 
+    pub(super) fn toggle_watched(&mut self) {
+        let Some((item_id, played)) = self
+            .selected_item()
+            .map(|item| (item.id.clone(), item.played()))
+        else {
+            return;
+        };
+        self.set_played(item_id, !played);
+    }
+
     pub(super) fn back(&mut self) {
         match self.screen {
             Screen::Search => {

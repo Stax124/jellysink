@@ -141,6 +141,12 @@ impl Api {
         self.send(self.http.post(&url), "POST", &url).await
     }
 
+    /// A `DELETE` whose parameters all live in the query string.
+    pub(crate) async fn delete(&self, path: &str) -> color_eyre::Result<reqwest::Response> {
+        let url = format!("{}{path}", self.server);
+        self.send(self.http.delete(&url), "DELETE", &url).await
+    }
+
     pub(crate) async fn get_json(&self, path: &str) -> color_eyre::Result<serde_json::Value> {
         let resp = self
             .get(path)

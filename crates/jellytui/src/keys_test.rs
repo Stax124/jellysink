@@ -24,6 +24,8 @@ fn letters_are_commands_while_browsing_and_text_while_searching() {
     // And a year typed into the search box must not switch tabs.
     assert_eq!(map(press('3'), false), Some(Intent::Playing));
     assert_eq!(map(press('3'), true), Some(Intent::Type('3')));
+    assert_eq!(map(press('t'), false), Some(Intent::ToggleWatched));
+    assert_eq!(map(press('t'), true), Some(Intent::Type('t')));
 }
 
 #[test]

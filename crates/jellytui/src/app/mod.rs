@@ -252,6 +252,7 @@ impl App {
             Intent::Enter => self.enter(),
             Intent::Back => self.back(),
             Intent::Refresh => self.refresh(),
+            Intent::ToggleWatched => self.toggle_watched(),
             Intent::Type(c) => {
                 self.query.push(c);
                 self.schedule_search();
