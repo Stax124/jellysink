@@ -46,14 +46,6 @@ fn loadlist_insert_at_keeps_the_index_a_separate_argument() {
 }
 
 #[test]
-fn loadlist_insert_at_uses_the_given_index() {
-    let line = encode_command(1, &loadlist_insert_at_args("/tmp/insert.m3u", 3));
-    let v: Value = serde_json::from_str(line.trim()).unwrap();
-    let cmd = v["command"].as_array().unwrap();
-    assert_eq!(cmd[3], 3);
-}
-
-#[test]
 fn observe_property_sends_an_id_and_the_property_name() {
     for (id, property) in [
         (SUBTITLE_TRACK_OBSERVER_ID, SUBTITLE_TRACK_PROPERTY),

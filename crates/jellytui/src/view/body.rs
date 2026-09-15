@@ -76,7 +76,7 @@ pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
     let (area, rail_area) = rail::split(area);
-    render_list(frame, area, &title, &level.items, level.selected, true);
+    render_list(frame, area, &title, &level.items, level.selected);
     if let Some(rail_area) = rail_area {
         rail::render(
             frame,
@@ -107,7 +107,6 @@ pub(super) fn render_search(app: &App, frame: &mut Frame, area: Rect) {
         &title,
         &app.results.items,
         app.results.selected,
-        true,
     );
     if let Some(rail_area) = rail_area {
         rail::render(
@@ -119,18 +118,10 @@ pub(super) fn render_search(app: &App, frame: &mut Frame, area: Rect) {
     }
 }
 
-fn render_list(
-    frame: &mut Frame,
-    area: Rect,
-    title: &str,
-    items: &[Item],
-    selected: usize,
-    focused: bool,
-) {
-    let border = Style::default().fg(if focused { ACCENT } else { DIM });
+fn render_list(frame: &mut Frame, area: Rect, title: &str, items: &[Item], selected: usize) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(border)
+        .border_style(Style::default().fg(ACCENT))
         .title(format!(" {title} "))
         .border_type(BorderType::Rounded);
 
@@ -149,7 +140,7 @@ fn render_list(
             .add_modifier(Modifier::REVERSED | Modifier::BOLD),
     );
     let mut state = ListState::default();
-    state.select(focused.then_some(selected));
+    state.select(Some(selected));
     frame.render_stateful_widget(list, area, &mut state);
 }
 

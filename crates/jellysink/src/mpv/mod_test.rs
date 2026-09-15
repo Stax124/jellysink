@@ -26,8 +26,9 @@ async fn ipc_roundtrip_against_fake_socket() {
             json!({"error":"success","data":true,"request_id": id})
         );
         reader.get_mut().write_all(reply.as_bytes()).await.unwrap();
-        // keep the socket open until the client is done
-        sleep(Duration::from_millis(200)).await;
+        // Hold the socket open until the client closes it.
+        let mut rest = String::new();
+        let _ = reader.read_line(&mut rest).await;
     });
 
     let stream = UnixStream::connect(&sock).await.unwrap();

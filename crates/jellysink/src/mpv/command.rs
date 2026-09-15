@@ -50,7 +50,6 @@ pub(crate) fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
 /// keys off; `always` unloads nothing and never emits it.
 pub(crate) const KEEP_OPEN: &str = "yes";
 
-/// Highest mpv subtitle track id (`sid`) in a track-list, typically after `sub-add`.
 pub(crate) fn max_subtitle_track_id_from_track_list(list: &Value) -> i64 {
     let mut max = 0i64;
     if let Some(arr) = list.as_array() {
@@ -73,8 +72,10 @@ impl MpvSession {
     ) -> color_eyre::Result<()> {
         // Since mpv 0.38 loadfile's 4th argument is an insert index, not an
         // options map, so force-media-title has to go through a property.
-        if let Some(title) = title {
-            let _ = self.set_property("force-media-title", json!(title)).await;
+        if let Some(title) = title
+            && let Err(e) = self.set_property("force-media-title", json!(title)).await
+        {
+            tracing::warn!("could not set force-media-title: {e}");
         }
         self.command(vec![json!("loadfile"), json!(url), json!("replace")])
             .await?;
@@ -109,8 +110,7 @@ impl MpvSession {
             .await
     }
 
-    /// Writes an M3U next to the IPC socket, loads it, then removes it. The
-    /// file is what carries each entry's title.
+    /// The M3U file is what carries each entry's title.
     async fn loadlist(
         &mut self,
         path: &Path,
@@ -123,7 +123,9 @@ impl MpvSession {
             None => loadlist_append_args(&path.to_string_lossy()).to_vec(),
         };
         let result = self.command(args).await;
-        let _ = tokio::fs::remove_file(path).await;
+        if let Err(e) = tokio::fs::remove_file(path).await {
+            tracing::warn!("could not remove {}: {e}", path.display());
+        }
         result?;
         Ok(())
     }
@@ -192,8 +194,8 @@ impl MpvSession {
     }
 
     pub(crate) async fn add_volume(&mut self, delta: i64) -> color_eyre::Result<i64> {
-        let cur = self.get_f64("volume").await? as i64;
-        let next = (cur + delta).clamp(0, 100);
+        let current = self.get_f64("volume").await? as i64;
+        let next = (current + delta).clamp(0, 100);
         self.set_volume(next).await?;
         Ok(next)
     }
@@ -267,8 +269,8 @@ impl MpvSession {
     }
 
     pub(crate) async fn toggle_fullscreen(&mut self) -> color_eyre::Result<()> {
-        let fs = self.get_bool("fullscreen").await?;
-        self.set_property("fullscreen", json!(!fs)).await
+        let fullscreen = self.get_bool("fullscreen").await?;
+        self.set_property("fullscreen", json!(!fullscreen)).await
     }
 
     pub(crate) async fn time_pos(&mut self) -> color_eyre::Result<f64> {

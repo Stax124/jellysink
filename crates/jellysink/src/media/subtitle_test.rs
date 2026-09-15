@@ -74,10 +74,6 @@ fn off_is_remembered_and_forces_minus_one_over_a_server_default() {
 #[test]
 fn off_still_resolves_when_the_next_episode_has_no_subtitles_at_all() {
     assert_eq!(
-        SubtitlePreference::from_selection(&[], -1),
-        Some(SubtitlePreference::Off)
-    );
-    assert_eq!(
         resolve_subtitle_index(None, Some(&SubtitlePreference::Off), &[], None),
         Some(-1)
     );

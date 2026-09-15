@@ -63,7 +63,11 @@ impl MpvSession {
                 .await
                 .wrap_err("creating mpv socket dir")?;
         }
-        let _ = tokio::fs::remove_file(&socket).await;
+        if let Err(e) = tokio::fs::remove_file(&socket).await
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!("could not remove stale {}: {e}", socket.display());
+        }
 
         let mut cmd = Command::new(mpv_path);
         cmd.arg(format!("--input-ipc-server={}", socket.display()))
@@ -225,7 +229,8 @@ async fn ipc_loop(
                             tracing::debug!(evicted, "dropped mpv IPC requests the caller gave up on");
                         }
                         pending.insert(id, Pending { tx: reply });
-                        if writer.write_all(line.as_bytes()).await.is_err() {
+                        if let Err(e) = writer.write_all(line.as_bytes()).await {
+                            tracing::warn!("mpv IPC write failed: {e}");
                             break;
                         }
                     }
@@ -253,7 +258,7 @@ async fn ipc_loop(
                                     break;
                                 }
                             }
-                            Err(_) => {}
+                            Err(e) => tracing::warn!("unparseable mpv IPC line: {e:#}"),
                         }
                     }
                     Ok(None) | Err(_) => {

@@ -625,16 +625,13 @@ async fn keep_open_holds_the_last_item_and_says_nothing() {
     mpv.start_current("Only").await;
 
     mpv.session.seek_absolute(2.9).await.unwrap();
-    // Nothing announces the end of the last item, so there is nothing to wait
-    // on but the clock.
-    sleep(Duration::from_secs(2)).await;
+    wait_until!(mpv, "eof-reached becomes true", |session| session
+        .get_property("eof-reached")
+        .await
+        .is_ok_and(|reached| reached == json!(true)));
 
     // With nothing left to autoplay, `keep-open` holds the last frame and mpv
     // emits no `end-file` at all -- the runtime must not wait for one.
-    assert_eq!(
-        mpv.session.get_property("eof-reached").await.unwrap(),
-        json!(true)
-    );
     mpv.expect_no_event(Duration::from_millis(500)).await;
     assert_eq!(mpv.session.playlist_pos().await.unwrap(), 0);
 }

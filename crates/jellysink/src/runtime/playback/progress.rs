@@ -22,8 +22,8 @@ impl Runtime {
         self.send_start();
     }
 
-    /// Pulls position, pause, volume and mute out of mpv, keeping the previous
-    /// value per failed read: a half-dead IPC socket must not rewrite state.
+    /// Keeps the previous value per failed read: a half-dead IPC socket must
+    /// not rewrite state.
     async fn sample_mpv_state(&mut self) {
         let Some(mpv) = self.mpv.as_mut() else {
             return;
@@ -43,18 +43,18 @@ impl Runtime {
     }
 
     fn snapshot(&self, position_ticks: i64) -> Option<PlayingState> {
-        let prep = self.current.as_ref()?;
+        let prepared = self.current.as_ref()?;
         let item_id = self.item_id.as_ref()?;
         Some(PlayingState {
             item_id: item_id.clone(),
-            media_source_id: prep.media_source_id.clone(),
-            play_session_id: prep.play_session_id.clone(),
+            media_source_id: prepared.media_source_id.clone(),
+            play_session_id: prepared.play_session_id.clone(),
             position_ticks,
             is_paused: self.paused,
             is_muted: self.muted,
             volume: self.volume,
-            audio_stream_index: prep.audio_stream_index.unwrap_or(-1),
-            subtitle_stream_index: prep.subtitle_stream_index.unwrap_or(-1),
+            audio_stream_index: prepared.audio_stream_index.unwrap_or(-1),
+            subtitle_stream_index: prepared.subtitle_stream_index.unwrap_or(-1),
             can_seek: true,
             now_playing_queue: self.window.now_playing_queue(),
         })

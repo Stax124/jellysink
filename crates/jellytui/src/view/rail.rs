@@ -12,7 +12,7 @@ use ratatui_image::FontSize;
 use ratatui_image::Image;
 
 /// Below this the rail would leave the list too narrow to read, so the screen
-/// stays the full-width list it is today.
+/// stays a full-width list.
 const MIN_BODY_WIDTH: u16 = 90;
 
 /// Splits a body area into the list and the rail beside it. Half each: a row is

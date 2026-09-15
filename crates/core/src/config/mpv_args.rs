@@ -3,8 +3,8 @@ use super::atomic_write;
 use color_eyre::eyre::WrapErr;
 use std::fs;
 
-/// Extra mpv argv, re-read on every spawn. One argument per line (`--title=My
-/// Movie` is one line, not two words); blank lines and `#` comments ignored.
+/// Extra mpv argv, re-read on every spawn. Whitespace-separated; blank lines
+/// and `#` comments are ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MpvArgs(pub Vec<String>);
 
@@ -36,7 +36,6 @@ impl MpvArgs {
     }
 }
 
-/// Split a value into mpv arguments. Newline-separated, ignoring blank lines and `#` comments.
 fn parse_mpv_args(value: &str) -> Vec<String> {
     value
         .lines()

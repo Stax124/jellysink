@@ -26,11 +26,11 @@ async fn fetch_prepared(
             None
         }
     };
-    let mut prep = media::prepare_play(&api.server, item_id, &info, req, &api.token)?;
+    let mut prepared = media::prepare_play(&api.server, item_id, &info, req, &api.token)?;
     if let Some(ref v) = item {
-        prep.title = media::display_title(v);
+        prepared.title = media::display_title(v);
     }
-    Ok((prep, item))
+    Ok((prepared, item))
 }
 
 impl Runtime {
@@ -166,35 +166,39 @@ impl Runtime {
         req: &PlayRequest,
     ) -> color_eyre::Result<(PreparedPlay, Option<Value>)> {
         if req.is_plain()
-            && let Some(prep) = self.prepared.get(item_id).cloned()
+            && let Some(prepared) = self.prepared.get(item_id).cloned()
         {
-            return Ok((self.with_remembered_tracks(prep, req), None));
+            return Ok((self.with_remembered_tracks(prepared, req), None));
         }
 
-        let (prep, item) = fetch_prepared(&self.api, item_id, req).await?;
+        let (prepared, item) = fetch_prepared(&self.api, item_id, req).await?;
         if let Some(ref v) = item {
             self.titles
                 .insert(item_id.to_string(), media::display_title(v));
         }
         // The server's answer, not the overridden one: a later fallback must
         // mean "what the server said", not an earlier play's preference.
-        self.prepared.insert(item_id.to_string(), prep.clone());
-        Ok((self.with_remembered_tracks(prep, req), item))
+        self.prepared.insert(item_id.to_string(), prepared.clone());
+        Ok((self.with_remembered_tracks(prepared, req), item))
     }
 
-    fn with_remembered_tracks(&self, mut prep: PreparedPlay, req: &PlayRequest) -> PreparedPlay {
-        prep.subtitle_stream_index = media::resolve_subtitle_index(
+    fn with_remembered_tracks(
+        &self,
+        mut prepared: PreparedPlay,
+        req: &PlayRequest,
+    ) -> PreparedPlay {
+        prepared.subtitle_stream_index = media::resolve_subtitle_index(
             req.subtitle_stream_index,
             self.subtitle.remembered.as_ref(),
-            &prep.maps.subtitles,
-            prep.subtitle_stream_index,
+            &prepared.maps.subtitles,
+            prepared.subtitle_stream_index,
         );
-        prep.audio_stream_index = media::resolve_audio_index(
+        prepared.audio_stream_index = media::resolve_audio_index(
             req.audio_stream_index,
             self.audio.remembered.as_ref(),
-            &prep.maps.audios,
-            prep.audio_stream_index,
+            &prepared.maps.audios,
+            prepared.audio_stream_index,
         );
-        prep
+        prepared
     }
 }

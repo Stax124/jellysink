@@ -2,7 +2,7 @@ pub fn ticks_to_seconds(ticks: i64) -> f64 {
     ticks as f64 / 10_000_000.0
 }
 
-pub fn seconds_to_ticks(seconds: f64) -> i64 {
+pub(crate) fn seconds_to_ticks(seconds: f64) -> i64 {
     (seconds * 10_000_000.0).round() as i64
 }
 

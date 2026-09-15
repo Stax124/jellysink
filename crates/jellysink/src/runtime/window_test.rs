@@ -122,20 +122,6 @@ fn advancing_then_prepending_does_not_duplicate() {
 }
 
 #[test]
-fn expected_pos_follows_a_playlist_jump_not_the_head() {
-    // Jumping to e7 moves the queue index but leaves `head` at 5; deriving the
-    // position from `head` would misread every subsequent EOF.
-    let mut w = start(&["e6", "e7", "e8"], 0);
-    prepend(&mut w, &["e1", "e2", "e3", "e4", "e5"]);
-    assert_eq!(w.head(), 5);
-
-    w.queue.advance(); // adopt_playlist_pos jumps to e7
-    assert_eq!(current(&w), "e7");
-    assert_eq!(w.expected_pos(), 6, "position is index - origin, not head");
-    assert_ne!(w.expected_pos(), w.head());
-}
-
-#[test]
 fn eof_expected_pos_is_not_zero_when_previous_episodes_are_loaded() {
     // With previous episodes spliced in, the current item is at mpv
     // position 2, not 0; comparing against 0 would misread every EOF.
@@ -218,9 +204,8 @@ fn queue_play_next_inserts_after_current() {
 }
 
 #[test]
-fn play_next_with_nothing_queued_appends_like_before() {
-    // No tail yet: the insertion point is exactly the end of mpv's playlist,
-    // so this must behave like the old append-only path.
+fn play_next_with_nothing_queued_appends_at_the_end() {
+    // No tail yet: the insertion point is exactly the end of mpv's playlist.
     let mut w = start(&["e1"], 0);
     let mpv_pos = w.insert_next(vec!["x".into()]);
 

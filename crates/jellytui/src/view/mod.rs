@@ -158,7 +158,7 @@ fn daemon_status(app: &App) -> Line<'static> {
     };
     Line::from(vec![
         // The leading space is the gutter that keeps a full-width message off
-        // the dot; it is invisible when there is no message.
+        // the dot.
         Span::styled(" ●", Style::default().fg(colour)),
         Span::styled(" jellysink ", Style::default().fg(DIM)),
     ])

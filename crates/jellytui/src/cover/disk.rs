@@ -1,6 +1,5 @@
-//! Covers kept between sessions: the bytes the server sent, not the protocol
-//! they were encoded into, which belongs to one rect at one cell size. Nothing
-//! here may fail a cover — every path degrades to a miss, and a miss is a fetch.
+//! Covers kept between sessions: the bytes the server sent, not the protocol they
+//! were encoded into. Nothing here may fail a cover — every path degrades to a miss.
 
 use super::CoverKey;
 use jellysink_core::config::atomic_write;

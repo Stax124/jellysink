@@ -6,7 +6,6 @@ use serde::Deserialize;
 use serde_json::json;
 use std::fmt;
 
-/// The server rejected our access token
 #[derive(Debug)]
 pub(crate) struct AuthExpired;
 
@@ -18,7 +17,6 @@ impl fmt::Display for AuthExpired {
 
 impl std::error::Error for AuthExpired {}
 
-/// Whether `err` was caused by an expired token at any depth
 pub fn is_auth_expired(err: &color_eyre::Report) -> bool {
     err.chain().any(|cause| cause.is::<AuthExpired>())
 }

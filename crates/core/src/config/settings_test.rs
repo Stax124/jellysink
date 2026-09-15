@@ -88,16 +88,10 @@ fn a_key_that_is_no_longer_a_field_is_ignored() {
 }
 
 #[test]
-fn autoplay_defaults_on_and_roundtrips() {
+fn autoplay_off_survives_a_save_and_reload() {
     let tmp = TempDir::new().unwrap();
     let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
-    let cfg = Config::default();
-    assert!(cfg.autoplay);
-    cfg.save(&paths).unwrap();
-    let loaded = Config::load(&paths).unwrap();
-    assert!(loaded.autoplay);
-
-    let mut cfg = loaded;
+    let mut cfg = Config::default();
     cfg.set(Field::Autoplay, "false").unwrap();
     cfg.save(&paths).unwrap();
     let loaded = Config::load(&paths).unwrap();

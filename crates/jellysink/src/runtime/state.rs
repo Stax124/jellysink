@@ -66,8 +66,7 @@ pub(super) struct Runtime {
     /// fetched only once an item actually starts.
     pub(super) titles: HashMap<String, String>,
 
-    /// The logged-in username, for `jellysink status` — not otherwise needed
-    /// once [`Api`] is built from `Credentials`.
+    /// The logged-in username, for `jellysink status`.
     pub(super) username: String,
     /// Published on every state change; read by `jellysink status` over the
     /// stop socket without ever reaching into a running `Runtime` directly.
@@ -173,8 +172,7 @@ impl Runtime {
         Ok(())
     }
 
-    /// PlayNext / PlayLast. With nothing playing these are just PlayNow;
-    /// otherwise they extend the queue and top mpv's playlist up.
+    /// PlayNext / PlayLast. With nothing playing these are just PlayNow.
     async fn enqueue(&mut self, item_ids: Vec<String>, where_: Enqueue) -> color_eyre::Result<()> {
         tracing::info!(n = item_ids.len(), ?where_, ids = %item_ids.join(","), "enqueue");
         if self.mpv.is_none() {
@@ -211,8 +209,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// Steps back within mpv's playlist when it has previous entries, and only
-    /// otherwise restarts at the queue's previous item.
     async fn play_previous(&mut self) -> color_eyre::Result<()> {
         // Propagated rather than defaulted to 0, which would restart the
         // current item instead of stepping back.

@@ -2,7 +2,6 @@
 
 use super::*;
 
-/// Results arriving from the spawned request tasks.
 pub(super) enum Msg {
     Home(HomePane, Vec<Item>),
     Level(usize, Vec<Item>),

@@ -9,7 +9,6 @@ pub(crate) fn app() -> App {
     app_with_logs(LogBuffer::new())
 }
 
-/// For the tests that have to put lines in the buffer the pane is reading.
 pub(crate) fn app_with_logs(logs: LogBuffer) -> App {
     let credentials = Credentials {
         server: "http://localhost:8096".into(),

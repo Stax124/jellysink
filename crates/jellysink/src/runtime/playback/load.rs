@@ -11,24 +11,31 @@ use jellysink_core::jellyfin::auth::Api;
 impl Runtime {
     pub(super) async fn load_into_existing(
         &mut self,
-        prep: &PreparedPlay,
+        prepared: &PreparedPlay,
         item_id: &str,
     ) -> color_eyre::Result<()> {
         let Some(mpv) = self.mpv.as_mut() else {
             return Err(eyre!("mpv missing during reuse"));
         };
-        let auth = apply_auth(&self.api, mpv, prep, item_id, self.window.has_next()).await;
-        mpv.loadfile(&auth.url, Some(prep.title.as_str())).await?;
+        let auth = apply_auth(&self.api, mpv, prepared, item_id, self.window.has_next()).await;
+        mpv.loadfile(&auth.url, Some(prepared.title.as_str()))
+            .await?;
         self.mpv_auth_header_set = auth.header_set;
-        let _ = mpv.set_volume(self.volume).await;
-        let _ = mpv.set_mute(self.muted).await;
-        let _ = mpv.unpause().await;
+        if let Err(e) = mpv.set_volume(self.volume).await {
+            tracing::warn!("could not restore volume in mpv: {e:#}");
+        }
+        if let Err(e) = mpv.set_mute(self.muted).await {
+            tracing::warn!("could not restore mute in mpv: {e:#}");
+        }
+        if let Err(e) = mpv.unpause().await {
+            tracing::warn!("could not unpause mpv: {e:#}");
+        }
         Ok(())
     }
 
     pub(super) async fn spawn_and_load(
         &mut self,
-        prep: &PreparedPlay,
+        prepared: &PreparedPlay,
         item_id: &str,
     ) -> color_eyre::Result<()> {
         // Re-read mpv_args on every spawn so edits apply to the next play
@@ -55,14 +62,25 @@ impl Runtime {
         }
         tracing::info!("mpv spawned");
 
-        let auth = apply_auth(&self.api, &mut mpv, prep, item_id, self.window.has_next()).await;
-        if let Err(e) = mpv.loadfile(&auth.url, Some(prep.title.as_str())).await {
+        let auth = apply_auth(
+            &self.api,
+            &mut mpv,
+            prepared,
+            item_id,
+            self.window.has_next(),
+        )
+        .await;
+        if let Err(e) = mpv.loadfile(&auth.url, Some(prepared.title.as_str())).await {
             let _ = mpv.quit_and_wait().await;
             return Err(e);
         }
         self.mpv_auth_header_set = auth.header_set;
-        let _ = mpv.set_volume(self.volume).await;
-        let _ = mpv.set_mute(self.muted).await;
+        if let Err(e) = mpv.set_volume(self.volume).await {
+            tracing::warn!("could not set volume in the new mpv: {e:#}");
+        }
+        if let Err(e) = mpv.set_mute(self.muted).await {
+            tracing::warn!("could not set mute in the new mpv: {e:#}");
+        }
 
         self.mpv_gen = self.mpv_gen.wrapping_add(1);
         let generation = self.mpv_gen;
@@ -83,15 +101,15 @@ impl Runtime {
     }
 }
 
-fn stream_url_with_token(api: &Api, item_id: &str, prep: &PreparedPlay) -> String {
-    if prep.url.contains("ApiKey=") {
-        prep.url.clone()
+fn stream_url_with_token(api: &Api, item_id: &str, prepared: &PreparedPlay) -> String {
+    if prepared.url.contains("ApiKey=") {
+        prepared.url.clone()
     } else {
         jellysink_core::jellyfin::url::direct_stream_url(
             &api.server,
             item_id,
-            &prep.media_source_id,
-            prep.live_stream_id.as_deref(),
+            &prepared.media_source_id,
+            prepared.live_stream_id.as_deref(),
             Some(&api.token),
         )
     }
@@ -107,22 +125,22 @@ struct AppliedAuth {
 async fn apply_auth(
     api: &Api,
     mpv: &mut MpvSession,
-    prep: &PreparedPlay,
+    prepared: &PreparedPlay,
     item_id: &str,
     force_url_token: bool,
 ) -> AppliedAuth {
-    if !force_url_token && prep.uses_auth_header {
+    if !force_url_token && prepared.uses_auth_header {
         match mpv.apply_auth_header(&api.mpv_auth_header_field()).await {
             Ok(()) => {
                 return AppliedAuth {
-                    url: prep.url.clone(),
+                    url: prepared.url.clone(),
                     header_set: true,
                 };
             }
             Err(e) => {
                 tracing::warn!("could not set mpv auth header ({e:#}); putting ApiKey on the URL");
                 return AppliedAuth {
-                    url: stream_url_with_token(api, item_id, prep),
+                    url: stream_url_with_token(api, item_id, prepared),
                     header_set: false,
                 };
             }
@@ -130,14 +148,13 @@ async fn apply_auth(
     }
     let _ = mpv.clear_auth_header().await;
     AppliedAuth {
-        url: stream_url_with_token(api, item_id, prep),
+        url: stream_url_with_token(api, item_id, prepared),
         header_set: false,
     }
 }
 
-/// Resume offsets only apply when positive; `None`/`0`/negative mean "start
-/// from the beginning".
-pub(crate) fn resume_seek_ticks(start_ticks: Option<i64>) -> Option<i64> {
+/// Resume offsets only apply when positive.
+pub(super) fn resume_seek_ticks(start_ticks: Option<i64>) -> Option<i64> {
     start_ticks.filter(|t| *t > 0)
 }
 

@@ -1,8 +1,7 @@
 use super::*;
 use serde_json::{Value, json};
 
-/// The json! fixtures below are the server's actual wire shape; these turn
-/// them into the typed models the code now works with.
+/// The json! fixtures are the server's actual wire shape.
 fn media_source(v: Value) -> MediaSource {
     MediaSource::deserialize(&v).expect("fixture should decode")
 }

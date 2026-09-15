@@ -15,9 +15,12 @@ fn payload_is_direct_play() {
         can_seek: true,
         now_playing_queue: Arc::new(vec![json!({"Id": "i", "PlaylistItemId": "playlistItem0"})]),
     };
-    let v = state.to_json();
-    assert_eq!(v["PlayMethod"], "DirectPlay");
-    assert_eq!(v["ItemId"], "i");
-    assert_eq!(v["VolumeLevel"], 80);
-    assert_eq!(v["NowPlayingQueue"][0]["PlaylistItemId"], "playlistItem0");
+    let payload = state.to_json();
+    assert_eq!(payload["PlayMethod"], "DirectPlay");
+    assert_eq!(payload["ItemId"], "i");
+    assert_eq!(payload["VolumeLevel"], 80);
+    assert_eq!(
+        payload["NowPlayingQueue"][0]["PlaylistItemId"],
+        "playlistItem0"
+    );
 }

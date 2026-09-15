@@ -193,12 +193,12 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
             }
             DeliveryMethod::External => match sub.delivery_url.as_deref() {
                 Some(url) => {
-                    let abs = if sub.is_external_url {
+                    let absolute_url = if sub.is_external_url {
                         url.to_string()
                     } else {
                         format!("{}{url}", server.trim_end_matches('/'))
                     };
-                    maps.subtitle_url.insert(jellyfin_index, abs);
+                    maps.subtitle_url.insert(jellyfin_index, absolute_url);
                     true
                 }
                 None => {

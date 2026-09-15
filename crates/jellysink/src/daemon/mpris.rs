@@ -300,8 +300,8 @@ async fn emit_changes(connection: zbus::Connection, mut status_rx: watch::Receiv
     }
 }
 
-/// Fail-open, exactly like the tray: no session bus (or another instance
-/// already owning the MPRIS name) is a warning, not a fatal error.
+/// Fail-open, like the tray: no session bus, or another instance already
+/// owning the MPRIS name, is a warning and not a fatal error.
 pub(crate) async fn start(
     status_rx: watch::Receiver<PlayerStatus>,
     cmd_tx: mpsc::UnboundedSender<CastEvent>,
@@ -335,3 +335,7 @@ pub(crate) async fn start(
 #[cfg(test)]
 #[path = "mpris_test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mpris_integration_test.rs"]
+mod integration_tests;

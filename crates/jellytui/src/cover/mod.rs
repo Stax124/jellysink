@@ -70,9 +70,8 @@ impl Covers {
         })
     }
 
-    /// Takes the terminal's current pixels per cell and encodes against that
-    /// grid from here on. A key carries the cell, so everything encoded against
-    /// the previous one goes: it could never be looked up again.
+    /// A key carries the cell, so everything encoded against the previous one
+    /// goes: it could never be looked up again.
     pub(super) fn set_cell_size(&mut self, cell: Option<Size>) {
         let Some(cell) = cell else { return };
         if !self.is_new_grid(cell) {
