@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=jellytui
+GenericName=Jellyfin Library Browser
+Comment=Browse your Jellyfin library and cast to jellysink
+Exec=jellytui
+Icon=jellysink
+Terminal=true
+Categories=AudioVideo;Video;Player;ConsoleOnly;
+Keywords=Jellyfin;cast;mpv;
+StartupNotify=false

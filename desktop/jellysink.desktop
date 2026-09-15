@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=jellysink
+GenericName=Jellyfin Cast Target
+Comment=Receive Jellyfin streams and play them in mpv
+Exec=jellysink run
+Icon=jellysink
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=Jellyfin;cast;mpv;
+StartupNotify=false

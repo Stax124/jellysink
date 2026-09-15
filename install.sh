@@ -5,7 +5,8 @@
 #
 # Downloads the latest jellysink release from GitHub and installs the
 # binary to ~/.local/bin (the path the user systemd unit expects).
-# Also installs systemd/jellysink.service unless --no-systemd is passed.
+# Also installs systemd/jellysink.service unless --no-systemd is passed,
+# and the two desktop entries unless --no-desktop is passed.
 
 set -e
 
@@ -14,7 +15,11 @@ BINARY="jellysink"
 TUI_BINARY="jellytui"
 INSTALL_DIR="${HOME}/.local/bin"
 UNIT_DIR="${HOME}/.config/systemd/user"
+APP_DIR="${HOME}/.local/share/applications"
+ICON_ROOT="${HOME}/.local/share/icons/hicolor"
+ICON_DIR="${ICON_ROOT}/scalable/apps"
 INSTALL_UNIT="1"
+INSTALL_DESKTOP="1"
 
 # --- helpers ---
 
@@ -35,15 +40,20 @@ parse_args() {
                 echo "Usage: install.sh [OPTIONS]"
                 echo ""
                 echo "Downloads the latest jellysink release and installs it to ~/.local/bin."
-                echo "Also installs a user systemd unit unless --no-systemd is passed."
+                echo "Also installs a user systemd unit unless --no-systemd is passed,"
+                echo "and application menu entries unless --no-desktop is passed."
                 echo ""
                 echo "Options:"
                 echo "  --help, -h       Show this help message"
                 echo "  --no-systemd     Skip installing the user systemd unit"
+                echo "  --no-desktop     Skip installing the application menu entries"
                 exit 0
                 ;;
             --no-systemd)
                 INSTALL_UNIT=""
+                ;;
+            --no-desktop)
+                INSTALL_DESKTOP=""
                 ;;
             *)
                 warn "Unknown option: $1"
@@ -87,6 +97,8 @@ fetch_latest_tag() {
         | tr -d '\r\n')"
 
     [ -n "$TAG" ] || err "Could not determine latest release. Check https://github.com/${REPO}/releases"
+
+    RAW="https://raw.githubusercontent.com/${REPO}/${TAG}"
 }
 
 # --- checksum verification ---
@@ -162,7 +174,7 @@ warn_if_not_on_path() {
 install_unit() {
     [ -n "$INSTALL_UNIT" ] || return 0
 
-    UNIT_URL="https://raw.githubusercontent.com/${REPO}/${TAG}/systemd/jellysink.service"
+    UNIT_URL="${RAW}/systemd/jellysink.service"
     mkdir -p "$UNIT_DIR"
 
     info "Installing user systemd unit..."
@@ -178,6 +190,41 @@ install_unit() {
     fi
 }
 
+install_desktop() {
+    [ -n "$INSTALL_DESKTOP" ] || return 0
+
+    mkdir -p "$APP_DIR" "$ICON_DIR"
+
+    info "Installing desktop entries..."
+    for entry in "$BINARY" "$TUI_BINARY"; do
+        target="${APP_DIR}/${entry}.desktop"
+        if ! curl -fsSL "${RAW}/desktop/${entry}.desktop" -o "$target"; then
+            rm -f "$target"
+            warn "No ${entry}.desktop in release ${TAG} — skipping"
+            continue
+        fi
+        # The desktop environment that launches the entry need not have
+        # ${INSTALL_DIR} on its PATH.
+        sed -i "s|^Exec=${entry}|Exec=${INSTALL_DIR}/${entry}|" "$target"
+        info "Installed ${target}"
+    done
+
+    # Both entries name this icon.
+    if ! curl -fsSL "${RAW}/assets/logo.svg" -o "${ICON_DIR}/${BINARY}.svg"; then
+        rm -f "${ICON_DIR}/${BINARY}.svg"
+        warn "Could not download the icon from ${RAW}/assets/logo.svg"
+    fi
+
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$APP_DIR" 2>/dev/null \
+            || warn "update-desktop-database failed; the entries may need a re-login to appear"
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -qtf "$ICON_ROOT" 2>/dev/null \
+            || warn "gtk-update-icon-cache failed; the icon may need a re-login to appear"
+    fi
+}
+
 # --- main ---
 
 main() {
@@ -189,6 +236,7 @@ main() {
     install_binary "$TUI_BINARY" optional
     warn_if_not_on_path
     install_unit
+    install_desktop
 
     if ! command -v mpv >/dev/null 2>&1; then
         warn "mpv is not on PATH. jellysink needs mpv to play — install it from your distro."

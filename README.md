@@ -67,14 +67,14 @@ Linux (x86_64 or aarch64). Requires [`mpv`](https://mpv.io/) **0.38 or newer** â
 curl -fsSL https://raw.githubusercontent.com/Stax124/jellysink/main/install.sh | sh
 ```
 
-This installs musl binaries to `~/.local/bin/jellysink` and `~/.local/bin/jellytui`, plus a user systemd unit. Then:
+This installs musl binaries to `~/.local/bin/jellysink` and `~/.local/bin/jellytui`, a user systemd unit, and application menu entries for both under `~/.local/share`. Then:
 
 ```sh
 jellysink login
 systemctl --user enable --now jellysink
 ```
 
-Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink run` yourself.
+Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink run` yourself. `--no-desktop` skips the menu entries.
 
 `jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon gets a green-dot badge and the menu gets an **Install update** item; choosing it opens a terminal, shows download progress, replaces the binary, restarts the daemon, then waits for Enter so the window stays open. `jellysink update` installs from the CLI and **stops** a running instance â€” start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way. Either route also brings the `jellytui` sitting beside the daemon level, whether or not the daemon itself had an update.
 
@@ -95,6 +95,9 @@ cargo build --release
 install -Dm755 target/x86_64-unknown-linux-musl/release/jellysink ~/.local/bin/jellysink
 install -Dm755 target/x86_64-unknown-linux-musl/release/jellytui ~/.local/bin/jellytui
 install -Dm644 systemd/jellysink.service ~/.config/systemd/user/jellysink.service
+install -Dm644 desktop/jellysink.desktop ~/.local/share/applications/jellysink.desktop
+install -Dm644 desktop/jellytui.desktop ~/.local/share/applications/jellytui.desktop
+install -Dm644 assets/logo.svg ~/.local/share/icons/hicolor/scalable/apps/jellysink.svg
 ```
 
 On an aarch64 host, `export CARGO_BUILD_TARGET=aarch64-unknown-linux-musl` first; it
