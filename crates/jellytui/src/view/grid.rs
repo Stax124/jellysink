@@ -126,8 +126,7 @@ pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape
     }
 }
 
-/// Scrolls by the least that brings the selection back on screen, which is
-/// what stops the grid jumping a whole page when the cursor moves up one row.
+/// Scrolls by the least that brings the selection back on screen.
 pub(crate) fn scroll_to(offset: usize, selected: usize, metrics: &Metrics) -> usize {
     let row = selected / metrics.columns;
     if row < offset {
@@ -157,8 +156,7 @@ pub(crate) struct View<'a> {
     pub(crate) items: &'a [Item],
     pub(crate) selected: usize,
     pub(crate) offset: usize,
-    /// Rows of tiles to size the covers for: [`TARGET_ROWS`] for a level that
-    /// owns the body, [`SHELF_ROWS`] for a Home shelf that owns half of it.
+    /// Rows of tiles to size the covers for.
     pub(crate) rows: u16,
     pub(crate) focused: bool,
 }
@@ -293,7 +291,7 @@ fn watched_rule(item: &Item, width: u16) -> Line<'static> {
 }
 
 /// A tile is only as wide as its cover, so this is the two facts worth that
-/// row. Progress is the rule above, and the count says what a tick used to.
+/// row. Progress is the rule above, and the count says what a tick would.
 fn caption_meta(item: &Item) -> String {
     [
         item.unplayed_count().map(|count| format!("{count} left")),

@@ -116,9 +116,9 @@ impl ksni::Tray for CastTray {
 
     fn tool_tip(&self) -> ksni::ToolTip {
         match &self.pending_version {
-            Some(v) => ksni::ToolTip {
+            Some(version) => ksni::ToolTip {
                 title: APP_NAME.into(),
-                description: format!("Update available (v{v})"),
+                description: format!("Update available (v{version})"),
                 ..Default::default()
             },
             None => Default::default(),
@@ -128,10 +128,10 @@ impl ksni::Tray for CastTray {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::*;
         let mut items = Vec::new();
-        if let Some(v) = &self.pending_version {
+        if let Some(version) = &self.pending_version {
             items.push(
                 StandardItem {
-                    label: format!("Install update (v{v})"),
+                    label: format!("Install update (v{version})"),
                     activate: Box::new(|this: &mut Self| {
                         this.apply.fire();
                     }),

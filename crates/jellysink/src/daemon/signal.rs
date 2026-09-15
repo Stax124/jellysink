@@ -1,9 +1,8 @@
 use std::sync::Arc;
 use tokio::sync::watch;
 
-/// A latching one-way signal: shutdown, restart, or "install the update".
-/// Latching because a receiver re-creates its future across awaits as long as
-/// mpv's 10 s IPC timeout, and would drop a Quit landing in that window.
+/// A latching one-way signal: a receiver re-creates its future across awaits as
+/// long as mpv's 10 s IPC timeout, and would drop a Quit landing in that window.
 #[derive(Clone, Debug)]
 pub(crate) struct Signal {
     tx: Arc<watch::Sender<bool>>,
@@ -21,8 +20,8 @@ impl Signal {
         self.tx.send_replace(true);
     }
 
-    /// Clears the latch, returning whether it was set. For edge-triggered
-    /// signals (the tray's "Install update"), which run again on the next click.
+    /// Clears the latch, returning whether it was set, so an edge-triggered
+    /// signal re-arms for the next fire.
     pub(crate) fn take(&self) -> bool {
         self.tx.send_replace(false)
     }

@@ -217,8 +217,6 @@ fn a_shelf_fits_a_row_of_tiles_into_half_a_body_however_short_it_is() {
 
 #[test]
 fn a_shelf_spends_the_width_the_cover_cannot_use_on_more_tiles() {
-    // The height binds a shelf, so a tile widened to the level floor would
-    // hold the same cover and fit fewer of them.
     let area = Rect::new(0, 0, 88, 10);
     let shelf = metrics(area, 2.0 / 3.0, FONT_SIZE, full(SHELF_ROWS));
     assert!(

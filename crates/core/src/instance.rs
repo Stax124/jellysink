@@ -83,8 +83,8 @@ pub fn request_status(paths: &Paths) -> color_eyre::Result<PlayerStatus> {
     if !sock.exists() {
         return Err(usage_err("jellysink is not running"));
     }
-    let mut stream =
-        StdUnixStream::connect(&sock).wrap_err("connecting to the running instance")?;
+    let mut stream = StdUnixStream::connect(&sock)
+        .wrap_err_with(|| format!("connecting to {}", sock.display()))?;
     stream
         .write_all(b"status\n")
         .wrap_err("sending status request to the running instance")?;
@@ -103,8 +103,8 @@ fn write_instance_command(paths: &Paths, msg: &[u8]) -> color_eyre::Result<()> {
     if !sock.exists() {
         return Err(usage_err("jellysink is not running"));
     }
-    let mut stream =
-        StdUnixStream::connect(&sock).wrap_err("connecting to the running instance")?;
+    let mut stream = StdUnixStream::connect(&sock)
+        .wrap_err_with(|| format!("connecting to {}", sock.display()))?;
     stream
         .write_all(msg)
         .wrap_err_with(|| format!("writing to {}", sock.display()))?;

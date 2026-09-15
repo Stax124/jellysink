@@ -3,7 +3,6 @@
 use color_eyre::eyre::{WrapErr, eyre};
 use self_update::ReleaseAsset;
 use self_update::backends::github;
-use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -135,16 +134,10 @@ pub fn restart_exe_path(current: &Path) -> PathBuf {
     }
 }
 
-fn restart_command(exe: &Path, args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> Command {
-    let mut cmd = Command::new(exe);
-    cmd.args(args);
-    cmd
-}
-
 /// Replace this process with `exe`. Returns only on failure.
 pub fn exec_updated(exe: &Path) -> std::io::Error {
     use std::os::unix::process::CommandExt;
-    restart_command(exe, std::env::args_os().skip(1)).exec()
+    Command::new(exe).args(std::env::args_os().skip(1)).exec()
 }
 
 #[cfg(test)]

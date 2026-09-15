@@ -5,7 +5,7 @@ mod load;
 mod progress;
 mod tracks;
 
-pub(super) use load::resume_seek_ticks;
+use load::resume_seek_ticks;
 
 use crate::media::PlayRequest;
 use crate::mpv::SelectedTrack;
@@ -38,7 +38,7 @@ impl Runtime {
             self.transitioning = true;
         }
 
-        let (prep, item) = match self.prepare_item(&item_id, req).await {
+        let (prepared, item) = match self.prepare_item(&item_id, req).await {
             Ok(pair) => pair,
             Err(e) => {
                 tracing::error!("{e:#}");
@@ -56,17 +56,17 @@ impl Runtime {
         }
 
         if reuse {
-            if let Err(e) = self.load_into_existing(&prep, &item_id).await {
+            if let Err(e) = self.load_into_existing(&prepared, &item_id).await {
                 tracing::error!("{e:#}");
                 self.stop_playback(false).await;
                 return Ok(());
             }
-        } else if let Err(e) = self.spawn_and_load(&prep, &item_id).await {
+        } else if let Err(e) = self.spawn_and_load(&prepared, &item_id).await {
             tracing::error!("{e:#}");
             return Ok(());
         }
 
-        self.current = Some(prep);
+        self.current = Some(prepared);
         self.item_id = Some(item_id);
         self.paused = false;
         self.stopping = false;
@@ -110,15 +110,16 @@ impl Runtime {
         tracing::info!(item = %item_id, index = queue_index, "adopted mpv playlist jump");
         // Via `prepare_item` (which caches plain requests itself) so remembered
         // tracks also reach a playlist jump and mpv's own autoplay.
-        let (prep, _) = self.prepare_item(&item_id, &PlayRequest::default()).await?;
-        self.current = Some(prep);
+        let (prepared, _) = self.prepare_item(&item_id, &PlayRequest::default()).await?;
+        self.current = Some(prepared);
         self.item_id = Some(item_id);
         self.last_ticks = 0;
         self.external_subtitle_track_ids.clear();
         if let Some(title) = self.current.as_ref().map(|p| p.title.clone())
             && let Some(mpv) = self.mpv.as_mut()
+            && let Err(e) = mpv.set_property("force-media-title", json!(title)).await
         {
-            let _ = mpv.set_property("force-media-title", json!(title)).await;
+            tracing::warn!("could not set mpv's media title: {e:#}");
         }
         self.send_start();
         Ok(())
@@ -151,7 +152,6 @@ impl Runtime {
             let _ = mpv.quit_and_wait().await;
         }
         self.mpv_gen = self.mpv_gen.wrapping_add(1);
-        // Dropped, and so aborted.
         self.mpv_events = None;
         self.current = None;
         self.item_id = None;

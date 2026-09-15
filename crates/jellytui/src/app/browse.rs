@@ -208,8 +208,6 @@ impl App {
         }
     }
 
-    /// Moves the focus between the shelves. Each keeps its own cursor, so
-    /// coming back lands where it was left.
     pub(super) fn focus_shelf(&mut self, direction: isize) {
         if self.screen != Screen::Home {
             return;
@@ -299,7 +297,10 @@ impl App {
             }
             Screen::Search => self.run_search(),
             Screen::Playing => {
-                if let Some(item_id) = self.now_playing().map(|np| np.item_id.clone()) {
+                if let Some(item_id) = self
+                    .now_playing()
+                    .map(|now_playing| now_playing.item_id.clone())
+                {
                     self.load_playing(item_id);
                 }
             }

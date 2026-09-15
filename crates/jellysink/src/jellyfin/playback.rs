@@ -19,14 +19,12 @@ pub(crate) async fn playback_info(
     item_id: &str,
     req: &PlayRequest,
 ) -> color_eyre::Result<Value> {
-    let PlayRequest {
+    let &PlayRequest {
         start_ticks,
         audio_stream_index,
         subtitle_stream_index,
-        media_source_id,
+        ref media_source_id,
     } = req;
-    let (start_ticks, audio_stream_index, subtitle_stream_index) =
-        (*start_ticks, *audio_stream_index, *subtitle_stream_index);
     let mut body = json!({
         "DeviceProfile": device_profile(),
         "UserId": api.user_id,

@@ -53,8 +53,15 @@ pub(crate) async fn listen_stop(
                                 }
                                 Some(InstanceCommand::Status) => {
                                     let status = status_rx.borrow().clone();
-                                    if let Ok(payload) = serde_json::to_vec(&status) {
-                                        let _ = stream.write_all(&payload).await;
+                                    match serde_json::to_vec(&status) {
+                                        Ok(payload) => {
+                                            if let Err(e) = stream.write_all(&payload).await {
+                                                tracing::warn!("writing status to stop.sock: {e}");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("serializing status: {e}");
+                                        }
                                     }
                                     let _ = stream.shutdown().await;
                                 }

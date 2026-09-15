@@ -7,8 +7,8 @@ pub(crate) fn cmd_config_path(paths: &Paths) -> color_eyre::Result<()> {
 
 pub(crate) fn cmd_config_get(paths: &Paths, key: Option<&str>) -> color_eyre::Result<()> {
     let Some(key) = key else {
-        let cfg = Config::load(paths)?;
-        print!("{}", cfg.to_toml()?);
+        let config = Config::load(paths)?;
+        print!("{}", config.to_toml()?);
         let args = MpvArgs::get(paths)?;
         if !args.trim().is_empty() {
             println!("\n# {}", Field::MpvArgs.name());
@@ -18,7 +18,7 @@ pub(crate) fn cmd_config_get(paths: &Paths, key: Option<&str>) -> color_eyre::Re
     };
     let field = Field::parse(key)?;
     let out = match Config::load(paths)?.get(field) {
-        Some(v) => v,
+        Some(value) => value,
         // Not in config.toml; a running daemon re-reads it on every mpv spawn.
         None => MpvArgs::get(paths)?,
     };
@@ -28,9 +28,9 @@ pub(crate) fn cmd_config_get(paths: &Paths, key: Option<&str>) -> color_eyre::Re
 
 pub(crate) fn cmd_config_set(paths: &Paths, key: &str, value: &str) -> color_eyre::Result<()> {
     let field = Field::parse(key)?;
-    let mut cfg = Config::load(paths)?;
-    if cfg.set(field, value)? {
-        cfg.save(paths)?;
+    let mut config = Config::load(paths)?;
+    if config.set(field, value)? {
+        config.save(paths)?;
     } else {
         MpvArgs::save(paths, value)?;
     }

@@ -50,16 +50,16 @@ fn prefers_direct_play_then_bitrate() {
         json!({"Id": "trans", "SupportsDirectPlay": false, "Bitrate": 1000}),
     ];
     let sources = media_sources(sources);
-    let sel = select_media_source(&sources, None).unwrap();
-    assert_eq!(sel.id.as_deref(), Some("high"));
+    let selected = select_media_source(&sources, None).unwrap();
+    assert_eq!(selected.id.as_deref(), Some("high"));
 }
 
 #[test]
 fn preferred_source_wins() {
     let sources = vec![source_direct("a", 1), source_direct("b", 9)];
     let sources = media_sources(sources);
-    let sel = select_media_source(&sources, Some("a")).unwrap();
-    assert_eq!(sel.id.as_deref(), Some("a"));
+    let selected = select_media_source(&sources, Some("a")).unwrap();
+    assert_eq!(selected.id.as_deref(), Some("a"));
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn prepare_play_happy_path() {
             ]
         }]
     });
-    let prep = prepare_play(
+    let prepared = prepare_play(
         "http://h:8096",
         "item",
         &info,
@@ -85,13 +85,13 @@ fn prepare_play_happy_path() {
         "tok",
     )
     .unwrap();
-    assert_eq!(prep.play_session_id, "sess");
-    assert_eq!(prep.media_source_id, "src");
-    assert!(prep.uses_auth_header);
-    assert!(!prep.url.contains("ApiKey="));
-    assert_eq!(prep.audio_stream_index, Some(1));
-    assert_eq!(prep.subtitle_stream_index, Some(2));
-    assert_eq!(prep.title, "Jellyfin");
+    assert_eq!(prepared.play_session_id, "sess");
+    assert_eq!(prepared.media_source_id, "src");
+    assert!(prepared.uses_auth_header);
+    assert!(!prepared.url.contains("ApiKey="));
+    assert_eq!(prepared.audio_stream_index, Some(1));
+    assert_eq!(prepared.subtitle_stream_index, Some(2));
+    assert_eq!(prepared.title, "Jellyfin");
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn prepare_play_keeps_server_default_of_off() {
             ]
         }]
     });
-    let prep = prepare_play(
+    let prepared = prepare_play(
         "http://h:8096",
         "item",
         &info,
@@ -127,7 +127,7 @@ fn prepare_play_keeps_server_default_of_off() {
         "tok",
     )
     .unwrap();
-    assert_eq!(prep.subtitle_stream_index, Some(-1));
+    assert_eq!(prepared.subtitle_stream_index, Some(-1));
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn prepare_play_explicit_subtitle_stream_index_wins_over_default_off() {
             "MediaStreams": []
         }]
     });
-    let prep = prepare_play(
+    let prepared = prepare_play(
         "http://h:8096",
         "item",
         &info,
@@ -153,7 +153,7 @@ fn prepare_play_explicit_subtitle_stream_index_wins_over_default_off() {
         "tok",
     )
     .unwrap();
-    assert_eq!(prep.subtitle_stream_index, Some(2));
+    assert_eq!(prepared.subtitle_stream_index, Some(2));
 }
 
 #[test]
@@ -178,7 +178,7 @@ fn prepare_play_records_the_subtitle_identities_for_later_matching() {
             ]
         }]
     });
-    let prep = prepare_play(
+    let prepared = prepare_play(
         "http://h:8096",
         "item",
         &info,
@@ -187,7 +187,8 @@ fn prepare_play_records_the_subtitle_identities_for_later_matching() {
     )
     .unwrap();
     assert_eq!(
-        prep.maps
+        prepared
+            .maps
             .subtitles
             .iter()
             .map(|s| (s.index, s.title.as_deref()))
@@ -209,7 +210,7 @@ fn run_time_ticks_comes_from_the_chosen_source_and_only_when_positive() {
             "MediaStreams": []
         }]
     });
-    let prep = prepare_play(
+    let prepared = prepare_play(
         "http://h:8096",
         "item",
         &info,
@@ -217,7 +218,7 @@ fn run_time_ticks_comes_from_the_chosen_source_and_only_when_positive() {
         "tok",
     )
     .unwrap();
-    assert_eq!(prep.run_time_ticks, Some(14_220_809_999));
+    assert_eq!(prepared.run_time_ticks, Some(14_220_809_999));
 
     let live = json!({
         "PlaySessionId": "ps",
@@ -228,7 +229,7 @@ fn run_time_ticks_comes_from_the_chosen_source_and_only_when_positive() {
             "MediaStreams": []
         }]
     });
-    let prep = prepare_play(
+    let prepared = prepare_play(
         "http://h:8096",
         "item",
         &live,
@@ -236,12 +237,12 @@ fn run_time_ticks_comes_from_the_chosen_source_and_only_when_positive() {
         "tok",
     )
     .unwrap();
-    assert_eq!(prep.run_time_ticks, None);
+    assert_eq!(prepared.run_time_ticks, None);
 }
 
 #[test]
 fn prepared_play_debug_never_prints_the_token() {
-    let prep = PreparedPlay {
+    let prepared = PreparedPlay {
         url: "http://s/Videos/i/stream?static=true&ApiKey=sekrit".into(),
         media_source_id: "m".into(),
         play_session_id: "p".into(),
@@ -254,7 +255,7 @@ fn prepared_play_debug_never_prints_the_token() {
         run_time_ticks: None,
         title: "t".into(),
     };
-    let rendered = format!("{prep:?}");
+    let rendered = format!("{prepared:?}");
     assert!(!rendered.contains("sekrit"), "{rendered}");
     assert!(rendered.contains("<redacted>"), "{rendered}");
 }

@@ -4,7 +4,6 @@
 use color_eyre::eyre::{WrapErr, eyre};
 use serde_json::{Value, json};
 
-/// Inbound IPC message from mpv
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum IpcMessage {
     Reply {

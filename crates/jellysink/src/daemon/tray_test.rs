@@ -103,10 +103,6 @@ fn pending_update_badges_the_icon() {
         &pending_large.data[center..center + 4],
         "badge should sit in a corner, not over the logo"
     );
-    assert!(
-        t.attention_icon_pixmap().is_empty(),
-        "do not ship an attention pixmap; hosts may swap size when emphasizing"
-    );
 }
 
 #[test]

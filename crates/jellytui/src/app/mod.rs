@@ -234,11 +234,8 @@ impl App {
     }
 
     fn apply(&mut self, intent: Intent) {
-        // Any keypress retires the previous message; handlers that want to
-        // say something set it again below.
+        // Any keypress retires the previous message.
         self.message.clear();
-        // The log pane rebinds movement to scrolling; everything it does not
-        // claim — the playback keys above all — still means what it always did.
         if self.screen == Screen::Logs && self.scroll_in_logs(&intent) {
             return;
         }
@@ -249,10 +246,7 @@ impl App {
             Intent::Playing => self.screen = Screen::Playing,
             Intent::Logs => self.toggle_logs(),
             Intent::ClearLogs => {}
-            Intent::StartSearch => {
-                self.screen = Screen::Search;
-                self.message.clear();
-            }
+            Intent::StartSearch => self.screen = Screen::Search,
             Intent::Up => self.move_vertically(-1),
             Intent::Down => self.move_vertically(1),
             Intent::PageUp => self.move_by(-self.page_step()),

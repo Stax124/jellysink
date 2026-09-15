@@ -72,7 +72,6 @@ impl Default for Config {
 
 impl Config {
     /// Reads config.toml, or the defaults when there is none.
-    /// [`Self::load_or_create`] is the version that writes.
     pub fn load(paths: &Paths) -> color_eyre::Result<Self> {
         let path = paths.config_file();
         if !path.exists() {

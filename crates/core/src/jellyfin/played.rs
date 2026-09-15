@@ -3,7 +3,6 @@ use super::encode_query_value;
 use color_eyre::eyre::{Result, WrapErr};
 
 impl Api {
-    /// Marks an item watched or unwatched
     pub async fn set_played(&self, item_id: &str, played: bool) -> Result<()> {
         tracing::debug!(item_id, played, "set played");
         let user_id = encode_query_value(&self.user_id);

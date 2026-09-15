@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
 async fn run(paths: Paths) -> Result<()> {
     // Before anything worth logging happens, and while a bad filter can still
     // be reported on the normal screen.
-    let logs = logs::install()?;
+    let logs = logs::install();
     let config = Config::load(&paths)?;
     let credentials = Credentials::load(&paths)?
         .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;

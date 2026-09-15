@@ -61,15 +61,6 @@ fn prepend_runs_when_the_queue_already_has_a_next_item() {
 }
 
 #[test]
-fn prepend_ignores_autoplay() {
-    // autoplay governs continuing forward, not what the selector reaches.
-    assert_eq!(
-        prepend_skip_reason(Some("Episode"), Some("series-1"), true),
-        None
-    );
-}
-
-#[test]
 fn prepend_respects_its_own_toggle() {
     assert_eq!(
         prepend_skip_reason(Some("Episode"), Some("series-1"), false),

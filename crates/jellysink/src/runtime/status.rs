@@ -9,11 +9,11 @@ impl Runtime {
             self.current
                 .as_ref()
                 .zip(self.item_id.as_ref())
-                .map(|(prep, item_id)| NowPlaying {
+                .map(|(prepared, item_id)| NowPlaying {
                     item_id: item_id.clone(),
-                    title: prep.title.clone(),
+                    title: prepared.title.clone(),
                     position_ticks: self.last_ticks,
-                    run_time_ticks: prep.run_time_ticks,
+                    run_time_ticks: prepared.run_time_ticks,
                     is_paused: self.paused,
                     is_muted: self.muted,
                     volume: self.volume,
@@ -34,8 +34,6 @@ impl Runtime {
         }
     }
 
-    /// Pushes the current state onto the status watch channel, so `jellysink
-    /// status` never needs to poll `Runtime` directly.
     pub(super) fn publish_status(&self) {
         self.status_tx.send_replace(self.build_status());
     }

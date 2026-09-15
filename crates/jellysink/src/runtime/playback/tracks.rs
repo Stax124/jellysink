@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 impl Runtime {
     pub(in crate::runtime) async fn configure_streams(&mut self) -> color_eyre::Result<()> {
-        let Some(prep) = self.current.clone() else {
+        let Some(prepared) = self.current.clone() else {
             return Ok(());
         };
         let Some(mpv) = self.mpv.as_mut() else {
@@ -19,7 +19,7 @@ impl Runtime {
         };
 
         self.external_subtitle_track_ids.clear();
-        for (jellyfin_index, url) in &prep.external_sub_urls {
+        for (jellyfin_index, url) in &prepared.external_sub_urls {
             if let Err(e) = mpv.sub_add(url).await {
                 tracing::warn!("sub-add failed for {url}: {e:#}");
                 continue;
@@ -44,8 +44,8 @@ impl Runtime {
         }
 
         for (kind, jellyfin_index) in [
-            (TrackKind::Audio, prep.audio_stream_index),
-            (TrackKind::Subtitle, prep.subtitle_stream_index),
+            (TrackKind::Audio, prepared.audio_stream_index),
+            (TrackKind::Subtitle, prepared.subtitle_stream_index),
         ] {
             if let Some(jellyfin_index) = jellyfin_index {
                 tracing::info!(
@@ -53,7 +53,13 @@ impl Runtime {
                     jellyfin_index,
                     "configuring initial stream"
                 );
-                let _ = self.apply_track(kind, jellyfin_index).await;
+                if let Err(e) = self.apply_track(kind, jellyfin_index).await {
+                    tracing::warn!(
+                        kind = kind.as_str(),
+                        jellyfin_index,
+                        "could not configure initial stream: {e:#}"
+                    );
+                }
             }
         }
         // Whatever mpv ended up on is this file's baseline, so the property
@@ -136,12 +142,12 @@ impl Runtime {
         tracing::info!(
             kind = kind.as_str(),
             jellyfin_index,
-            previous = self.prep_index(kind),
+            previous = self.current_stream_index(kind),
             "track changed in mpv"
         );
         self.track_state_mut(kind).settled = selected;
         self.remember_track(kind, jellyfin_index);
-        self.set_prep_index(kind, (jellyfin_index >= 0).then_some(jellyfin_index));
+        self.set_current_stream_index(kind, (jellyfin_index >= 0).then_some(jellyfin_index));
         self.send_progress();
     }
 
@@ -191,7 +197,7 @@ impl Runtime {
             self.set_mpv_track_id(kind, None).await?;
             // Ours, so the property change it triggers is not a user pick.
             self.track_state_mut(kind).settled = SelectedTrack::Off;
-            self.set_prep_index(kind, None);
+            self.set_current_stream_index(kind, None);
             return Ok(());
         }
         match self.mpv_track_id_for(kind, jellyfin_index) {
@@ -213,7 +219,7 @@ impl Runtime {
                 "requested stream index is in neither the embedded nor the external track map"
             ),
         }
-        self.set_prep_index(kind, Some(jellyfin_index));
+        self.set_current_stream_index(kind, Some(jellyfin_index));
         Ok(())
     }
 
@@ -268,8 +274,7 @@ impl Runtime {
         }
     }
 
-    /// The embedded index → track id map, for the log line when a requested
-    /// index is not in it.
+    /// The embedded Jellyfin stream index → mpv track id map.
     fn embedded_map(&self, kind: TrackKind) -> Option<&HashMap<i64, i64>> {
         let maps = &self.current.as_ref()?.maps;
         Some(match kind {
@@ -278,34 +283,32 @@ impl Runtime {
         })
     }
 
-    /// Every stream of this kind the current item offers, for matching a
-    /// remembered choice against.
+    /// Every stream of this kind the current item offers.
     fn candidates(&self, kind: TrackKind) -> &[TrackId] {
-        let Some(prep) = self.current.as_ref() else {
+        let Some(prepared) = self.current.as_ref() else {
             return &[];
         };
         match kind {
-            TrackKind::Audio => &prep.maps.audios,
-            TrackKind::Subtitle => &prep.maps.subtitles,
+            TrackKind::Audio => &prepared.maps.audios,
+            TrackKind::Subtitle => &prepared.maps.subtitles,
         }
     }
 
-    /// The Jellyfin stream index this kind is currently playing.
-    fn prep_index(&self, kind: TrackKind) -> Option<i64> {
-        let prep = self.current.as_ref()?;
+    fn current_stream_index(&self, kind: TrackKind) -> Option<i64> {
+        let prepared = self.current.as_ref()?;
         match kind {
-            TrackKind::Audio => prep.audio_stream_index,
-            TrackKind::Subtitle => prep.subtitle_stream_index,
+            TrackKind::Audio => prepared.audio_stream_index,
+            TrackKind::Subtitle => prepared.subtitle_stream_index,
         }
     }
 
-    fn set_prep_index(&mut self, kind: TrackKind, jellyfin_index: Option<i64>) {
-        let Some(prep) = self.current.as_mut() else {
+    fn set_current_stream_index(&mut self, kind: TrackKind, jellyfin_index: Option<i64>) {
+        let Some(prepared) = self.current.as_mut() else {
             return;
         };
         match kind {
-            TrackKind::Audio => prep.audio_stream_index = jellyfin_index,
-            TrackKind::Subtitle => prep.subtitle_stream_index = jellyfin_index,
+            TrackKind::Audio => prepared.audio_stream_index = jellyfin_index,
+            TrackKind::Subtitle => prepared.subtitle_stream_index = jellyfin_index,
         }
     }
 }

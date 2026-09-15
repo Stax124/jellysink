@@ -22,7 +22,10 @@ async fn status_round_trips_over_the_socket() {
         listen_stop(&listen_paths, listen_shutdown, restart, status_rx).await
     });
 
+    let mut attempts = 0;
     while !paths.stop_socket().exists() {
+        attempts += 1;
+        assert!(attempts < 200, "listen_stop never bound the stop socket");
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 

@@ -3,10 +3,7 @@
 use super::ipc::IpcMessage;
 use serde_json::Value;
 
-/// The mpv property holding the selected subtitle track.
 pub(crate) const SUBTITLE_TRACK_PROPERTY: &str = "sid";
-
-/// The mpv property holding the selected audio track.
 pub(crate) const AUDIO_TRACK_PROPERTY: &str = "aid";
 
 /// `observe_property` id for [`SUBTITLE_TRACK_PROPERTY`]. We match on the
@@ -20,9 +17,7 @@ pub(super) const AUDIO_TRACK_OBSERVER_ID: i64 = 2;
 /// `auto` (not picked yet) must stay apart: a loading file is not a decision.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum SelectedTrack {
-    /// This track is selected.
     Id(i64),
-    /// Explicitly off.
     Off,
     /// `auto`: mpv has not picked a track yet. Never a decision, and so the
     /// state every file starts and ends in.
@@ -102,7 +97,6 @@ pub(crate) enum MpvEvent {
     Exited,
 }
 
-/// The runtime-level event an inbound mpv message means, if any.
 pub(super) fn mpv_event_for(msg: &IpcMessage) -> Option<MpvEvent> {
     match msg {
         IpcMessage::Event { name, reason } => match name.as_str() {

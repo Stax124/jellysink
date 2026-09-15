@@ -18,7 +18,6 @@ const STILL_WIDTH: u16 = 34;
 /// Narrower than this and the synopsis beside the still has no measure left,
 /// so the screen becomes text only.
 const MIN_BANNER_WIDTH: u16 = 70;
-/// The gap between the still and the text beside it.
 const GUTTER: u16 = 2;
 
 fn block() -> Block<'static> {
@@ -48,7 +47,7 @@ fn still_rect(body: Rect, item: &Item, font_size: FontSize) -> Option<Rect> {
 }
 
 /// The size the still is encoded for. The fetch and the renderer both come
-/// through [`still_rect`], so what is downloaded is the size it is drawn at.
+/// through [`still_rect`].
 pub(crate) fn still_size(body: Rect, item: &Item, font_size: FontSize) -> Option<Size> {
     Some(still_rect(body, item, font_size)?.as_size())
 }

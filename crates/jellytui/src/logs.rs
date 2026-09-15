@@ -1,7 +1,6 @@
 //! The tracing subscriber jellytui installs and the ring buffer it writes to.
 //! Memory is its only sink: a `fmt` layer would write to the alternate screen.
 
-use color_eyre::eyre::Result;
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -135,7 +134,7 @@ impl Visit for Message {
     }
 }
 
-pub(crate) fn install() -> Result<LogBuffer> {
+pub(crate) fn install() -> LogBuffer {
     let buffer = LogBuffer::new();
     tracing_subscriber::registry()
         .with(
@@ -148,7 +147,7 @@ pub(crate) fn install() -> Result<LogBuffer> {
             started: Instant::now(),
         })
         .init();
-    Ok(buffer)
+    buffer
 }
 
 #[cfg(test)]

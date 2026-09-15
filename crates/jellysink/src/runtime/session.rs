@@ -25,8 +25,8 @@ const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// A session that stayed up at least this long is treated as having worked.
 const SESSION_HEALTHY_AFTER: Duration = Duration::from_secs(60);
 
-/// How long to wait before the next reconnect attempt. The healthy-session
-/// reset stops a bad startup pinning the backoff at [`BACKOFF_MAX`].
+/// The healthy-session reset stops a bad startup pinning the backoff at
+/// [`BACKOFF_MAX`].
 fn reconnect_delay(current: Duration, session_lasted: Duration, auth_expired: bool) -> Duration {
     if auth_expired {
         BACKOFF_MAX
@@ -37,7 +37,6 @@ fn reconnect_delay(current: Duration, session_lasted: Duration, auth_expired: bo
     }
 }
 
-/// The daemon loop: one long-lived player, a WebSocket that comes and goes.
 /// Only the socket, its reader and the keepalive are per-session, so a dropped
 /// WebSocket is invisible to the user. See `specs/session.md`.
 pub(crate) async fn run(

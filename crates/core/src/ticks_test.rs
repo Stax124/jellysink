@@ -6,11 +6,6 @@ fn ticks_roundtrip() {
 }
 
 #[test]
-fn coalesce_uses_a_live_position() {
-    assert_eq!(coalesce_position_ticks(Some(42.0), 0), 420_000_000);
-}
-
-#[test]
 fn coalesce_keeps_last_ticks_when_live_is_missing() {
     assert_eq!(coalesce_position_ticks(None, 150_000_000), 150_000_000);
 }

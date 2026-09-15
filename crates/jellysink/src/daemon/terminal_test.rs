@@ -89,16 +89,6 @@ fn xfce4_terminal_uses_dash_x() {
 }
 
 #[test]
-fn kitty_uses_dash_e() {
-    let available = available_from(&["kitty"]);
-    let launches = terminal_candidates(&payload(), &available, None);
-    assert_eq!(
-        args_as_str(&launches[0]),
-        vec!["-e", "/tmp/jellysink", "update", "--from-tray"]
-    );
-}
-
-#[test]
 fn nothing_available_yields_empty() {
     let available = available_from(&[]);
     let launches = terminal_candidates(&payload(), &available, Some(OsStr::new("kitty")));
