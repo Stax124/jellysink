@@ -1,11 +1,11 @@
 use crate::cli::update::apply_update_from_daemon;
-use crate::daemon::instance::listen_stop;
+use crate::daemon::instance::{bind_stop_socket, listen_stop};
 use crate::daemon::signal::Signal;
 use crate::daemon::{mpris, tray};
 use color_eyre::eyre::WrapErr;
 use jellysink_core::VERSION;
 use jellysink_core::config::{Config, Credentials, Paths, device_name};
-use jellysink_core::instance::InstanceLock;
+use jellysink_core::instance::{InstanceLock, clear_restart_pending, mark_restart_pending};
 use jellysink_core::update::{check, exec_updated, restart_exe_path};
 use jellysink_core::usage_err;
 
@@ -19,6 +19,9 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let exe = restart_exe_path(&std::env::current_exe().wrap_err("resolving current executable")?);
 
     let _lock = InstanceLock::acquire(&paths)?;
+    // Before the tray and mpris: both are allowed to be slow, and a client left
+    // over from the restart that brought us here is already waiting on this.
+    let stop_listener = bind_stop_socket(&paths)?;
     tracing::info!(
         server = %creds.server,
         user = %creds.username,
@@ -71,13 +74,13 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         );
     }
 
-    let stop_paths = paths.clone();
     let stop_shutdown = shutdown.clone();
     let stop_restart = restart.clone();
     let stop_fut =
-        async move { listen_stop(&stop_paths, stop_shutdown, stop_restart, status_rx).await };
+        async move { listen_stop(stop_listener, stop_shutdown, stop_restart, status_rx).await };
 
     let session_shutdown = shutdown.clone();
+    let exit_paths = paths.clone();
     let session_fut =
         crate::runtime::run(config, creds, paths, session_shutdown, status_tx, ext_rx);
     tokio::pin!(session_fut, stop_fut);
@@ -97,15 +100,25 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         _ = restart.fired() => {
             tracing::info!("restart requested");
             do_restart = true;
+            // Nothing answers the socket from here until the new image binds.
+            mark_restart_pending(&exit_paths);
             shutdown.fire();
             session_fut.await
         }
     };
     shutdown.fire();
+    // The one unlink: `listen_stop` never sees `shutdown` on the restart path,
+    // because the `select!` has already committed to that arm.
+    if let Err(e) = std::fs::remove_file(exit_paths.stop_socket())
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("leaving {} behind: {e}", exit_paths.stop_socket().display());
+    }
     outcome?;
     if do_restart {
         tracing::info!(path = %exe.display(), "replacing process with updated binary");
         let err = exec_updated(&exe);
+        clear_restart_pending(&exit_paths);
         tracing::error!("restart after update failed: {err}");
         return Err(err).wrap_err("restarting after update");
     }

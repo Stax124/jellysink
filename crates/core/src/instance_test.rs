@@ -82,3 +82,26 @@ fn a_stale_stop_socket_left_by_a_kill_does_not_look_like_a_running_daemon() {
     assert!(paths.stop_socket().exists(), "premise of the test");
     assert!(!is_running(&paths));
 }
+
+/// The regression: a socket file left by a SIGKILL refuses the connection, and
+/// that surfaced as a color-eyre dump instead of "jellysink is not running".
+#[test]
+fn a_stale_socket_with_no_listener_reads_as_not_running() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
+    std::fs::write(paths.stop_socket(), b"").unwrap();
+    let err = request_status(&paths).unwrap_err();
+    assert!(err.to_string().contains("not running"), "{err:#}");
+}
+
+/// Otherwise a daemon killed mid-restart leaves every later call waiting out
+/// the full handoff window.
+#[test]
+fn a_marker_that_outlives_its_daemon_is_cleared_by_the_caller_that_waits_for_it() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
+    mark_restart_pending(&paths);
+    let err = request(&paths, InstanceCommand::Status, Duration::ZERO).unwrap_err();
+    assert!(err.to_string().contains("not running"), "{err:#}");
+    assert!(!paths.restart_marker().exists());
+}

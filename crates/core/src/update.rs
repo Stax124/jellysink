@@ -1,5 +1,8 @@
 //! GitHub-release self-update: check, download, and replace a released binary.
 
+use crate::VERSION;
+use crate::config::Paths;
+use crate::instance;
 use color_eyre::eyre::{WrapErr, eyre};
 use self_update::ReleaseAsset;
 use self_update::backends::github;
@@ -29,9 +32,8 @@ fn match_asset(assets: &[ReleaseAsset], bin_name: &str, target: &str) -> Option<
     assets.iter().find(|asset| asset.name() == wanted).cloned()
 }
 
-/// Below every release, so a forced install always counts the latest as newer.
-/// Also the baseline for a sibling that cannot be asked its version.
-const FORCED_VERSION: &str = "0.0.0";
+/// Below every release, so whatever the latest one is always counts as newer.
+const BELOW_EVERY_RELEASE: &str = "0.0.0";
 
 /// `progress` is the download bar only. `self_update`'s own commentary stays
 /// off: its "*NOT* compatible" line fires on every 0.x minor bump.
@@ -88,11 +90,13 @@ pub async fn install(
     force: bool,
 ) -> color_eyre::Result<Option<String>> {
     let current = if force {
-        FORCED_VERSION.to_string()
+        BELOW_EVERY_RELEASE.to_string()
     } else {
         match dest {
-            Some(path) => installed_version(path).unwrap_or_else(|| FORCED_VERSION.to_string()),
-            None => crate::VERSION.to_string(),
+            Some(path) => {
+                installed_version(path).unwrap_or_else(|| BELOW_EVERY_RELEASE.to_string())
+            }
+            None => VERSION.to_string(),
         }
     };
     let status = updater(bin_name, dest, &current, progress)?
@@ -108,6 +112,65 @@ pub async fn install(
             .wrap_err_with(|| format!("making {} executable", dest.display()))?;
     }
     Ok(Some(status.version().to_string()))
+}
+
+pub async fn print_check(bin_name: &str) -> color_eyre::Result<()> {
+    match check(bin_name).await? {
+        Some(version) => println!("update available: {version} (running {VERSION})"),
+        None => println!("{bin_name} {VERSION} is up to date"),
+    }
+    Ok(())
+}
+
+/// Both binaries — this one in place, its neighbour beside it — and then a
+/// running daemon, which keeps the inode it mapped until it restarts.
+pub async fn install_both(paths: &Paths, bin_name: &str, force: bool) -> color_eyre::Result<()> {
+    let other = if bin_name == JELLYSINK_BIN {
+        JELLYTUI_BIN
+    } else {
+        JELLYSINK_BIN
+    };
+    // Only the daemon's own binary changing is worth ending playback for.
+    let mut daemon_replaced = false;
+
+    println!("Checking for updates...");
+    let offer = check(bin_name).await?;
+    if offer.is_none() && !force {
+        println!("{bin_name} {VERSION} is up to date.");
+    } else {
+        match &offer {
+            Some(offer) => println!("Downloading {bin_name} v{offer} (running {VERSION})..."),
+            None => println!("Reinstalling {bin_name} {VERSION}..."),
+        }
+        match install(bin_name, None, true, force).await? {
+            Some(version) => {
+                println!("Updated to version {version}.");
+                daemon_replaced = bin_name == JELLYSINK_BIN;
+            }
+            None => println!("Already up to date."),
+        }
+    }
+
+    // Unconditional: a release carries both and either can be behind.
+    if let Some(path) = sibling_binary(other) {
+        match install(other, Some(&path), true, force).await {
+            Ok(Some(version)) => {
+                println!("Updated {other} to version {version}.");
+                daemon_replaced |= other == JELLYSINK_BIN;
+            }
+            Ok(None) => println!("{other} is up to date."),
+            // This binary's own update has landed by now, so this is reported not raised.
+            Err(e) => eprintln!("could not update {other}: {e:#}"),
+        }
+    }
+
+    if daemon_replaced && instance::is_running(paths) {
+        match instance::request_restart(paths) {
+            Ok(()) => println!("Restarting the running daemon."),
+            Err(e) => println!("Updated, but could not restart the daemon: {e:#}"),
+        }
+    }
+    Ok(())
 }
 
 /// `None` when it cannot be asked, leaving the caller to replace it rather than

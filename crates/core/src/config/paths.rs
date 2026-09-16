@@ -56,6 +56,10 @@ impl Paths {
         self.config_dir.join("stop.sock")
     }
 
+    pub(crate) fn restart_marker(&self) -> PathBuf {
+        self.config_dir.join("restart.pending")
+    }
+
     pub fn mpv_socket(&self) -> PathBuf {
         self.config_dir.join("mpv.sock")
     }

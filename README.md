@@ -76,7 +76,7 @@ systemctl --user enable --now jellysink
 
 Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink run` yourself. `--no-desktop` skips the menu entries.
 
-`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon gets a green-dot badge and the menu gets an **Install update** item; choosing it opens a terminal, shows download progress, replaces the binary, restarts the daemon, then waits for Enter so the window stays open. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way. Either route also brings the `jellytui` sitting beside the daemon level, whether or not the daemon itself had an update.
+`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon gets a green-dot badge and the menu gets an **Install update** item; choosing it opens a terminal, shows download progress, replaces the binary, restarts the daemon, then waits for Enter so the window stays open. `jellysink update` and `jellytui update` install the same way and **restart** a running daemon onto the new binary; current playback ends when they do. Every route updates both binaries, whether or not the one you ran had an update of its own, and the daemon is only restarted when its own binary was replaced.
 
 ### From source
 

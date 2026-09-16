@@ -81,12 +81,13 @@ a release to fetch, so the latest always counts as newer and is installed again
 over both binaries. It is refused alongside `--check`, which exists to *not*
 download.
 
-**Replacing the daemon's binary is not stopping the daemon.** The install
+**Replacing the daemon's binary is not restarting the daemon.** The install
 renames over the path, so a running jellysink keeps the inode it mapped and
-plays on; the new version waits for a restart. That is why `jellytui` may do it
-at all, and why it only prints the `systemctl --user restart` line rather than
-acting: ending playback is the user's call. The handoff over `stop.sock` stays
-`jellysink update`'s alone.
+plays on until it is asked to restart. Whichever binary ran the update asks, over
+`stop.sock` — there is one flow (`install_both`), and the tray, `jellysink update`
+and `jellytui update` all reach the daemon the same way. It is asked only when
+the daemon's own binary was one of the two replaced: a restart ends playback, and
+a frontend-only update is not worth that.
 
 The check runs once at startup and, when it finds something, sets the header
 badge; failure is a log line and nothing more. `u` ends the loop rather than

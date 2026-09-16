@@ -2,55 +2,16 @@
 //! the normal screen, never behind the alternate one.
 
 use color_eyre::eyre::{Result, WrapErr};
-use jellysink_core::VERSION;
 use jellysink_core::config::Paths;
-use jellysink_core::instance;
-use jellysink_core::update::{
-    JELLYSINK_BIN, check, exec_updated, install, restart_exe_path, sibling_binary,
-};
+use jellysink_core::update::{exec_updated, install_both, print_check, restart_exe_path};
 
 const BIN_NAME: &str = env!("CARGO_BIN_NAME");
 
 pub(crate) async fn cmd_update(paths: &Paths, check_only: bool, force: bool) -> Result<()> {
     if check_only {
-        match check(BIN_NAME).await? {
-            Some(version) => println!("update available: {version} (running {VERSION})"),
-            None => println!("{BIN_NAME} {VERSION} is up to date"),
-        }
-        return Ok(());
+        return print_check(BIN_NAME).await;
     }
-
-    let offer = check(BIN_NAME).await?;
-    if offer.is_none() && !force {
-        println!("{BIN_NAME} {VERSION} is up to date.");
-    } else {
-        match &offer {
-            Some(offer) => println!("Downloading {BIN_NAME} v{offer} (running {VERSION})..."),
-            None => println!("Reinstalling {BIN_NAME} {VERSION}..."),
-        }
-        match install(BIN_NAME, None, true, force).await? {
-            Some(version) => println!("Updated to version {version}."),
-            None => println!("Already up to date."),
-        }
-    }
-
-    // The daemon's binary, but never the daemon: the install renames over the
-    // path, so a running jellysink plays on until the user restarts it.
-    if let Some(path) = sibling_binary(JELLYSINK_BIN) {
-        match install(JELLYSINK_BIN, Some(&path), true, force).await {
-            Ok(Some(version)) => {
-                println!("Updated {JELLYSINK_BIN} to version {version}.");
-                if instance::is_running(paths) {
-                    println!("The running daemon stays on the old one until it restarts:");
-                    println!("  systemctl --user restart {JELLYSINK_BIN}");
-                }
-            }
-            Ok(None) => println!("{JELLYSINK_BIN} is up to date."),
-            // Our own update has landed by now, so this is reported not raised.
-            Err(e) => eprintln!("could not update {JELLYSINK_BIN}: {e:#}"),
-        }
-    }
-    Ok(())
+    install_both(paths, BIN_NAME, force).await
 }
 
 /// For the `u` key: the user asked from inside the terminal UI and expects it

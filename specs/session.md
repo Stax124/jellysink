@@ -163,7 +163,7 @@ the latch.
 | Signal     | Fired by                                                                                             | Consumed by                                    |
 | ---------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | `shutdown` | tray Quit, MPRIS `Quit`, `stop.sock` `stop`, `cmd_run` unconditionally after its top-level `select!`  | `run_session`'s loop, `instance::listen_stop`.  |
-| `restart`  | `stop.sock` `restart` (tray update)                                                                  | `cmd_run`, which then `exec`s the new binary.   |
+| `restart`  | `stop.sock` `restart` (any update path)                                                              | `cmd_run`, which then `exec`s the new binary.   |
 | `apply`    | tray **Install update**                                                                              | The update task in `cmd_run`.                   |
 
 `apply` is the one edge-triggered signal, so its consumer calls `take()` to
@@ -244,13 +244,38 @@ daemon shutdown, or mpv exiting on its own (`MpvEvent::Exited`) tears mpv down.
    tracks — see `specs/tracks.md`).
 4. `quit_and_wait` escalates — IPC `quit`, 3 s, `SIGTERM`, 2 s, `SIGKILL` — then
    removes the IPC socket.
-5. `instance::listen_stop` breaks its loop and unlinks `stop.sock`.
+5. `instance::listen_stop` breaks its loop; `cmd_run` unlinks `stop.sock` once,
+   after its `select!`, which is the only path every exit passes through — the
+   restart arm never lets the listener see `shutdown`.
 6. The process exits; the kernel releases the `flock` on `instance.lock`.
 
 Step 6 is why `instance::is_running` probes the lock rather than the socket
 file: a `SIGKILL` leaves `stop.sock` behind, so an `exists()` check stays true
-forever and `jellysink update` then takes the stop path and fails with
-"connecting to the running instance".
+forever. A client connecting to that leftover is refused, which it reports as
+"jellysink is not running" rather than as a failure to connect.
+
+## The restart handoff
+
+A restart unbinds the socket for as long as the old image takes to escalate mpv
+down (step 4, up to 5 s) plus the exec and the new image's startup, so a client
+in that window finds a path that refuses connections — indistinguishable, on its
+own, from the `SIGKILL` leftover above.
+
+`restart.pending` in the config directory is what tells them apart. `cmd_run`
+writes it in the `restart` arm, before anything else, and `bind_stop_socket`
+removes it in the new image; between those two points a client retries instead
+of reporting the daemon gone, up to `RESTART_HANDOFF_WAIT`. A client that waits
+that out and still finds nothing removes the marker itself, so a daemon killed
+mid-restart costs one wait rather than poisoning every later call.
+
+What is retried is the whole exchange, not the connect: a restart also resets
+connections it accepted on the way down, so a `status` can reach a listener that
+is gone before it answers. `request` therefore treats an empty reply as a
+failure worth retrying rather than as a status to parse.
+
+This is why `bind_stop_socket` is split from `listen_stop` and called directly
+after the instance lock: binding is what ends the window, and it must not sit
+behind the tray or mpris's 3 s timeout.
 
 ## Known limits
 
@@ -260,6 +285,10 @@ forever and `jellysink update` then takes the stop path and fails with
   session on its own timeout regardless.
 - **Reports are queued unboundedly.** A server that stops answering while
   playback continues accumulates one progress report per second.
+- **`stop` and `restart` are not acknowledged.** The daemon answers them by
+  acting, so a client cannot tell a command that was read from one accepted and
+  dropped as the listener went away. One sent during the handoff window can be
+  lost; `status`, which reads a reply, is retried.
 - **An expired token retries forever.** The daemon stays up and polls every 60 s
   rather than exiting, so a systemd unit does not flap; the cost is a warning
   line per minute.

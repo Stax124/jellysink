@@ -3,7 +3,7 @@
 
 use color_eyre::eyre::WrapErr;
 use jellysink_core::config::Paths;
-use jellysink_core::instance::{InstanceCommand, parse_instance_command};
+use jellysink_core::instance::{InstanceCommand, clear_restart_pending, parse_instance_command};
 use jellysink_core::status::PlayerStatus;
 use std::os::unix::fs::PermissionsExt;
 use tokio::io::AsyncWriteExt;
@@ -11,12 +11,9 @@ use tokio::net::UnixListener;
 
 use crate::daemon::signal::Signal;
 
-pub(crate) async fn listen_stop(
-    paths: &Paths,
-    shutdown: Signal,
-    restart: Signal,
-    status_rx: tokio::sync::watch::Receiver<PlayerStatus>,
-) -> color_eyre::Result<()> {
+/// Bound before the daemon does anything slow, because a restart leaves clients
+/// waiting on this socket from the moment the old image decides to exec.
+pub(crate) fn bind_stop_socket(paths: &Paths) -> color_eyre::Result<UnixListener> {
     let sock = paths.stop_socket();
     let _ = std::fs::remove_file(&sock);
     let listener =
@@ -28,7 +25,16 @@ pub(crate) async fn listen_stop(
         perms.set_mode(0o600);
         let _ = std::fs::set_permissions(&sock, perms);
     }
+    clear_restart_pending(paths);
+    Ok(listener)
+}
 
+pub(crate) async fn listen_stop(
+    listener: UnixListener,
+    shutdown: Signal,
+    restart: Signal,
+    status_rx: tokio::sync::watch::Receiver<PlayerStatus>,
+) -> color_eyre::Result<()> {
     loop {
         tokio::select! {
             _ = shutdown.fired() => break,
@@ -76,7 +82,6 @@ pub(crate) async fn listen_stop(
             }
         }
     }
-    let _ = std::fs::remove_file(&sock);
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-use super::listen_stop;
+use super::{bind_stop_socket, listen_stop};
 use crate::daemon::signal::Signal;
 use jellysink_core::config::Paths;
 use jellysink_core::instance::request_status;
@@ -16,18 +16,14 @@ async fn status_round_trips_over_the_socket() {
         "admin".into(),
     ));
 
-    let listen_paths = paths.clone();
+    // Bound here rather than inside the task: the socket answers from the moment
+    // `bind_stop_socket` returns, so nothing has to wait for the task to be polled.
+    let listener = bind_stop_socket(&paths).unwrap();
     let listen_shutdown = shutdown.clone();
-    let listener = tokio::spawn(async move {
-        listen_stop(&listen_paths, listen_shutdown, restart, status_rx).await
-    });
-
-    let mut attempts = 0;
-    while !paths.stop_socket().exists() {
-        attempts += 1;
-        assert!(attempts < 200, "listen_stop never bound the stop socket");
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    let serving =
+        tokio::spawn(
+            async move { listen_stop(listener, listen_shutdown, restart, status_rx).await },
+        );
 
     let status = tokio::task::spawn_blocking({
         let paths = paths.clone();
@@ -42,5 +38,5 @@ async fn status_round_trips_over_the_socket() {
     assert!(status.now_playing.is_none());
 
     shutdown.fire();
-    listener.await.unwrap().unwrap();
+    serving.await.unwrap().unwrap();
 }
