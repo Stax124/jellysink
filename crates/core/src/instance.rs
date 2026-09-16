@@ -7,6 +7,11 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream as StdUnixStream;
+use std::time::Duration;
+
+/// Under jellytui's 1 Hz poll, so a status can never overlap its successor;
+/// it is answered off a `watch` receiver and never legitimately waits.
+const STATUS_REPLY_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub struct InstanceLock {
@@ -40,13 +45,28 @@ pub enum InstanceCommand {
     Status,
 }
 
-pub fn parse_instance_command(buf: &str) -> Option<InstanceCommand> {
-    match buf.trim() {
-        "stop" => Some(InstanceCommand::Stop),
-        "restart" => Some(InstanceCommand::Restart),
-        "status" => Some(InstanceCommand::Status),
-        _ => None,
+impl InstanceCommand {
+    const ALL: [Self; 3] = [Self::Stop, Self::Restart, Self::Status];
+
+    fn wire(self) -> &'static str {
+        match self {
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+            Self::Status => "status",
+        }
     }
+
+    /// The others are answered by acting rather than by writing, so a reader
+    /// would wait on a close that shutting down delays.
+    fn expects_reply(self) -> bool {
+        matches!(self, Self::Status)
+    }
+}
+
+pub fn parse_instance_command(buf: &str) -> Option<InstanceCommand> {
+    InstanceCommand::ALL
+        .into_iter()
+        .find(|cmd| cmd.wire() == buf.trim())
 }
 
 /// Whether another jellysink holds the instance lock — the lock, not the socket
@@ -68,47 +88,67 @@ pub fn is_running(paths: &Paths) -> bool {
     }
 }
 
+/// Refused, gone, or accepted and then dropped unanswered: how `stop.sock`
+/// fails both as a SIGKILL leftover and while the daemon is between binds.
+fn means_not_running(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::NotFound
+            | std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::UnexpectedEof
+    )
+}
+
+fn timed_out(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
+}
+
+fn exchange(sock: &std::path::Path, cmd: InstanceCommand) -> std::io::Result<Vec<u8>> {
+    let mut stream = StdUnixStream::connect(sock)?;
+    stream.write_all(format!("{}\n", cmd.wire()).as_bytes())?;
+    if !cmd.expects_reply() {
+        return Ok(Vec::new());
+    }
+    stream.set_read_timeout(Some(STATUS_REPLY_TIMEOUT))?;
+    stream.shutdown(Shutdown::Write)?;
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf)?;
+    if buf.is_empty() {
+        // Accepted by a listener that went away before answering.
+        return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+    }
+    Ok(buf)
+}
+
+fn request(paths: &Paths, cmd: InstanceCommand) -> color_eyre::Result<Vec<u8>> {
+    let sock = paths.stop_socket();
+    match exchange(&sock, cmd) {
+        Ok(buf) => Ok(buf),
+        Err(e) if means_not_running(&e) => Err(usage_err("jellysink is not running")),
+        Err(e) if timed_out(&e) => Err(usage_err("jellysink is not responding")),
+        Err(e) => Err(eyre!(e)).wrap_err_with(|| format!("talking to {}", sock.display())),
+    }
+}
+
 pub fn request_stop(paths: &Paths) -> color_eyre::Result<()> {
-    write_instance_command(paths, b"stop\n")
+    request(paths, InstanceCommand::Stop).map(|_| ())
 }
 
 pub fn request_restart(paths: &Paths) -> color_eyre::Result<()> {
-    write_instance_command(paths, b"restart\n")
+    request(paths, InstanceCommand::Restart).map(|_| ())
 }
 
 /// Asks a running instance what it is doing, over the same socket `stop`/
 /// `restart` use — the only request on it that reads a reply back.
 pub fn request_status(paths: &Paths) -> color_eyre::Result<PlayerStatus> {
-    let sock = paths.stop_socket();
-    if !sock.exists() {
-        return Err(usage_err("jellysink is not running"));
-    }
-    let mut stream = StdUnixStream::connect(&sock)
-        .wrap_err_with(|| format!("connecting to {}", sock.display()))?;
-    stream
-        .write_all(b"status\n")
-        .wrap_err("sending status request to the running instance")?;
-    stream
-        .shutdown(Shutdown::Write)
-        .wrap_err("closing write half")?;
-    let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
-        .wrap_err("reading status reply")?;
+    let buf = request(paths, InstanceCommand::Status)?;
     serde_json::from_slice(&buf).wrap_err("parsing status reply")
-}
-
-fn write_instance_command(paths: &Paths, msg: &[u8]) -> color_eyre::Result<()> {
-    let sock = paths.stop_socket();
-    if !sock.exists() {
-        return Err(usage_err("jellysink is not running"));
-    }
-    let mut stream = StdUnixStream::connect(&sock)
-        .wrap_err_with(|| format!("connecting to {}", sock.display()))?;
-    stream
-        .write_all(msg)
-        .wrap_err_with(|| format!("writing to {}", sock.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]

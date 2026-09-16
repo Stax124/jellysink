@@ -76,7 +76,7 @@ systemctl --user enable --now jellysink
 
 Skip the unit with `curl -fsSL ... | sh -s -- --no-systemd`, then run `jellysink run` yourself. `--no-desktop` skips the menu entries.
 
-`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon gets a green-dot badge and the menu gets an **Install update** item; choosing it opens a terminal, shows download progress, replaces the binary, restarts the daemon, then waits for Enter so the window stays open. `jellysink update` installs from the CLI and **stops** a running instance — start it again with `systemctl --user start jellysink` or `jellysink run`. Current playback ends either way. Either route also brings the `jellytui` sitting beside the daemon level, whether or not the daemon itself had an update.
+`jellysink` checks GitHub Releases once when the daemon starts. If a newer version exists, the tray icon gets a green-dot badge and the menu gets an **Install update** item; choosing it opens a terminal, shows download progress, replaces the binary, restarts the daemon, then waits for Enter so the window stays open. `jellysink update` and `jellytui update` install the same way and **restart** a running daemon onto the new binary; current playback ends when they do. Every route updates both binaries, whether or not the one you ran had an update of its own, and the daemon is only restarted when its own binary was replaced.
 
 ### From source
 
@@ -119,10 +119,12 @@ jellysink stop           # ask a running instance to quit
 jellysink status         # show what a running instance is doing
 jellysink update         # install the latest GitHub release
 jellysink update --check # print whether a newer release exists
+jellysink update --force # reinstall the latest release even if already on it
 
 jellytui                 # browse and play from the terminal
 jellytui update          # install the latest GitHub release
 jellytui update --check  # print whether a newer release exists
+jellytui update --force  # reinstall the latest release even if already on it
 ```
 
 Cast a movie or episode to **jellysink** from the Jellyfin web/Android/iOS app. mpv opens with your normal config. Pause, seek, volume, mute, fullscreen, audio, and subtitles work from the controlling app. A series episode continues into the next one (aired order, across seasons) until the last episode or Stop, carrying the audio and subtitle tracks you last picked with it — picked in the controlling app, or with `#` and `j` in the mpv window.
@@ -163,13 +165,13 @@ jellysink logout
 
 ## Configuration
 
-| Key                | Default   | Notes                                                                                                                                    |
-| ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `mpv_path`         | `mpv`     | Binary used to spawn the player                                                                                                          |
-| `autoplay`         | `true`    | Next episode in aired order; `false` stops after the current item                                                                        |
-| `prepend_previous` | `true`    | Also load the episodes that aired *before* the current one, so mpv's playlist selector can reach them                                    |
-| `cover_cache_mb`   | `256`     | Disk jellytui's cover cache may use, in `~/.cache/jellysink/covers`; `0` turns it off                                                    |
-| `mpv_args`         | _(empty)_ | Extra argv on top of your mpv config, never instead of it                                                                                |
+| Key                | Default   | Notes                                                                                                 |
+| ------------------ | --------- | ----------------------------------------------------------------------------------------------------- |
+| `mpv_path`         | `mpv`     | Binary used to spawn the player                                                                       |
+| `autoplay`         | `true`    | Next episode in aired order; `false` stops after the current item                                     |
+| `prepend_previous` | `true`    | Also load the episodes that aired *before* the current one, so mpv's playlist selector can reach them |
+| `cover_cache_mb`   | `256`     | Disk jellytui's cover cache may use, in `~/.cache/jellysink/covers`; `0` turns it off                 |
+| `mpv_args`         | _(empty)_ | Extra argv on top of your mpv config, never instead of it                                             |
 
 `--config DIR` (global) uses a different configuration directory. The default is `~/.config/jellysink`.
 

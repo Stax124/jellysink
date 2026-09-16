@@ -82,3 +82,28 @@ fn a_stale_stop_socket_left_by_a_kill_does_not_look_like_a_running_daemon() {
     assert!(paths.stop_socket().exists(), "premise of the test");
     assert!(!is_running(&paths));
 }
+
+/// The regression: a socket file left by a SIGKILL refuses the connection, and
+/// that surfaced as a color-eyre dump instead of "jellysink is not running".
+#[test]
+fn a_stale_socket_with_no_listener_reads_as_not_running() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
+    std::fs::write(paths.stop_socket(), b"").unwrap();
+    let err = request_status(&paths).unwrap_err();
+    assert!(err.to_string().contains("not running"), "{err:#}");
+}
+
+/// The regression: with no read timeout a listener that accepts and never
+/// answers hung the caller.
+#[test]
+fn a_listener_that_never_answers_reads_as_not_responding() {
+    let dir = TempDir::new().unwrap();
+    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
+    let listener = std::os::unix::net::UnixListener::bind(paths.stop_socket()).unwrap();
+    let accepting = std::thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+
+    let err = request_status(&paths).unwrap_err();
+    assert!(err.to_string().contains("not responding"), "{err:#}");
+    drop(accepting.join().unwrap().unwrap());
+}
