@@ -34,6 +34,7 @@ everything cooperatively scheduled.
 | WebSocket reader  | `ws_rx` (`WsIncoming`)               | `run_session`                    | One WebSocket connection.           |
 | Update check      | nothing; badges the tray             | `cmd_run` (`spawn_update_check`) | Detached; ends after one check.     |
 | Tray update apply | nothing; consumes `apply`            | `cmd_run`                        | Detached; the process.              |
+| Stop socket listener | nothing; answers `stop.sock`      | `cmd_run`                        | Detached; until `shutdown`.         |
 | MPRIS emitter     | `PropertiesChanged`/`Seeked` from `status_rx` | `mpris::start`          | Detached; the D-Bus connection.     |
 
 Two channels cross layers: `status_tx`/`status_rx` (a `watch` of `PlayerStatus`,
@@ -49,7 +50,7 @@ does not have to re-plumb them.
 (`runtime/task.rs`) — there is no collecting struct, each call site owns its own
 handle. Without it a reconnect spawns a fresh WebSocket reader and leaves the
 previous one running; against a half-open TCP connection that never returns, so
-it leaks for the life of the process. The three `cmd_run` and `mpris` tasks are
+it leaks for the life of the process. The four `cmd_run` and `mpris` tasks are
 deliberately detached instead: they are process-scoped, and the process ends by
 `exec` or exit.
 
@@ -170,10 +171,11 @@ the latch.
 clear the latch — otherwise the next click spins on a permanently-set latch
 instead of running again.
 
-`cmd_run` selects over the session future, the stop-socket listener, SIGTERM,
-SIGINT and `restart`; whichever arm resolves, `shutdown.fire()` runs
-unconditionally right after, so any way the daemon leaves that `select!` still
-tells the session loop to stop. The `restart` arm additionally sets a flag and
+`cmd_run` selects over the session future, SIGTERM, SIGINT and `restart`;
+whichever arm resolves, `shutdown.fire()` runs unconditionally right after, so
+any way the daemon leaves that `select!` still tells the session loop to stop.
+The listener is not an arm, so a tray Quit or a `stop` ends `cmd_run` through
+the session future — which returns only once `stop_playback` has finished. The `restart` arm additionally sets a flag and
 **awaits the session future** before returning, so mpv is torn down and the
 final report sent before the process replaces itself.
 
@@ -244,9 +246,9 @@ daemon shutdown, or mpv exiting on its own (`MpvEvent::Exited`) tears mpv down.
    tracks — see `specs/tracks.md`).
 4. `quit_and_wait` escalates — IPC `quit`, 3 s, `SIGTERM`, 2 s, `SIGKILL` — then
    removes the IPC socket.
-5. `instance::listen_stop` breaks its loop; `cmd_run` unlinks `stop.sock` once,
-   after its `select!`, which is the only path every exit passes through — the
-   restart arm never lets the listener see `shutdown`.
+5. `instance::listen_stop` breaks its loop and unlinks `stop.sock`, so the path
+   is gone as soon as nothing answers on it. `cmd_run` unlinks again after its
+   `select!`: a signal exit returns before that task is ever polled.
 6. The process exits; the kernel releases the `flock` on `instance.lock`.
 
 Step 6 is why `instance::is_running` probes the lock rather than the socket
@@ -256,16 +258,21 @@ forever. A client connecting to that leftover is refused, which it reports as
 
 ## The restart handoff
 
-`stop.sock` is unbound from the moment a restart is decided until the new image
-binds — the old image's mpv escalation (step 4, up to 5 s) plus the exec and
-startup. A client in that window finds a path that refuses connections and
-reports the daemon as not running, indistinguishable from the `SIGKILL` leftover
-above and treated the same. jellytui's 1 Hz status poll recovers on its own.
+The unanswered window is the gap between the old image unlinking `stop.sock` and
+the new image binding it: the old image's mpv escalation (step 4, up to 5 s) plus
+the exec and startup. Either side of that gap the daemon refuses rather than
+stalls, because the socket path exists only while something is accepting on it —
+`listen_stop` removes it when its loop ends, and `bind_stop_socket` recreates it.
+A client in the gap reports the daemon as not running, indistinguishable from the
+`SIGKILL` leftover above and treated the same; jellytui's 1 Hz poll recovers on
+its own.
 
-Binding is not answering. `bind_stop_socket` runs directly after the instance
-lock, but `listen_stop` only starts inside `cmd_run`'s `select!`, after the tray
-and mpris's 3 s timeout; in between, a client's connect succeeds into the backlog
-and goes unanswered until it gives up.
+`listen_stop` is spawned immediately after the bind rather than being a `select!`
+arm, so the new image answers from its first await instead of from behind the
+tray and mpris's 3 s timeout. Binding alone would not do it: a connect to a bound
+socket that nothing accepts succeeds into the backlog and waits, which costs the
+client `STATUS_REPLY_TIMEOUT` and tells it the daemon is not *responding* — worse
+than the refusal it would otherwise have had.
 
 Two ways of closing the window instead are rejected:
 
@@ -292,9 +299,9 @@ Two ways of closing the window instead are rejected:
   `jellysink status` and `stop` may need re-running. An ack on `stop`/`restart`
   would not help: the daemon being restarted is by definition the old image, so
   the very update that shipped the ack would not have it.
-- **A status during startup reads as "not responding".** Nothing accepts on
-  `stop.sock` until `listen_stop` runs, so a client in that window waits out
-  `STATUS_REPLY_TIMEOUT` (500 ms) rather than being refused outright.
+- **`stop` returns before the daemon is gone.** It is answered by acting, and the
+  process tears mpv down before exiting, so `instance.lock` stays held for up to
+  that 5 s escalation — a `run` started straight after can still be refused.
 - **An expired token retries forever.** The daemon stays up and polls every 60 s
   rather than exiting, so a systemd unit does not flap; the cost is a warning
   line per minute.

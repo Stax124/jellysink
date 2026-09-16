@@ -11,8 +11,8 @@ use tokio::net::UnixListener;
 
 use crate::daemon::signal::Signal;
 
-/// Binding does not answer anything: `listen_stop` does, and until it runs a
-/// client's connect succeeds into the backlog and waits there.
+/// Separate from `listen_stop` so the path exists before the task that answers
+/// on it is first polled, and a client cannot connect into an empty backlog.
 pub(crate) fn bind_stop_socket(paths: &Paths) -> color_eyre::Result<UnixListener> {
     let sock = paths.stop_socket();
     let _ = std::fs::remove_file(&sock);
@@ -30,6 +30,7 @@ pub(crate) fn bind_stop_socket(paths: &Paths) -> color_eyre::Result<UnixListener
 
 pub(crate) async fn listen_stop(
     listener: UnixListener,
+    paths: Paths,
     shutdown: Signal,
     restart: Signal,
     status_rx: tokio::sync::watch::Receiver<PlayerStatus>,
@@ -80,6 +81,14 @@ pub(crate) async fn listen_stop(
                 }
             }
         }
+    }
+    // The path goes with the loop: nothing answers on it from here, and a client
+    // that finds it gone reports the daemon as not running instead of stalling.
+    let sock = paths.stop_socket();
+    if let Err(e) = std::fs::remove_file(&sock)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("leaving {} behind: {e}", sock.display());
     }
     Ok(())
 }

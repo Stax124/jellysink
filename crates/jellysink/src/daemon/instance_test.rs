@@ -16,14 +16,14 @@ async fn status_round_trips_over_the_socket() {
         "admin".into(),
     ));
 
-    // Bound here rather than inside the task: the socket answers from the moment
-    // `bind_stop_socket` returns, so nothing has to wait for the task to be polled.
+    // Bound outside the task so the path exists before the client connects; the
+    // task is what answers on it.
     let listener = bind_stop_socket(&paths).unwrap();
     let listen_shutdown = shutdown.clone();
-    let serving =
-        tokio::spawn(
-            async move { listen_stop(listener, listen_shutdown, restart, status_rx).await },
-        );
+    let listen_paths = paths.clone();
+    let serving = tokio::spawn(async move {
+        listen_stop(listener, listen_paths, listen_shutdown, restart, status_rx).await
+    });
 
     let status = tokio::task::spawn_blocking({
         let paths = paths.clone();
@@ -39,4 +39,11 @@ async fn status_round_trips_over_the_socket() {
 
     shutdown.fire();
     serving.await.unwrap().unwrap();
+
+    // The teardown window depends on this: while the daemon escalates mpv down
+    // nothing accepts, and a socket left behind stalls every client until it.
+    assert!(
+        !paths.stop_socket().exists(),
+        "the listener must take its path with it"
+    );
 }

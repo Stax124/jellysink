@@ -20,6 +20,28 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
 
     let _lock = InstanceLock::acquire(&paths)?;
     let stop_listener = bind_stop_socket(&paths)?;
+
+    let shutdown = Signal::new();
+    let restart = Signal::new();
+    let (status_tx, status_rx) = tokio::sync::watch::channel(
+        jellysink_core::status::PlayerStatus::idle(creds.server.clone(), creds.username.clone()),
+    );
+    // Ahead of the tray and mpris, so `status` is answered from the first await
+    // rather than after however long those take to come up.
+    tokio::spawn({
+        let (paths, shutdown, restart, status_rx) = (
+            paths.clone(),
+            shutdown.clone(),
+            restart.clone(),
+            status_rx.clone(),
+        );
+        async move {
+            if let Err(e) = listen_stop(stop_listener, paths, shutdown, restart, status_rx).await {
+                tracing::error!("stop socket listener: {e:#}");
+            }
+        }
+    });
+
     tracing::info!(
         server = %creds.server,
         user = %creds.username,
@@ -28,8 +50,6 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         "starting"
     );
 
-    let shutdown = Signal::new();
-    let restart = Signal::new();
     let tray = tray::start(shutdown.clone()).await;
     spawn_update_check(tray.as_ref().map(|t| t.handle.clone()));
     if let Some(apply) = tray.as_ref().map(|t| t.apply.clone()) {
@@ -55,10 +75,6 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .wrap_err("SIGINT handler")?;
 
-    let (status_tx, status_rx) = tokio::sync::watch::channel(
-        jellysink_core::status::PlayerStatus::idle(creds.server.clone(), creds.username.clone()),
-    );
-
     let (ext_tx, ext_rx) = tokio::sync::mpsc::unbounded_channel();
     if tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -72,21 +88,15 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         );
     }
 
-    let stop_shutdown = shutdown.clone();
-    let stop_restart = restart.clone();
-    let stop_fut =
-        async move { listen_stop(stop_listener, stop_shutdown, stop_restart, status_rx).await };
-
     let session_shutdown = shutdown.clone();
     let exit_paths = paths.clone();
     let session_fut =
         crate::runtime::run(config, creds, paths, session_shutdown, status_tx, ext_rx);
-    tokio::pin!(session_fut, stop_fut);
+    tokio::pin!(session_fut);
 
     let mut do_restart = false;
     let outcome = tokio::select! {
         r = &mut session_fut => r,
-        r = &mut stop_fut => r,
         _ = sigterm.recv() => {
             tracing::info!("SIGTERM");
             Ok(())
@@ -103,8 +113,8 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         }
     };
     shutdown.fire();
-    // The one unlink: `listen_stop` never sees `shutdown` on the restart path,
-    // because the `select!` has already committed to that arm.
+    // The guaranteed unlink: a signal exit returns here before the listener task
+    // is ever polled, so it cannot be left to remove its own path.
     if let Err(e) = std::fs::remove_file(exit_paths.stop_socket())
         && e.kind() != std::io::ErrorKind::NotFound
     {
