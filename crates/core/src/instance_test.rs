@@ -94,14 +94,16 @@ fn a_stale_socket_with_no_listener_reads_as_not_running() {
     assert!(err.to_string().contains("not running"), "{err:#}");
 }
 
-/// Otherwise a daemon killed mid-restart leaves every later call waiting out
-/// the full handoff window.
+/// The regression: with no read timeout a listener that accepts and never
+/// answers hung the caller, and jellytui's 1 Hz poll stacked a thread per hang.
 #[test]
-fn a_marker_that_outlives_its_daemon_is_cleared_by_the_caller_that_waits_for_it() {
+fn a_listener_that_never_answers_reads_as_not_responding() {
     let dir = TempDir::new().unwrap();
     let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
-    mark_restart_pending(&paths);
-    let err = request(&paths, InstanceCommand::Status, Duration::ZERO).unwrap_err();
-    assert!(err.to_string().contains("not running"), "{err:#}");
-    assert!(!paths.restart_marker().exists());
+    let listener = std::os::unix::net::UnixListener::bind(paths.stop_socket()).unwrap();
+    let accepting = std::thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+
+    let err = request_status(&paths).unwrap_err();
+    assert!(err.to_string().contains("not responding"), "{err:#}");
+    drop(accepting.join().unwrap().unwrap());
 }

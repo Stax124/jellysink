@@ -7,12 +7,11 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream as StdUnixStream;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// Long enough to cover a restart: the old daemon reports Stopped and escalates
-/// mpv down before it execs, and the new one binds before it does anything slow.
-const RESTART_HANDOFF_WAIT: Duration = Duration::from_secs(10);
-const RETRY_INTERVAL: Duration = Duration::from_millis(50);
+/// Under jellytui's 1 Hz poll, so a status can never overlap its successor;
+/// it is answered off a `watch` receiver and never legitimately waits.
+const STATUS_REPLY_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub struct InstanceLock {
@@ -89,25 +88,9 @@ pub fn is_running(paths: &Paths) -> bool {
     }
 }
 
-/// `stop.sock` is unbound from the moment a restart is decided until the new
-/// image binds; clients wait that out instead of reporting the daemon gone.
-pub fn mark_restart_pending(paths: &Paths) {
-    if let Err(e) = std::fs::write(paths.restart_marker(), b"") {
-        tracing::warn!("could not mark the restart pending: {e}");
-    }
-}
-
-pub fn clear_restart_pending(paths: &Paths) {
-    if let Err(e) = std::fs::remove_file(paths.restart_marker())
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!("could not clear the restart marker: {e}");
-    }
-}
-
-/// Refused, gone, or accepted and then dropped unanswered: all three are how
-/// `stop.sock` behaves while the daemon is between binds.
-fn worth_waiting_for(e: &std::io::Error) -> bool {
+/// Refused, gone, or accepted and then dropped unanswered: how `stop.sock`
+/// fails both as a SIGKILL leftover and while the daemon is between binds.
+fn means_not_running(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),
         std::io::ErrorKind::NotFound
@@ -119,12 +102,22 @@ fn worth_waiting_for(e: &std::io::Error) -> bool {
     )
 }
 
+/// A daemon that accepts and then stalls would otherwise hang the caller, and
+/// jellytui's 1 Hz poll stacks a blocking thread for every one that hangs.
+fn timed_out(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
+}
+
 fn exchange(sock: &std::path::Path, cmd: InstanceCommand) -> std::io::Result<Vec<u8>> {
     let mut stream = StdUnixStream::connect(sock)?;
     stream.write_all(format!("{}\n", cmd.wire()).as_bytes())?;
     if !cmd.expects_reply() {
         return Ok(Vec::new());
     }
+    stream.set_read_timeout(Some(STATUS_REPLY_TIMEOUT))?;
     stream.shutdown(Shutdown::Write)?;
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf)?;
@@ -135,46 +128,28 @@ fn exchange(sock: &std::path::Path, cmd: InstanceCommand) -> std::io::Result<Vec
     Ok(buf)
 }
 
-/// The whole exchange is retried, not just the connect: a restart also resets
-/// connections it accepted on the way down.
-fn request(paths: &Paths, cmd: InstanceCommand, wait: Duration) -> color_eyre::Result<Vec<u8>> {
+fn request(paths: &Paths, cmd: InstanceCommand) -> color_eyre::Result<Vec<u8>> {
     let sock = paths.stop_socket();
-    let marker = paths.restart_marker();
-    let deadline = Instant::now() + wait;
-    loop {
-        match exchange(&sock, cmd) {
-            Ok(buf) => return Ok(buf),
-            Err(e) if worth_waiting_for(&e) => {
-                if !marker.exists() {
-                    return Err(usage_err("jellysink is not running"));
-                }
-                if Instant::now() >= deadline {
-                    // The marker outlived the daemon that wrote it; the next
-                    // caller should fail fast rather than wait it out again.
-                    clear_restart_pending(paths);
-                    return Err(usage_err("jellysink is not running"));
-                }
-                std::thread::sleep(RETRY_INTERVAL);
-            }
-            Err(e) => {
-                return Err(eyre!(e)).wrap_err_with(|| format!("talking to {}", sock.display()));
-            }
-        }
+    match exchange(&sock, cmd) {
+        Ok(buf) => Ok(buf),
+        Err(e) if means_not_running(&e) => Err(usage_err("jellysink is not running")),
+        Err(e) if timed_out(&e) => Err(usage_err("jellysink is not responding")),
+        Err(e) => Err(eyre!(e)).wrap_err_with(|| format!("talking to {}", sock.display())),
     }
 }
 
 pub fn request_stop(paths: &Paths) -> color_eyre::Result<()> {
-    request(paths, InstanceCommand::Stop, RESTART_HANDOFF_WAIT).map(|_| ())
+    request(paths, InstanceCommand::Stop).map(|_| ())
 }
 
 pub fn request_restart(paths: &Paths) -> color_eyre::Result<()> {
-    request(paths, InstanceCommand::Restart, RESTART_HANDOFF_WAIT).map(|_| ())
+    request(paths, InstanceCommand::Restart).map(|_| ())
 }
 
 /// Asks a running instance what it is doing, over the same socket `stop`/
 /// `restart` use — the only request on it that reads a reply back.
 pub fn request_status(paths: &Paths) -> color_eyre::Result<PlayerStatus> {
-    let buf = request(paths, InstanceCommand::Status, RESTART_HANDOFF_WAIT)?;
+    let buf = request(paths, InstanceCommand::Status)?;
     serde_json::from_slice(&buf).wrap_err("parsing status reply")
 }
 

@@ -5,7 +5,7 @@ use crate::daemon::{mpris, tray};
 use color_eyre::eyre::WrapErr;
 use jellysink_core::VERSION;
 use jellysink_core::config::{Config, Credentials, Paths, device_name};
-use jellysink_core::instance::{InstanceLock, clear_restart_pending, mark_restart_pending};
+use jellysink_core::instance::InstanceLock;
 use jellysink_core::update::{check, exec_updated, restart_exe_path};
 use jellysink_core::usage_err;
 
@@ -19,8 +19,6 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let exe = restart_exe_path(&std::env::current_exe().wrap_err("resolving current executable")?);
 
     let _lock = InstanceLock::acquire(&paths)?;
-    // Before the tray and mpris: both are allowed to be slow, and a client left
-    // over from the restart that brought us here is already waiting on this.
     let stop_listener = bind_stop_socket(&paths)?;
     tracing::info!(
         server = %creds.server,
@@ -100,8 +98,6 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         _ = restart.fired() => {
             tracing::info!("restart requested");
             do_restart = true;
-            // Nothing answers the socket from here until the new image binds.
-            mark_restart_pending(&exit_paths);
             shutdown.fire();
             session_fut.await
         }
@@ -118,7 +114,6 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     if do_restart {
         tracing::info!(path = %exe.display(), "replacing process with updated binary");
         let err = exec_updated(&exe);
-        clear_restart_pending(&exit_paths);
         tracing::error!("restart after update failed: {err}");
         return Err(err).wrap_err("restarting after update");
     }

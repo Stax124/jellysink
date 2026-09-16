@@ -256,26 +256,28 @@ forever. A client connecting to that leftover is refused, which it reports as
 
 ## The restart handoff
 
-A restart unbinds the socket for as long as the old image takes to escalate mpv
-down (step 4, up to 5 s) plus the exec and the new image's startup, so a client
-in that window finds a path that refuses connections — indistinguishable, on its
-own, from the `SIGKILL` leftover above.
+`stop.sock` is unbound from the moment a restart is decided until the new image
+binds — the old image's mpv escalation (step 4, up to 5 s) plus the exec and
+startup. A client in that window finds a path that refuses connections and
+reports the daemon as not running, indistinguishable from the `SIGKILL` leftover
+above and treated the same. jellytui's 1 Hz status poll recovers on its own.
 
-`restart.pending` in the config directory is what tells them apart. `cmd_run`
-writes it in the `restart` arm, before anything else, and `bind_stop_socket`
-removes it in the new image; between those two points a client retries instead
-of reporting the daemon gone, up to `RESTART_HANDOFF_WAIT`. A client that waits
-that out and still finds nothing removes the marker itself, so a daemon killed
-mid-restart costs one wait rather than poisoning every later call.
+Binding is not answering. `bind_stop_socket` runs directly after the instance
+lock, but `listen_stop` only starts inside `cmd_run`'s `select!`, after the tray
+and mpris's 3 s timeout; in between, a client's connect succeeds into the backlog
+and goes unanswered until it gives up.
 
-What is retried is the whole exchange, not the connect: a restart also resets
-connections it accepted on the way down, so a `status` can reach a listener that
-is gone before it answers. `request` therefore treats an empty reply as a
-failure worth retrying rather than as a status to parse.
+Two ways of closing the window instead are rejected:
 
-This is why `bind_stop_socket` is split from `listen_stop` and called directly
-after the instance lock: binding is what ends the window, and it must not sit
-behind the tray or mpris's 3 s timeout.
+- **A marker file the client waits on.** The client that hits its own deadline
+  deletes a marker the daemon's restart still depends on, and a blocking retry
+  loop under a poll with no in-flight guard stacks one thread per tick.
+- **`instance.lock` in place of the socket.** The restart depends on the flock
+  being released by `execve` closing the CLOEXEC fd; `_lock` is still alive at
+  `exec_updated`. A lock surviving the exec would deny the new image's own
+  `InstanceLock::acquire`, since `flock(2)` treats two fds for one file
+  independently. `is_running` also *takes* the exclusive lock while probing, so
+  clients polling it would race the new image's re-acquire.
 
 ## Known limits
 
@@ -285,17 +287,22 @@ behind the tray or mpris's 3 s timeout.
   session on its own timeout regardless.
 - **Reports are queued unboundedly.** A server that stops answering while
   playback continues accumulates one progress report per second.
-- **`stop` and `restart` are not acknowledged.** The daemon answers them by
-  acting, so a client cannot tell a command that was read from one accepted and
-  dropped as the listener went away. One sent during the handoff window can be
-  lost; `status`, which reads a reply, is retried.
+- **A restart reads as "not running".** Nothing answers `stop.sock` between the
+  restart decision and the new image's bind. jellytui's poll recovers on its own;
+  `jellysink status` and `stop` may need re-running. An ack on `stop`/`restart`
+  would not help: the daemon being restarted is by definition the old image, so
+  the very update that shipped the ack would not have it.
+- **A status during startup reads as "not responding".** Nothing accepts on
+  `stop.sock` until `listen_stop` runs, so a client in that window waits out
+  `STATUS_REPLY_TIMEOUT` (500 ms) rather than being refused outright.
 - **An expired token retries forever.** The daemon stays up and polls every 60 s
   rather than exiting, so a systemd unit does not flap; the cost is a warning
   line per minute.
 - **One thread.** `current_thread` flavour: a blocking call anywhere stalls
   keepalives, progress reports and mpv IPC together.
 - **A wedged mpv costs 10 s per command.** That is the IPC timeout, and several
-  paths issue commands in sequence.
+  paths issue commands in sequence. It does not delay `status`, which is answered
+  off a `watch` receiver while that command is still awaiting its reply.
 - **`ForceKeepAlive` is trusted.** Whatever the server sends becomes the
   interval, floored at 1 s.
 
