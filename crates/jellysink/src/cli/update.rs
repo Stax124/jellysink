@@ -28,6 +28,7 @@ fn after_install(from_tray: bool, daemon_running: bool, updated: bool) -> AfterI
 pub(crate) async fn cmd_update(
     paths: &Paths,
     check_only: bool,
+    force: bool,
     from_tray: bool,
 ) -> color_eyre::Result<()> {
     if check_only {
@@ -38,7 +39,7 @@ pub(crate) async fn cmd_update(
         return Ok(());
     }
 
-    let result = install_and_handoff(paths, from_tray).await;
+    let result = install_and_handoff(paths, force, from_tray).await;
     if from_tray {
         if let Err(e) = &result {
             eprintln!("{e:#}");
@@ -54,26 +55,33 @@ pub(crate) async fn cmd_update(
     result
 }
 
-async fn install_and_handoff(paths: &Paths, from_tray: bool) -> color_eyre::Result<()> {
+async fn install_and_handoff(
+    paths: &Paths,
+    force: bool,
+    from_tray: bool,
+) -> color_eyre::Result<()> {
     println!("Checking for updates...");
     let mut updated = false;
-    match check(BIN_NAME).await? {
-        Some(offer) => {
-            println!("Downloading {APP_NAME} v{offer} (running {VERSION})...");
-            match install(BIN_NAME, None, true).await? {
-                Some(version) => {
-                    println!("Updated to version {version}.");
-                    updated = true;
-                }
-                None => println!("Already up to date."),
-            }
+    let offer = check(BIN_NAME).await?;
+    if offer.is_none() && !force {
+        println!("{APP_NAME} {VERSION} is up to date.");
+    } else {
+        match &offer {
+            Some(offer) => println!("Downloading {APP_NAME} v{offer} (running {VERSION})..."),
+            None => println!("Reinstalling {APP_NAME} {VERSION}..."),
         }
-        None => println!("{APP_NAME} {VERSION} is up to date."),
+        match install(BIN_NAME, None, true, force).await? {
+            Some(version) => {
+                println!("Updated to version {version}.");
+                updated = true;
+            }
+            None => println!("Already up to date."),
+        }
     }
     // Unconditional: the frontend updates separately, so it can be behind a
     // daemon that is already current.
     if let Some(path) = sibling_binary(JELLYTUI_BIN) {
-        match install(JELLYTUI_BIN, Some(&path), true).await {
+        match install(JELLYTUI_BIN, Some(&path), true, force).await {
             Ok(Some(version)) => println!("Updated {JELLYTUI_BIN} to version {version}."),
             Ok(None) => println!("{JELLYTUI_BIN} is up to date."),
             // Our own update has landed by now, so this is reported not raised.
@@ -116,9 +124,9 @@ pub(super) async fn apply_update_from_daemon(
 ) {
     if let Err(e) = spawn_tray_update(&paths, &exe).await {
         tracing::warn!("could not open a terminal for the update ({e}); updating silently");
-        let installed = install(BIN_NAME, None, false).await;
+        let installed = install(BIN_NAME, None, false, false).await;
         if let Some(path) = sibling_binary(JELLYTUI_BIN)
-            && let Err(e) = install(JELLYTUI_BIN, Some(&path), false).await
+            && let Err(e) = install(JELLYTUI_BIN, Some(&path), false, false).await
         {
             tracing::warn!("could not update {JELLYTUI_BIN}: {e:#}");
         }

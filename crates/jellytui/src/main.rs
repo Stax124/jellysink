@@ -43,6 +43,9 @@ enum Command {
         /// Only check; do not download
         #[arg(long)]
         check: bool,
+        /// Reinstall the latest release even when it is already installed
+        #[arg(long, conflicts_with = "check")]
+        force: bool,
     },
 }
 
@@ -53,7 +56,7 @@ async fn main() -> Result<()> {
     jellysink_core::install_crypto_provider();
 
     let result = match cli.command {
-        Some(Command::Update { check }) => cli::cmd_update(&paths, check).await,
+        Some(Command::Update { check, force }) => cli::cmd_update(&paths, check, force).await,
         None => run(paths).await,
     };
     match result {

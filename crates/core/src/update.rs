@@ -29,6 +29,10 @@ fn match_asset(assets: &[ReleaseAsset], bin_name: &str, target: &str) -> Option<
     assets.iter().find(|asset| asset.name() == wanted).cloned()
 }
 
+/// Below every release, so a forced install always counts the latest as newer.
+/// Also the baseline for a sibling that cannot be asked its version.
+const FORCED_VERSION: &str = "0.0.0";
+
 /// `progress` is the download bar only. `self_update`'s own commentary stays
 /// off: its "*NOT* compatible" line fires on every 0.x minor bump.
 fn updater(
@@ -73,16 +77,23 @@ pub async fn check(bin_name: &str) -> color_eyre::Result<Option<String>> {
 /// `dest` of `None` replaces the running executable; `Some` one beside it,
 /// whose own `--version` is then the baseline. `Ok(None)` means already current.
 ///
+/// `force` ignores that baseline, so the latest release installs over any version.
+///
 /// Safe on a binary that is running: the install renames over the path, so that
 /// process keeps the inode it mapped.
 pub async fn install(
     bin_name: &str,
     dest: Option<&Path>,
     progress: bool,
+    force: bool,
 ) -> color_eyre::Result<Option<String>> {
-    let current = match dest {
-        Some(path) => installed_version(path).unwrap_or_else(|| "0.0.0".to_string()),
-        None => crate::VERSION.to_string(),
+    let current = if force {
+        FORCED_VERSION.to_string()
+    } else {
+        match dest {
+            Some(path) => installed_version(path).unwrap_or_else(|| FORCED_VERSION.to_string()),
+            None => crate::VERSION.to_string(),
+        }
     };
     let status = updater(bin_name, dest, &current, progress)?
         .update_async()

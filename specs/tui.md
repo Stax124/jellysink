@@ -76,6 +76,11 @@ explicit `chmod`: a bare-binary asset extracts 0644 and only `self_replace`
 carries the old mode over. A neighbour that cannot be replaced is reported, not
 raised; this binary's own update has already landed by then.
 
+`--force` pins the baseline every comparison uses to `0.0.0` rather than naming
+a release to fetch, so the latest always counts as newer and is installed again
+over both binaries. It is refused alongside `--check`, which exists to *not*
+download.
+
 **Replacing the daemon's binary is not stopping the daemon.** The install
 renames over the path, so a running jellysink keeps the inode it mapped and
 plays on; the new version waits for a restart. That is why `jellytui` may do it
