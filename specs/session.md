@@ -248,7 +248,7 @@ daemon shutdown, or mpv exiting on its own (`MpvEvent::Exited`) tears mpv down.
    removes the IPC socket.
 5. `instance::listen_stop` breaks its loop and unlinks `stop.sock`, so the path
    is gone as soon as nothing answers on it. `cmd_run` unlinks again after its
-   `select!`: a signal exit returns before that task is ever polled.
+   `select!`, because nothing awaits that task.
 6. The process exits; the kernel releases the `flock` on `instance.lock`.
 
 Step 6 is why `instance::is_running` probes the lock rather than the socket

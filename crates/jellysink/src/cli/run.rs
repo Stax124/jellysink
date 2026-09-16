@@ -113,8 +113,8 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
         }
     };
     shutdown.fire();
-    // The guaranteed unlink: a signal exit returns here before the listener task
-    // is ever polled, so it cannot be left to remove its own path.
+    // The guaranteed unlink: nothing awaits the listener task, so the process can
+    // exit before it observes `shutdown` and removes its own path.
     if let Err(e) = std::fs::remove_file(exit_paths.stop_socket())
         && e.kind() != std::io::ErrorKind::NotFound
     {

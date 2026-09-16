@@ -102,8 +102,6 @@ fn means_not_running(e: &std::io::Error) -> bool {
     )
 }
 
-/// A daemon that accepts and then stalls would otherwise hang the caller, and
-/// jellytui's 1 Hz poll stacks a blocking thread for every one that hangs.
 fn timed_out(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),

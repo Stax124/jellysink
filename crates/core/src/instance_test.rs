@@ -95,7 +95,7 @@ fn a_stale_socket_with_no_listener_reads_as_not_running() {
 }
 
 /// The regression: with no read timeout a listener that accepts and never
-/// answers hung the caller, and jellytui's 1 Hz poll stacked a thread per hang.
+/// answers hung the caller.
 #[test]
 fn a_listener_that_never_answers_reads_as_not_responding() {
     let dir = TempDir::new().unwrap();
