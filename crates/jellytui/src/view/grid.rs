@@ -36,10 +36,10 @@ pub(crate) struct Shape {
     pub(crate) item_count: usize,
 }
 
-/// The narrowest a tile may be, whatever the height says. A 2:3 poster stays
+/// The narrowest a cover may be, whatever the height says. A 2:3 poster stays
 /// legible narrow; a 16:9 still does not.
-fn minimum_tile_width(aspect: f32) -> u16 {
-    if aspect > 1.0 { 26 } else { 18 }
+fn minimum_cover_width(aspect: f32) -> u16 {
+    if aspect > 1.0 { 24 } else { 16 }
 }
 
 /// The tallest a cover may be if `target_rows` of them are to fit, or `None`
@@ -55,14 +55,14 @@ fn cover_height_budget(
     if target_rows == 1 {
         return Some(budget.max(1));
     }
-    let floor = cover::rows_for(minimum_tile_width(aspect) - 2, aspect, font_size);
+    let floor = cover::rows_for(minimum_cover_width(aspect), aspect, font_size);
     (budget >= floor).then_some(budget)
 }
 
-/// What a tile would like to be before the columns are evened out: whatever the
-/// height budget affords, bounded by [`MIN_COLUMNS`] and [`minimum_tile_width`].
-fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> u16 {
-    let minimum = minimum_tile_width(aspect);
+/// What a cover would like to be before the columns are evened out: whatever the
+/// height budget affords, bounded by [`MIN_COLUMNS`] and [`minimum_cover_width`].
+fn preferred_cover_width(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> u16 {
+    let minimum = minimum_cover_width(aspect);
     let Some(budget) = cover_height_budget(area, aspect, font_size, shape.target_rows) else {
         return minimum;
     };
@@ -70,7 +70,7 @@ fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize, shape: Sha
         .unwrap_or(MIN_COLUMNS)
         .clamp(1, MIN_COLUMNS);
     let widest = (area.width.saturating_sub(GAP * (spread - 1)) / spread).max(minimum);
-    let wanted = cover::columns_for(budget, aspect, font_size) + 2;
+    let wanted = cover::columns_for(budget, aspect, font_size);
     // A shelf is bound by its height, so widening the tile to the floor would
     // only fit fewer covers at the same size.
     if shape.target_rows == 1 {
@@ -83,7 +83,6 @@ fn preferred_tile_width(area: Rect, aspect: f32, font_size: FontSize, shape: Sha
 pub(crate) struct Metrics {
     pub(crate) columns: usize,
     pub(crate) rows: usize,
-    tile: Size,
     cover: Size,
 }
 
@@ -95,20 +94,23 @@ impl Metrics {
     pub(crate) fn page(&self) -> usize {
         self.columns * self.rows
     }
+
+    fn tile_height(&self) -> u16 {
+        self.cover.height + LABEL_HEIGHT
+    }
 }
 
 /// Tile geometry for the grid's *inner* area — see [`inner`].
 pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> Metrics {
-    let preferred = preferred_tile_width(area, aspect, font_size, shape);
+    let preferred = preferred_cover_width(area, aspect, font_size, shape);
     let columns = (area.width.saturating_add(GAP) / preferred.saturating_add(GAP)).max(1);
-    let tile_width = ((area.width.saturating_sub(GAP * (columns - 1))) / columns).max(1);
-    // Evening the tiles out can hand a tile more columns than it asked for, and
-    // a poster obeying its aspect would grow out of the height budget with them.
-    let cover_width = tile_width.saturating_sub(2).max(1);
+    let evened = ((area.width.saturating_sub(GAP * (columns - 1))) / columns).max(1);
+    // Evening the columns out can hand a cover more of them than it asked for,
+    // and a poster obeying its aspect would grow out of the height budget.
     let max_rows = cover_height_budget(area, aspect, font_size, shape.target_rows)
-        .unwrap_or_else(|| cover::rows_for(cover_width, aspect, font_size));
+        .unwrap_or_else(|| cover::rows_for(evened, aspect, font_size));
     let cover = cover::fit(
-        Rect::new(0, 0, cover_width, max_rows),
+        Rect::new(0, 0, evened, max_rows),
         aspect,
         font_size,
         max_rows,
@@ -121,7 +123,6 @@ pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape
         // Rows the grid draws, not rows it could hold: a level too short to
         // fill it must not reserve the height of an empty row.
         rows: fits.min(shape.item_count.div_ceil(columns).max(1)),
-        tile: Size::new(tile_width, tile_height),
         cover: cover.as_size(),
     }
 }
@@ -191,21 +192,29 @@ pub(crate) fn render(
     );
     let start = view.offset * metrics.columns;
     let top = area_inner.y;
+    let stride = metrics.cover.width + GAP;
+    // The covers cannot spend what the height budget left over, so the row is
+    // centred rather than hanging a whole tile's worth of blank off one side.
+    let used = u16::try_from(metrics.columns)
+        .unwrap_or(1)
+        .saturating_mul(stride)
+        .saturating_sub(GAP);
+    let left = area_inner.x + area_inner.width.saturating_sub(used) / 2;
     for (index, item) in items.iter().enumerate().skip(start).take(metrics.page()) {
         let slot = index - start;
         let column = u16::try_from(slot % metrics.columns).unwrap_or(0);
         let row = u16::try_from(slot / metrics.columns).unwrap_or(0);
         let tile = Rect {
-            x: area_inner.x + column * (metrics.tile.width + GAP),
-            y: top + row * metrics.tile.height,
-            width: metrics.tile.width,
-            height: metrics.tile.height,
+            x: left + column * stride,
+            y: top + row * metrics.tile_height(),
+            width: metrics.cover.width,
+            height: metrics.tile_height(),
         };
         if tile.bottom() > area_inner.bottom() || tile.right() > area_inner.right() {
             continue;
         }
         let caption = caption_style(index == view.selected, view.focused);
-        render_tile(frame, tile, &metrics, item, caption, covers);
+        render_tile(frame, tile, item, caption, covers);
     }
 }
 
@@ -220,21 +229,10 @@ fn caption_style(selected: bool, focused: bool) -> Style {
     }
 }
 
-fn render_tile(
-    frame: &mut Frame,
-    tile: Rect,
-    metrics: &Metrics,
-    item: &Item,
-    caption: Style,
-    covers: &Covers,
-) {
-    // A cover can come out narrower than its tile, because the height budget
-    // bounds it first. Centring the rect centres the caption with it.
+fn render_tile(frame: &mut Frame, tile: Rect, item: &Item, caption: Style, covers: &Covers) {
     let cover = Rect {
-        x: tile.x + 1 + (tile.width.saturating_sub(2 + metrics.cover.width)) / 2,
-        y: tile.y,
-        width: metrics.cover.width,
-        height: metrics.cover.height,
+        height: tile.height.saturating_sub(LABEL_HEIGHT),
+        ..tile
     };
     if let Some(protocol) = covers
         .key(item, cover.as_size())

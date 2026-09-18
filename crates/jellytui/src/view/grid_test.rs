@@ -31,28 +31,69 @@ fn tiles_fill_the_row_and_posters_pack_tighter_than_stills() {
     let stills = metrics(area, 16.0 / 9.0, FONT_SIZE, full(TARGET_ROWS));
 
     assert!(posters.columns > stills.columns, "{posters:?} {stills:?}");
-    assert!(stills.tile.width > posters.tile.width, "{stills:?}");
+    assert!(stills.cover.width > posters.cover.width, "{stills:?}");
 
     for grid in [posters, stills] {
-        let used = grid.tile.width * columns(&grid) + GAP * (columns(&grid) - 1);
+        let used = grid.cover.width * columns(&grid) + GAP * (columns(&grid) - 1);
         assert!(used <= area.width, "{grid:?} overruns {}", area.width);
         assert!(
-            area.width - used < grid.tile.width,
+            area.width - used < grid.cover.width,
             "{grid:?} leaves room for another tile"
         );
     }
 }
 
 #[test]
-fn a_tile_reserves_the_rows_under_its_cover_for_the_caption() {
+fn covers_in_a_row_are_a_single_column_apart() {
+    let covers = Covers::new(Picker::halfblocks(), CoverDisk::disabled());
+    let series: Vec<Item> = (0..8)
+        .map(|index| item(json!({"Id": index.to_string(), "Name": "Slime", "Type": "Series"})))
+        .collect();
+    let area = Rect::new(0, 0, 80, 30);
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| {
+            render(
+                frame,
+                area,
+                Line::from(" Shows "),
+                View {
+                    items: &series,
+                    selected: 0,
+                    offset: 0,
+                    rows: TARGET_ROWS,
+                    focused: true,
+                },
+                &covers,
+            );
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let rule = (0..area.height)
+        .find(|y| (0..area.width).any(|x| buffer[(x, *y)].symbol() == TRACK))
+        .expect("the rule under a cover is drawn");
+    let ruled: Vec<u16> = (0..area.width)
+        .filter(|x| buffer[(*x, rule)].symbol() == TRACK)
+        .collect();
     let grid = metrics(
-        Rect::new(0, 0, 94, 40),
-        2.0 / 3.0,
-        FONT_SIZE,
+        inner(area),
+        cover::primary_aspect(&series[0]),
+        covers.font_size(),
         full(TARGET_ROWS),
     );
-    assert_eq!(grid.tile.height, grid.cover.height + LABEL_HEIGHT);
-    assert!(grid.rows >= 2, "{grid:?}");
+    let first = *ruled.first().expect("the rule row has a cover on it");
+    let stride = grid.cover.width + GAP;
+    let expected: Vec<u16> = (0..columns(&grid))
+        .flat_map(|column| {
+            let start = first + column * stride;
+            start..start + grid.cover.width
+        })
+        .collect();
+    assert_eq!(
+        ruled, expected,
+        "{grid:?} spaces its covers by more than {GAP}"
+    );
 }
 
 #[test]
@@ -60,7 +101,6 @@ fn scrolling_moves_by_the_least_that_brings_the_cursor_back_on_screen() {
     let grid = Metrics {
         columns: 5,
         rows: 3,
-        tile: Size::new(18, 15),
         cover: Size::new(16, 12),
     };
     assert_eq!(
@@ -209,7 +249,10 @@ fn a_shelf_fits_a_row_of_tiles_into_half_a_body_however_short_it_is() {
             let area = Rect::new(0, 0, 88, height);
             let shelf = metrics(area, aspect, FONT_SIZE, full(SHELF_ROWS));
             assert_eq!(shelf.rows, 1, "{shelf:?} in {area:?}");
-            assert!(shelf.tile.height <= height, "{shelf:?} overruns {area:?}");
+            assert!(
+                shelf.cover.height + LABEL_HEIGHT <= height,
+                "{shelf:?} overruns {area:?}"
+            );
             assert!(shelf.columns > 1, "{shelf:?} in {area:?}");
         }
     }
@@ -220,10 +263,9 @@ fn a_shelf_spends_the_width_the_cover_cannot_use_on_more_tiles() {
     let area = Rect::new(0, 0, 88, 10);
     let shelf = metrics(area, 2.0 / 3.0, FONT_SIZE, full(SHELF_ROWS));
     assert!(
-        shelf.tile.width < minimum_tile_width(2.0 / 3.0),
+        shelf.cover.width < minimum_cover_width(2.0 / 3.0),
         "{shelf:?}"
     );
-    assert_eq!(shelf.cover.width, shelf.tile.width - 2, "{shelf:?}");
 }
 
 fn item(raw: serde_json::Value) -> Item {

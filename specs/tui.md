@@ -275,8 +275,8 @@ the body into `TARGET_ROWS` and takes the cover width from that, so a big
 monitor spends its extra height on bigger covers rather than a fifth row of
 thumbnails. Three bounds keep that honest:
 
-- never narrower than `minimum_tile_width` — 18 cells for a 2:3 poster, 26 for a
-  16:9 still — below which the artwork is not worth drawing;
+- never narrower than `minimum_cover_width` — 16 cells for a 2:3 poster, 24 for
+  a 16:9 still — below which the artwork is not worth drawing;
 - never so wide that a row holds fewer than `MIN_COLUMNS` — which stops a still
   taking a third of a wide screen on its own — unless the level has fewer items
   than that, in which case they spread over their own count, since there is
@@ -290,8 +290,8 @@ never takes it: `render` skips a tile taller than its area, so an uncapped shelf
 draws nothing rather than something small. A shelf drops the width floor for the
 same reason it keeps the cap — height binds it, so widening a tile would only
 fit fewer of the same covers. The cover is then `cover::fit` against both the
-tile width and that budget, because evening the tiles out across the area hands
-each one a few columns more than it asked for and a poster obeying its aspect
+evened-out width and that budget, because evening the columns out across the
+area hands each one a few more than it asked for and a poster obeying its aspect
 would grow out of the height with them.
 
 `Metrics::rows` is what the grid **draws**, not what it could hold: the height
