@@ -1310,7 +1310,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jellysink"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "clap",
  "color-eyre",
@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "jellysink-core"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "color-eyre",
  "directories",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "jellytui"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "clap",
  "color-eyre",
