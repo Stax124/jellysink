@@ -27,6 +27,24 @@ fn leaving_the_search_screen_clears_the_query_so_it_does_not_reappear() {
     assert!(app.query.is_empty());
 }
 
+#[tokio::test]
+async fn search_results_are_loading_only_while_a_query_is_out() {
+    let mut app = app();
+    app.apply(Intent::StartSearch);
+    assert!(!app.results.loading, "loading before anything was typed");
+
+    app.apply(Intent::Type('b'));
+    app.run_search();
+    assert!(app.results.loading);
+
+    app.apply(Intent::Backspace);
+    app.run_search();
+    assert!(
+        !app.results.loading,
+        "an empty query sends nothing to wait for"
+    );
+}
+
 #[test]
 fn up_and_down_move_between_the_home_shelves_and_each_keeps_its_cursor() {
     let mut app = app();

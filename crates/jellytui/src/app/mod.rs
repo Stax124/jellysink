@@ -145,7 +145,7 @@ impl App {
             shelves: Default::default(),
             stack: Vec::new(),
             query: String::new(),
-            results: Rows::loading(),
+            results: Rows::default(),
             daemon: Daemon::Unknown,
             playing_item: None,
             playing_requested: None,

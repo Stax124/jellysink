@@ -83,8 +83,8 @@ impl MpvSession {
         Ok(())
     }
 
-    /// Every entry in one `loadlist`, titled by `#EXTINF`: appended, or spliced
-    /// in at `index`, which leaves playback alone and shifts `playlist-pos`.
+    /// Every entry in one `loadlist`, titled by `#EXTINF`: appended, or spliced in at
+    /// `index` without interrupting playback, shifting `playlist-pos` if at or before it.
     pub(crate) async fn loadlist<T, U>(
         &mut self,
         entries: &[(T, U)],

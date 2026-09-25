@@ -6,7 +6,7 @@ use crate::runtime::state::Runtime;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::runtime) enum Fill {
     Append,
-    /// Does not interrupt playback; mpv shifts `playlist-pos`.
+    /// Does not interrupt playback; at or before the current entry it shifts `playlist-pos`.
     InsertAt(usize),
 }
 

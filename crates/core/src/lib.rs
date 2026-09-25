@@ -9,7 +9,7 @@ pub mod status;
 pub mod ticks;
 pub mod update;
 
-pub use error::usage_err;
+pub(crate) use error::usage_err;
 
 pub const APP_NAME: &str = "jellysink";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

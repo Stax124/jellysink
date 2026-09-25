@@ -11,7 +11,7 @@ impl fmt::Display for UsageError {
 
 impl std::error::Error for UsageError {}
 
-pub fn usage_err(msg: impl Into<String>) -> color_eyre::eyre::Report {
+pub(crate) fn usage_err(msg: impl Into<String>) -> color_eyre::eyre::Report {
     UsageError(msg.into()).into()
 }
 

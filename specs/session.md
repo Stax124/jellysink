@@ -297,6 +297,9 @@ Two ways of closing the window instead are rejected:
   `jellysink status` and `stop` may need re-running. An ack on `stop`/`restart`
   would not help: the daemon being restarted is by definition the old image, so
   the very update that shipped the ack would not have it.
+- **`stop.sock` answers one connection at a time.** A client that sends nothing
+  is dropped after `COMMAND_READ_TIMEOUT` (200 ms), which is under the client's
+  `STATUS_REPLY_TIMEOUT`, so the connection queued behind it is still answered.
 - **`stop` returns before the daemon is gone.** It is answered by acting, and the
   process tears mpv down before exiting, so `instance.lock` stays held for up to
   that 5 s escalation — a `run` started straight after can still be refused.
