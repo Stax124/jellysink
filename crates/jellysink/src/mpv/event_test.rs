@@ -3,26 +3,23 @@ use serde_json::json;
 
 #[test]
 fn only_the_observed_track_properties_become_events() {
-    assert!(matches!(
-        mpv_event_for(&IpcMessage::PropertyChange {
-            property: SUBTITLE_TRACK_PROPERTY.into()
-        }),
-        Some(MpvEvent::SubtitleTrackChanged)
-    ));
-    assert!(matches!(
-        mpv_event_for(&IpcMessage::PropertyChange {
-            property: AUDIO_TRACK_PROPERTY.into()
-        }),
-        Some(MpvEvent::AudioTrackChanged)
-    ));
+    let change = |property: &str| {
+        MpvEvent::parse(
+            "property-change",
+            &json!({"event": "property-change", "id": 1, "name": property, "data": 3}),
+        )
+    };
+    assert_eq!(
+        change("sid"),
+        Some(MpvEvent::TrackChanged(TrackKind::Subtitle))
+    );
+    assert_eq!(
+        change("aid"),
+        Some(MpvEvent::TrackChanged(TrackKind::Audio))
+    );
     // Polled every second rather than observed; a change event for it would
     // be a property we never asked about.
-    assert!(
-        mpv_event_for(&IpcMessage::PropertyChange {
-            property: "volume".into()
-        })
-        .is_none()
-    );
+    assert_eq!(change("volume"), None);
 }
 
 /// The whole point of [`SelectedTrack`]: reading `auto` as "off" would record a

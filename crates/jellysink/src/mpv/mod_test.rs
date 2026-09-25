@@ -2,9 +2,8 @@ use super::*;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
-fn pending_entry() -> (Pending, oneshot::Receiver<Result<Value, String>>) {
-    let (tx, rx) = oneshot::channel();
-    (Pending { tx }, rx)
+fn pending_entry() -> (Reply, oneshot::Receiver<Result<Value, String>>) {
+    oneshot::channel()
 }
 
 #[tokio::test]
@@ -32,22 +31,24 @@ async fn ipc_roundtrip_against_fake_socket() {
     });
 
     let stream = UnixStream::connect(&sock).await.unwrap();
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    let (ev_tx, _ev_rx) = mpsc::unbounded_channel();
-    tokio::spawn(ipc_loop(stream, cmd_rx, ev_tx));
+    let (requests, request_rx) = mpsc::unbounded_channel();
+    let (event_tx, _events) = mpsc::unbounded_channel();
+    let ipc = tokio::spawn(ipc_loop(stream, request_rx, event_tx));
 
-    let (tx, rx) = oneshot::channel();
-    cmd_tx
-        .send(IpcCmd::Request {
+    let (reply, answer) = oneshot::channel();
+    requests
+        .send(Request {
             line: encode_command(1, &[json!("get_property"), json!("pause")]),
             id: 1,
-            reply: tx,
+            reply,
         })
         .unwrap();
-    let data = rx.await.unwrap().unwrap();
+    let data = answer.await.unwrap().unwrap();
     assert_eq!(data, json!(true));
-    let _ = cmd_tx.send(IpcCmd::Shutdown);
-    let _ = server.await;
+    // No more requests can come, which ends the loop and closes the socket.
+    drop(requests);
+    ipc.await.unwrap();
+    server.await.unwrap();
 }
 
 #[test]
@@ -75,4 +76,18 @@ fn evicting_leaves_a_map_of_live_waiters_alone() {
     pending.insert(2, b);
     assert_eq!(evict_abandoned(&mut pending), 0);
     assert_eq!(pending.len(), 2);
+}
+
+#[test]
+fn a_command_label_never_carries_a_url() {
+    let loadfile = [
+        json!("loadfile"),
+        json!("http://s/Videos/i/stream?ApiKey=secret"),
+        json!("replace"),
+    ];
+    assert_eq!(command_label(&loadfile), "loadfile");
+    assert_eq!(
+        command_label(&[json!("set_property"), json!("keep-open"), json!("yes")]),
+        "set_property keep-open"
+    );
 }

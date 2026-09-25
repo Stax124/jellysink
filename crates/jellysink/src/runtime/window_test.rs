@@ -7,7 +7,6 @@ use serde_json::json;
 /// `start_current`: mpv holds only the current item.
 fn start(items: &[&str], index: usize) -> PlaylistWindow {
     let mut w = PlaylistWindow::default();
-    // `replace`, not `queue` directly: it also rebuilds NowPlayingQueue.
     w.replace(items.iter().map(|s| s.to_string()).collect(), index);
     w.reset_to_current();
     w
@@ -189,7 +188,7 @@ fn split_at(ids: &[&str], current: &str) -> (Vec<String>, Vec<String>) {
     let v = json!({
         "Items": ids.iter().map(|id| json!({"Id": id})).collect::<Vec<_>>()
     });
-    crate::runtime::queue::expand::split_episode_ids(&v, current)
+    crate::runtime::queue::expand::split_episode_ids(&v, current).expect("current is listed")
 }
 
 #[test]
@@ -251,15 +250,6 @@ fn play_next_after_a_playlist_jump_uses_expected_pos_not_head() {
 }
 
 #[test]
-fn a_play_next_insert_shows_up_in_the_now_playing_payload() {
-    let mut w = start(&["e1", "e2"], 0);
-    w.insert_next(vec!["x".into()]);
-    let payload = w.now_playing_queue();
-    assert_eq!(payload.len(), 3);
-    assert_eq!(payload[1]["Id"], "x");
-}
-
-#[test]
 fn queue_has_next_is_false_on_the_last_item() {
     let mut q = Queue {
         items: vec!["a".into(), "b".into()],
@@ -276,11 +266,11 @@ fn queue_has_next_is_false_on_the_last_item() {
 #[test]
 fn end_file_eof_always_tries_the_next_item() {
     assert_eq!(
-        end_file_action(false, false, EndFileReason::Eof),
+        end_file_action(false, EndFileReason::Eof),
         EndFileAction::Advance
     );
     assert_eq!(
-        end_file_action(false, false, EndFileReason::Redirect),
+        end_file_action(false, EndFileReason::Redirect),
         EndFileAction::Advance
     );
 }
@@ -288,15 +278,11 @@ fn end_file_eof_always_tries_the_next_item() {
 #[test]
 fn end_file_is_ignored_while_replacing_the_current_file() {
     assert_eq!(
-        end_file_action(true, false, EndFileReason::Stop),
+        end_file_action(true, EndFileReason::Stop),
         EndFileAction::Ignore
     );
     assert_eq!(
-        end_file_action(true, false, EndFileReason::Eof),
-        EndFileAction::Ignore
-    );
-    assert_eq!(
-        end_file_action(false, true, EndFileReason::Eof),
+        end_file_action(true, EndFileReason::Eof),
         EndFileAction::Ignore
     );
 }
@@ -304,15 +290,15 @@ fn end_file_is_ignored_while_replacing_the_current_file() {
 #[test]
 fn end_file_quit_or_error_stops() {
     assert_eq!(
-        end_file_action(false, false, EndFileReason::Quit),
+        end_file_action(false, EndFileReason::Quit),
         EndFileAction::Stop
     );
     assert_eq!(
-        end_file_action(false, false, EndFileReason::Stop),
+        end_file_action(false, EndFileReason::Stop),
         EndFileAction::Stop
     );
     assert_eq!(
-        end_file_action(false, false, EndFileReason::Error),
+        end_file_action(false, EndFileReason::Error),
         EndFileAction::Stop
     );
 }
@@ -397,31 +383,4 @@ fn insert_before_current_nothing_is_a_no_op() {
     assert_eq!(q.insert_before_current(vec![]), 0);
     assert_eq!(q.index, 0);
     assert_eq!(q.items, vec!["a"]);
-}
-
-#[test]
-fn the_now_playing_payload_tracks_the_queue_and_is_shared_not_rebuilt() {
-    let mut w = start(&["e1", "e2"], 0);
-    let first = w.now_playing_queue();
-    assert_eq!(first.len(), 2);
-    assert_eq!(first[0]["Id"], "e1");
-    assert_eq!(first[1]["PlaylistItemId"], "playlistItem1");
-
-    // Reports come once a second; each must be a refcount bump, not a rebuild.
-    assert!(Arc::ptr_eq(&first, &w.now_playing_queue()));
-
-    w.append(vec!["e3".into()]);
-    let after = w.now_playing_queue();
-    assert_eq!(after.len(), 3, "a queue change must be reflected");
-    assert!(!Arc::ptr_eq(&first, &after));
-}
-
-#[test]
-fn a_prepend_shows_up_in_the_now_playing_payload() {
-    let mut w = start(&["e3"], 0);
-    prepend(&mut w, &["e1", "e2"]);
-    let payload = w.now_playing_queue();
-    assert_eq!(payload.len(), 3);
-    assert_eq!(payload[0]["Id"], "e1");
-    assert_eq!(payload[2]["Id"], "e3");
 }

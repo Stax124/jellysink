@@ -1,6 +1,6 @@
 //! The long-lived player state, and the command dispatch over it.
 
-use super::task::AbortOnDrop;
+use super::queue::Fill;
 use super::window::{EndFileAction, PlaylistWindow, end_file_action, ignore_stop_for_playlist};
 use crate::media::{PlayRequest, PreparedPlay, TrackKind, TrackPreference};
 use crate::mpv::{EndFileReason, MpvEvent, MpvSession, SelectedTrack};
@@ -35,18 +35,10 @@ pub(super) struct Runtime {
     pub(super) paths: Paths,
     pub(super) window: PlaylistWindow,
     pub(super) mpv: Option<MpvSession>,
-    pub(super) mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
-    /// Discriminates events still queued from a previous mpv session.
-    pub(super) mpv_gen: u64,
-    /// The task forwarding the current mpv session's events. Owned so a respawn
-    /// or a stop does not leave it running.
-    pub(super) mpv_events: Option<AbortOnDrop>,
     pub(super) current: Option<PreparedPlay>,
-    pub(super) item_id: Option<String>,
     pub(super) volume: i64,
     pub(super) muted: bool,
     pub(super) paused: bool,
-    pub(super) stopping: bool,
     pub(super) last_ticks: i64,
     /// Jellyfin subtitle stream index → mpv subtitle track id for `sub-add`ed files.
     pub(super) external_subtitle_track_ids: HashMap<i64, i64>,
@@ -78,7 +70,6 @@ impl Runtime {
         api: Api,
         config: Config,
         paths: Paths,
-        mpv_tx: tokio::sync::mpsc::UnboundedSender<(u64, MpvEvent)>,
         report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
         username: String,
         status_tx: tokio::sync::watch::Sender<jellysink_core::status::PlayerStatus>,
@@ -89,15 +80,10 @@ impl Runtime {
             paths,
             window: PlaylistWindow::default(),
             mpv: None,
-            mpv_tx,
-            mpv_gen: 0,
-            mpv_events: None,
             current: None,
-            item_id: None,
             volume: 100,
             muted: false,
             paused: false,
-            stopping: false,
             last_ticks: 0,
             external_subtitle_track_ids: HashMap::new(),
             audio: TrackState::default(),
@@ -183,7 +169,8 @@ impl Runtime {
             Enqueue::Next => {
                 let mpv_pos = self.window.insert_next(item_ids.clone());
                 self.log_queue("play-next-insert");
-                self.insert_next_into_mpv(item_ids, mpv_pos).await;
+                // Unlike the prepend, no `loadfile ... replace` follows to wipe it.
+                self.load_stub_rows(item_ids, Fill::InsertAt(mpv_pos)).await;
             }
             Enqueue::Last => {
                 self.window.append(item_ids);
@@ -213,17 +200,13 @@ impl Runtime {
         // Propagated rather than defaulted to 0, which would restart the
         // current item instead of stepping back.
         let playlist_pos = self.playlist_state().await?.map_or(0, |(pos, _)| pos);
-        if playlist_pos == 0 {
+        let Some(mpv) = self.mpv.as_mut().filter(|_| playlist_pos > 0) else {
             self.window.previous();
             return self.start_current(&PlayRequest::default()).await;
-        }
+        };
         tracing::info!(playlist_pos, "playlist-prev");
         self.transitioning = true;
-        let stepped = match self.mpv.as_mut() {
-            Some(mpv) => mpv.playlist_prev().await,
-            None => Ok(()),
-        };
-        if let Err(e) = stepped {
+        if let Err(e) = mpv.playlist_prev().await {
             // A stuck `transitioning` makes end_file_action ignore every
             // subsequent end-file.
             self.transitioning = false;
@@ -243,14 +226,9 @@ impl Runtime {
     pub(super) async fn on_mpv_event(&mut self, ev: MpvEvent) {
         match ev {
             MpvEvent::FileLoaded => self.on_file_loaded().await,
-            MpvEvent::SubtitleTrackChanged => self.adopt_mpv_track(TrackKind::Subtitle).await,
-            MpvEvent::AudioTrackChanged => self.adopt_mpv_track(TrackKind::Audio).await,
+            MpvEvent::TrackChanged(kind) => self.adopt_mpv_track(kind).await,
             MpvEvent::EndFile { reason } => self.on_end_file(reason).await,
-            MpvEvent::Exited => {
-                if !self.stopping {
-                    self.stop_playback(true).await;
-                }
-            }
+            MpvEvent::Exited => self.stop_playback(true).await,
         }
     }
 
@@ -280,7 +258,6 @@ impl Runtime {
         tracing::info!(
             reason = %reason,
             transitioning = self.transitioning,
-            stopping = self.stopping,
             has_next = self.window.has_next(),
             index = self.window.index(),
             queue = self.window.len(),
@@ -288,7 +265,7 @@ impl Runtime {
             expected_pos = self.window.expected_pos(),
             "mpv end-file"
         );
-        match end_file_action(self.transitioning, self.stopping, reason) {
+        match end_file_action(self.transitioning, reason) {
             EndFileAction::Ignore => {}
             EndFileAction::Advance => self.play_next_or_stop(true).await,
             EndFileAction::Stop => self.stop_unless_playlist_moved(reason).await,

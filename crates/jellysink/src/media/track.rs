@@ -15,8 +15,8 @@ pub(crate) struct TrackId {
     pub(crate) is_external: bool,
 }
 
-/// Which kind of track a resolution is about. Log wording only — the matching
-/// is identical for both.
+/// Audio or subtitle. The matching is identical for both; the kind picks the
+/// `Runtime` memory, the `StreamMaps` side and the mpv property.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrackKind {
     Audio,
@@ -28,6 +28,13 @@ impl TrackKind {
         match self {
             Self::Audio => "audio",
             Self::Subtitle => "subtitle",
+        }
+    }
+
+    pub(crate) fn mpv_property(self) -> &'static str {
+        match self {
+            Self::Audio => "aid",
+            Self::Subtitle => "sid",
         }
     }
 }

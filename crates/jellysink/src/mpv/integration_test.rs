@@ -2,6 +2,7 @@
 //! `--no-config`, unlike the daemon: inheriting either would fail per machine.
 
 use super::*;
+use crate::media::TrackKind;
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
@@ -92,7 +93,6 @@ fn fixture(name: &str) -> String {
 /// Dropping it kills mpv, so no test has to clean up after a failed assertion.
 struct TestMpv {
     session: MpvSession,
-    events: mpsc::UnboundedReceiver<MpvEvent>,
     _socket_dir: tempfile::TempDir,
 }
 
@@ -103,12 +103,11 @@ impl TestMpv {
             .iter()
             .map(|arg| (*arg).to_owned())
             .collect();
-        let (session, events) = MpvSession::spawn("mpv", &args, socket_dir.path().join("mpv.sock"))
+        let session = MpvSession::spawn("mpv", &args, socket_dir.path().join("mpv.sock"))
             .await
             .expect("spawning mpv");
         let mut mpv = Self {
             session,
-            events,
             _socket_dir: socket_dir,
         };
         mpv.settle().await;
@@ -148,10 +147,10 @@ impl TestMpv {
         let deadline = Instant::now() + SETTLE;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            match timeout(remaining, self.events.recv()).await {
-                Ok(Some(event)) if want(&event) => return event,
-                Ok(Some(_)) => continue,
-                Ok(None) => panic!("mpv event stream closed while waiting"),
+            match timeout(remaining, self.session.next_event()).await {
+                Ok(event) if want(&event) => return event,
+                Ok(MpvEvent::Exited) => panic!("mpv exited while waiting"),
+                Ok(_) => continue,
                 Err(_) => panic!("no matching mpv event within {SETTLE:?}"),
             }
         }
@@ -159,7 +158,7 @@ impl TestMpv {
 
     /// Can only ever show that mpv has not spoken *yet*, so keep `window` short.
     async fn expect_no_event(&mut self, window: Duration) {
-        if let Ok(Some(event)) = timeout(window, self.events.recv()).await {
+        if let Ok(event) = timeout(window, self.session.next_event()).await {
             panic!("unexpected mpv event: {event:?}");
         }
     }
@@ -185,7 +184,8 @@ async fn mpv_starts_idle_and_answers_property_queries() {
     assert!(!mpv.session.muted().await.unwrap());
     assert_eq!(mpv.session.volume().await.unwrap(), 100);
     // Idle: no playlist entry is current, which mpv reports as -1.
-    assert_eq!(mpv.session.playlist_pos().await.unwrap(), -1);
+    assert_eq!(mpv.session.get_i64("playlist-pos").await.unwrap(), -1);
+    assert_eq!(mpv.session.playlist_pos().await.unwrap(), 0);
     assert_eq!(mpv.session.playlist_count().await.unwrap(), 0);
 }
 
@@ -224,7 +224,7 @@ async fn pause_unpause_and_toggle_round_trip_through_mpv() {
     let mut mpv = TestMpv::start().await;
     mpv.play_fixture().await;
 
-    mpv.session.pause().await.unwrap();
+    mpv.session.set_pause(true).await.unwrap();
     assert!(mpv.session.paused().await.unwrap());
 
     mpv.session.toggle_pause().await.unwrap();
@@ -233,7 +233,7 @@ async fn pause_unpause_and_toggle_round_trip_through_mpv() {
     mpv.session.toggle_pause().await.unwrap();
     assert!(mpv.session.paused().await.unwrap());
 
-    mpv.session.unpause().await.unwrap();
+    mpv.session.set_pause(false).await.unwrap();
     assert!(!mpv.session.paused().await.unwrap());
 }
 
@@ -243,7 +243,7 @@ async fn seeking_moves_the_position() {
     let mut mpv = TestMpv::start().await;
     mpv.play_fixture().await;
     // Paused, so the assertion below is not racing playback.
-    mpv.session.pause().await.unwrap();
+    mpv.session.set_pause(true).await.unwrap();
 
     mpv.session.seek_absolute(2.0).await.unwrap();
     wait_until!(mpv, "seek to 2s", |session| session
@@ -287,30 +287,42 @@ async fn audio_and_subtitle_tracks_select_by_id_and_turn_off() {
     mpv.play_fixture().await;
 
     // The fixture carries two of each; ids are 1 and 2 per kind.
-    mpv.session.set_audio_track_id(Some(2)).await.unwrap();
+    mpv.session
+        .set_track_id(TrackKind::Audio, Some(2))
+        .await
+        .unwrap();
     wait_until!(mpv, "aid becomes 2", |session| session
-        .audio_track()
+        .selected_track(TrackKind::Audio)
         .await
         .unwrap()
         == SelectedTrack::Id(2));
-    mpv.session.set_subtitle_track_id(Some(2)).await.unwrap();
+    mpv.session
+        .set_track_id(TrackKind::Subtitle, Some(2))
+        .await
+        .unwrap();
     wait_until!(mpv, "sid becomes 2", |session| session
-        .subtitle_track()
+        .selected_track(TrackKind::Subtitle)
         .await
         .unwrap()
         == SelectedTrack::Id(2));
 
     // `None` is off, and off must read back as Off rather than Unresolved --
     // the distinction the runtime uses to tell a decision from a loading file.
-    mpv.session.set_audio_track_id(None).await.unwrap();
+    mpv.session
+        .set_track_id(TrackKind::Audio, None)
+        .await
+        .unwrap();
     wait_until!(mpv, "aid turns off", |session| session
-        .audio_track()
+        .selected_track(TrackKind::Audio)
         .await
         .unwrap()
         == SelectedTrack::Off);
-    mpv.session.set_subtitle_track_id(None).await.unwrap();
+    mpv.session
+        .set_track_id(TrackKind::Subtitle, None)
+        .await
+        .unwrap();
     wait_until!(mpv, "sid turns off", |session| session
-        .subtitle_track()
+        .selected_track(TrackKind::Subtitle)
         .await
         .unwrap()
         == SelectedTrack::Off);
@@ -323,9 +335,12 @@ async fn a_negative_track_id_is_off_not_a_track() {
     mpv.play_fixture().await;
 
     // Where `cycle audio` lands after the last track.
-    mpv.session.set_audio_track_id(Some(-1)).await.unwrap();
+    mpv.session
+        .set_track_id(TrackKind::Audio, Some(-1))
+        .await
+        .unwrap();
     wait_until!(mpv, "aid turns off", |session| session
-        .audio_track()
+        .selected_track(TrackKind::Audio)
         .await
         .unwrap()
         == SelectedTrack::Off);
@@ -335,16 +350,25 @@ async fn a_negative_track_id_is_off_not_a_track() {
 async fn observed_track_properties_report_a_change_back() {
     require_mpv!();
     let mut mpv = TestMpv::start().await;
-    mpv.session.observe_audio_track().await.unwrap();
-    mpv.session.observe_subtitle_track().await.unwrap();
+    mpv.session.observe_track(TrackKind::Audio).await.unwrap();
+    mpv.session
+        .observe_track(TrackKind::Subtitle)
+        .await
+        .unwrap();
     mpv.play_fixture().await;
 
-    mpv.session.set_audio_track_id(Some(2)).await.unwrap();
-    mpv.wait_for_event(|event| matches!(event, MpvEvent::AudioTrackChanged))
+    mpv.session
+        .set_track_id(TrackKind::Audio, Some(2))
+        .await
+        .unwrap();
+    mpv.wait_for_event(|event| matches!(event, MpvEvent::TrackChanged(TrackKind::Audio)))
         .await;
 
-    mpv.session.set_subtitle_track_id(Some(2)).await.unwrap();
-    mpv.wait_for_event(|event| matches!(event, MpvEvent::SubtitleTrackChanged))
+    mpv.session
+        .set_track_id(TrackKind::Subtitle, Some(2))
+        .await
+        .unwrap();
+    mpv.wait_for_event(|event| matches!(event, MpvEvent::TrackChanged(TrackKind::Subtitle)))
         .await;
 }
 
@@ -363,9 +387,12 @@ async fn an_added_subtitle_gets_the_next_track_id() {
 
     // A higher count alone would not be enough: the runtime picks the external
     // subtitle by this id, so the id has to address the file we added.
-    mpv.session.set_subtitle_track_id(Some(3)).await.unwrap();
+    mpv.session
+        .set_track_id(TrackKind::Subtitle, Some(3))
+        .await
+        .unwrap();
     wait_until!(mpv, "sid becomes the added track", |session| session
-        .subtitle_track()
+        .selected_track(TrackKind::Subtitle)
         .await
         .unwrap()
         == SelectedTrack::Id(3));
@@ -409,14 +436,14 @@ async fn an_appended_playlist_keeps_its_extinf_titles_and_order() {
     let file = fixture("sample.mkv");
 
     mpv.session
-        .loadlist_append(&[("First Episode", &file), ("Second Episode", &file)])
+        .loadlist(&[("First Episode", &file), ("Second Episode", &file)], None)
         .await
         .unwrap();
 
     assert_eq!(mpv.session.playlist_count().await.unwrap(), 2);
     // Appending to an idle mpv queues the entries and starts nothing: the
     // runtime has to `loadfile` the item it wants playing.
-    assert_eq!(mpv.session.playlist_pos().await.unwrap(), -1);
+    assert_eq!(mpv.session.get_i64("playlist-pos").await.unwrap(), -1);
     let entries = playlist_entries(&mut mpv.session).await;
     assert_eq!(
         entries
@@ -427,7 +454,7 @@ async fn an_appended_playlist_keeps_its_extinf_titles_and_order() {
     );
 
     // The M3U itself is temporary: it is removed once mpv has read it.
-    assert!(!mpv.session.socket.with_file_name("append.m3u").exists());
+    assert!(!mpv.session.socket.with_file_name("playlist.m3u").exists());
 }
 
 #[tokio::test]
@@ -439,11 +466,11 @@ async fn inserting_into_a_playlist_leaves_the_playing_entry_alone() {
     mpv.start_current("First").await;
 
     mpv.session
-        .loadlist_append(&[("Third", &file)])
+        .loadlist(&[("Third", &file)], None)
         .await
         .unwrap();
     mpv.session
-        .loadlist_insert_at(&[("Second", &file)], 1)
+        .loadlist(&[("Second", &file)], Some(1))
         .await
         .unwrap();
 
@@ -465,10 +492,10 @@ async fn inserting_before_the_current_entry_shifts_the_position() {
     let mut mpv = TestMpv::start().await;
     let file = fixture("sample.mkv");
     mpv.start_current("A").await;
-    mpv.session.loadlist_append(&[("B", &file)]).await.unwrap();
+    mpv.session.loadlist(&[("B", &file)], None).await.unwrap();
 
     mpv.session
-        .loadlist_insert_at(&[("Before", &file)], 0)
+        .loadlist(&[("Before", &file)], Some(0))
         .await
         .unwrap();
 
@@ -491,7 +518,7 @@ async fn inserting_at_the_end_of_the_playlist_behaves_like_append() {
     mpv.start_current("A").await;
 
     mpv.session
-        .loadlist_insert_at(&[("Next", &file)], 1)
+        .loadlist(&[("Next", &file)], Some(1))
         .await
         .unwrap();
 
@@ -512,13 +539,13 @@ async fn play_next_splices_in_right_after_current_even_with_a_tail_already_queue
     let file = fixture("sample.mkv");
     mpv.start_current("A").await;
     mpv.session
-        .loadlist_append(&[("B", &file), ("C", &file)])
+        .loadlist(&[("B", &file), ("C", &file)], None)
         .await
         .unwrap();
 
     // PlayNext with A current and B, C already tailed in: splice at position 1.
     mpv.session
-        .loadlist_insert_at(&[("X", &file)], 1)
+        .loadlist(&[("X", &file)], Some(1))
         .await
         .unwrap();
 
@@ -541,7 +568,7 @@ async fn playlist_next_and_prev_move_the_position() {
     let mut mpv = TestMpv::start().await;
     let file = fixture("sample.mkv");
     mpv.start_current("A").await;
-    mpv.session.loadlist_append(&[("B", &file)]).await.unwrap();
+    mpv.session.loadlist(&[("B", &file)], None).await.unwrap();
 
     mpv.session.playlist_next().await.unwrap();
     wait_until!(mpv, "playlist-pos becomes 1", |session| session
@@ -564,7 +591,7 @@ async fn moving_off_an_entry_ends_the_file_with_stop() {
     let mut mpv = TestMpv::start().await;
     let file = fixture("sample.mkv");
     mpv.start_current("A").await;
-    mpv.session.loadlist_append(&[("B", &file)]).await.unwrap();
+    mpv.session.loadlist(&[("B", &file)], None).await.unwrap();
 
     mpv.session.playlist_next().await.unwrap();
 
@@ -591,7 +618,7 @@ async fn playing_to_the_end_of_a_queued_item_ends_with_eof_and_advances() {
     mpv.session.set_keep_open().await.unwrap();
     mpv.start_current("A").await;
     mpv.session
-        .loadlist_append(&[("B", &fixture("sample.mkv"))])
+        .loadlist(&[("B", &fixture("sample.mkv"))], None)
         .await
         .unwrap();
 
@@ -665,14 +692,21 @@ async fn a_missing_file_ends_with_error_rather_than_killing_the_session() {
 #[tokio::test]
 async fn quitting_stops_the_process_and_removes_the_socket() {
     require_mpv!();
-    let mut mpv = TestMpv::start().await;
-    let socket = mpv.session.socket.clone();
+    let TestMpv {
+        session,
+        _socket_dir,
+    } = TestMpv::start().await;
+    let socket = session.socket.clone();
     assert!(socket.exists());
+    let pid = session.child.id().expect("mpv is running");
 
-    mpv.session.quit_and_wait().await.unwrap();
+    session.quit().await;
 
     assert!(!socket.exists(), "the IPC socket outlived mpv");
-    assert!(mpv.session.volume().await.is_err(), "mpv still answering");
+    assert!(
+        !Path::new(&format!("/proc/{pid}")).exists(),
+        "mpv is still running"
+    );
 }
 
 #[tokio::test]
@@ -747,5 +781,61 @@ async fn the_auth_header_is_sent_on_http_requests_and_can_be_cleared() {
     assert!(
         !head.contains("Authorization:"),
         "header survived the clear:\n{head}"
+    );
+}
+
+/// The header is global: a stub row needs no token of its own, and a header
+/// set for one item follows mpv into the rows it autoplays.
+#[tokio::test]
+async fn the_auth_header_follows_mpv_into_a_later_playlist_entry() {
+    require_mpv!();
+    let mut mpv = TestMpv::start().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/next.mkv", listener.local_addr().unwrap());
+    let server = tokio::spawn(capture_one_request(listener));
+
+    mpv.session
+        .apply_auth_header("Authorization: MediaBrowser Token=\"secret\"")
+        .await
+        .unwrap();
+    mpv.start_current("A").await;
+    mpv.session.loadlist(&[("B", &url)], None).await.unwrap();
+    mpv.session.playlist_next().await.unwrap();
+
+    let head = timeout(SETTLE, server)
+        .await
+        .expect("mpv never requested the playlist entry")
+        .unwrap();
+    assert!(
+        head.contains("Authorization: MediaBrowser Token=\"secret\""),
+        "header missing from the playlist entry's request:\n{head}"
+    );
+}
+
+/// Why a foreign subtitle host puts the token on the URL instead: mpv sends
+/// the header to whatever host `sub-add` names.
+#[tokio::test]
+async fn the_auth_header_is_sent_to_a_sub_add_host() {
+    require_mpv!();
+    let mut mpv = TestMpv::start().await;
+    mpv.play_fixture().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/subtitle.srt", listener.local_addr().unwrap());
+    let server = tokio::spawn(capture_one_request(listener));
+
+    mpv.session
+        .apply_auth_header("Authorization: MediaBrowser Token=\"secret\"")
+        .await
+        .unwrap();
+    // The 404 fails the sub-add; only the request it made matters.
+    let _ = mpv.session.sub_add(&url).await;
+
+    let head = timeout(SETTLE, server)
+        .await
+        .expect("mpv never requested the subtitle")
+        .unwrap();
+    assert!(
+        head.contains("Authorization: MediaBrowser Token=\"secret\""),
+        "header missing from the subtitle request:\n{head}"
     );
 }

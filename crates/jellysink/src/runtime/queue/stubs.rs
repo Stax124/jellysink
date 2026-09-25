@@ -4,13 +4,10 @@
 use crate::runtime::state::Runtime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Fill {
+pub(in crate::runtime) enum Fill {
     Append,
-    /// At position 0. Does not interrupt playback; mpv shifts `playlist-pos`.
-    Prepend,
-    /// Right after the current item, at the mpv position
-    /// `PlaylistWindow::insert_next` returned.
-    Next(usize),
+    /// Does not interrupt playback; mpv shifts `playlist-pos`.
+    InsertAt(usize),
 }
 
 impl Runtime {
@@ -19,7 +16,7 @@ impl Runtime {
     pub(in crate::runtime) async fn fill_previous_into_mpv(&mut self) {
         let ids = self.window.take_pending_prepend();
         // The whole block at 0 lands in aired order at the front.
-        self.load_stub_rows(ids, Fill::Prepend).await;
+        self.load_stub_rows(ids, Fill::InsertAt(0)).await;
     }
 
     /// Appends queue entries past the current mpv window. Titles come from the
@@ -29,19 +26,9 @@ impl Runtime {
         self.load_stub_rows(ids, Fill::Append).await;
     }
 
-    /// Splices `ids` into mpv's playlist right after the current item. Runs
-    /// immediately: unlike the prepend, no `loadfile ... replace` follows it.
-    pub(in crate::runtime) async fn insert_next_into_mpv(
-        &mut self,
-        ids: Vec<String>,
-        mpv_pos: usize,
-    ) {
-        self.load_stub_rows(ids, Fill::Next(mpv_pos)).await;
-    }
-
     /// One `loadlist` of stub rows. No HTTP: the titles are already cached and
     /// the URLs are stubs until the row is actually played.
-    async fn load_stub_rows(&mut self, ids: Vec<String>, fill: Fill) {
+    pub(in crate::runtime) async fn load_stub_rows(&mut self, ids: Vec<String>, fill: Fill) {
         if ids.is_empty() || self.mpv.is_none() {
             return;
         }
@@ -55,24 +42,18 @@ impl Runtime {
             "filling mpv playlist"
         );
         let entries = self.playlist_stub_entries(&ids);
-        let refs: Vec<(&str, &str)> = entries
-            .iter()
-            .map(|(title, url)| (title.as_str(), url.as_str()))
-            .collect();
         let Some(mpv) = self.mpv.as_mut() else {
             return;
         };
-        let loaded = match fill {
-            Fill::Append => mpv.loadlist_append(&refs).await,
-            Fill::Prepend => mpv.loadlist_insert_at(&refs, 0).await,
-            Fill::Next(index) => mpv.loadlist_insert_at(&refs, index).await,
+        let index = match fill {
+            Fill::Append => None,
+            Fill::InsertAt(index) => Some(index),
         };
-        if let Err(e) = loaded {
+        if let Err(e) = mpv.loadlist(&entries, index).await {
             tracing::warn!(?fill, "playlist fill loadlist: {e:#}");
             return;
         }
-        // A prepend or a play-next insert already grew `head`/`tail` when the
-        // ids entered the queue.
+        // An insert already grew `head`/`tail` when the ids entered the queue.
         if fill == Fill::Append {
             self.window.note_appended(n);
         }

@@ -55,6 +55,13 @@ fn prefers_direct_play_then_bitrate() {
 }
 
 #[test]
+fn the_first_of_two_equal_sources_wins() {
+    let sources = media_sources(vec![source_direct("a", 5), source_direct("b", 5)]);
+    let selected = select_media_source(&sources, None).unwrap();
+    assert_eq!(selected.id.as_deref(), Some("a"));
+}
+
+#[test]
 fn preferred_source_wins() {
     let sources = vec![source_direct("a", 1), source_direct("b", 9)];
     let sources = media_sources(sources);
@@ -251,7 +258,7 @@ fn prepared_play_debug_never_prints_the_token() {
         audio_stream_index: None,
         subtitle_stream_index: None,
         uses_auth_header: false,
-        external_sub_urls: vec![],
+        item_id: "i".into(),
         run_time_ticks: None,
         title: "t".into(),
     };

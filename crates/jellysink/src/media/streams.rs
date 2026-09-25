@@ -1,8 +1,8 @@
 //! The `PlaybackInfo` wire models, and mapping Jellyfin stream indexes to the
 //! track ids mpv uses.
-use super::track::TrackId;
+use super::track::{TrackId, TrackKind};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct StreamMaps {
@@ -10,20 +10,44 @@ pub(crate) struct StreamMaps {
     pub(crate) audio_track_id_by_stream_index: HashMap<i64, i64>,
     /// Jellyfin stream index → mpv subtitle track id (`sid`, embedded only)
     pub(crate) subtitle_track_id_by_stream_index: HashMap<i64, i64>,
-    /// Jellyfin stream index → absolute DeliveryUrl
-    pub(crate) subtitle_url: HashMap<i64, String>,
+    /// Jellyfin stream index → absolute DeliveryUrl, `sub-add`ed in index order.
+    pub(crate) subtitle_url: BTreeMap<i64, String>,
     /// Every subtitle stream mpv can actually be pointed at, in listing order.
-    pub(crate) subtitles: Vec<SubtitleId>,
+    pub(crate) subtitles: Vec<TrackId>,
     /// Every audio stream mpv can actually be pointed at, in listing order.
-    pub(crate) audios: Vec<AudioId>,
+    pub(crate) audios: Vec<TrackId>,
 }
 
-/// An alias, not a distinct type — see [`TrackId`].
-pub(crate) type SubtitleId = TrackId;
+impl StreamMaps {
+    /// Jellyfin stream index → mpv track id, for the streams muxed into the file.
+    pub(crate) fn track_ids(&self, kind: TrackKind) -> &HashMap<i64, i64> {
+        match kind {
+            TrackKind::Audio => &self.audio_track_id_by_stream_index,
+            TrackKind::Subtitle => &self.subtitle_track_id_by_stream_index,
+        }
+    }
 
-/// Like [`SubtitleId`], but only streams mpv has a track for: an external
-/// audio stream is never loaded.
-pub(crate) type AudioId = TrackId;
+    pub(crate) fn candidates(&self, kind: TrackKind) -> &[TrackId] {
+        match kind {
+            TrackKind::Audio => &self.audios,
+            TrackKind::Subtitle => &self.subtitles,
+        }
+    }
+}
+
+impl TrackId {
+    fn from_stream(index: i64, stream: &MediaStream) -> Self {
+        Self {
+            index,
+            language: stream.language.clone(),
+            title: stream.title.clone(),
+            display_title: stream.display_title.clone(),
+            codec: stream.codec.clone(),
+            is_forced: stream.is_forced,
+            is_external: stream.is_external,
+        }
+    }
+}
 
 /// A `MediaStream`'s `Type`. Parsed rather than derived, so a value Jellyfin
 /// added since cannot fail the whole response.
@@ -151,15 +175,8 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
         );
         maps.audio_track_id_by_stream_index
             .insert(jellyfin_index, audio_track_id);
-        maps.audios.push(AudioId {
-            index: jellyfin_index,
-            language: stream.language.clone(),
-            title: stream.title.clone(),
-            display_title: stream.display_title.clone(),
-            codec: stream.codec.clone(),
-            is_forced: stream.is_forced,
-            is_external: stream.is_external,
-        });
+        maps.audios
+            .push(TrackId::from_stream(jellyfin_index, stream));
         audio_track_id += 1;
     }
 
@@ -212,15 +229,8 @@ pub(crate) fn map_streams(server: &str, source: &MediaSource) -> StreamMaps {
             }
         };
         if selectable {
-            maps.subtitles.push(SubtitleId {
-                index: jellyfin_index,
-                language: sub.language.clone(),
-                title: sub.title.clone(),
-                display_title: sub.display_title.clone(),
-                codec: sub.codec.clone(),
-                is_forced: sub.is_forced,
-                is_external: sub.is_external,
-            });
+            maps.subtitles
+                .push(TrackId::from_stream(jellyfin_index, sub));
         }
         // Gated on IsExternal, not delivery: Jellyfin reports an in-file
         // subtitle as External when it extracts a sidecar, and mpv does not.
@@ -255,42 +265,6 @@ pub(crate) fn has_foreign_subtitle_host(server: &str, source: &MediaSource) -> b
         };
         theirs.host_str().is_some() && (theirs.scheme(), theirs.host_str(), theirs.port()) != mine
     })
-}
-
-pub(crate) fn mpv_audio_track_id(maps: &StreamMaps, jellyfin_index: i64) -> Option<i64> {
-    maps.audio_track_id_by_stream_index
-        .get(&jellyfin_index)
-        .copied()
-}
-
-pub(crate) fn mpv_embedded_subtitle_track_id(
-    maps: &StreamMaps,
-    jellyfin_index: i64,
-) -> Option<i64> {
-    maps.subtitle_track_id_by_stream_index
-        .get(&jellyfin_index)
-        .copied()
-}
-
-/// [`mpv_embedded_subtitle_track_id`] backwards, for a track picked in the mpv
-/// window. A scan: one entry per subtitle stream, read once per track change.
-pub(crate) fn jellyfin_embedded_subtitle_index(
-    maps: &StreamMaps,
-    subtitle_track_id: i64,
-) -> Option<i64> {
-    maps.subtitle_track_id_by_stream_index
-        .iter()
-        .find(|(_, track_id)| **track_id == subtitle_track_id)
-        .map(|(jellyfin_index, _)| *jellyfin_index)
-}
-
-/// [`mpv_audio_track_id`] backwards, for a track picked in the mpv window.
-/// A scan: one entry per audio stream, read once per track change.
-pub(crate) fn jellyfin_embedded_audio_index(maps: &StreamMaps, audio_track_id: i64) -> Option<i64> {
-    maps.audio_track_id_by_stream_index
-        .iter()
-        .find(|(_, track_id)| **track_id == audio_track_id)
-        .map(|(jellyfin_index, _)| *jellyfin_index)
 }
 
 #[cfg(test)]

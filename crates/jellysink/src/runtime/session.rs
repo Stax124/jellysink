@@ -4,7 +4,7 @@ use super::state::Runtime;
 use super::task::AbortOnDrop;
 use crate::daemon::signal::Signal;
 use crate::jellyfin;
-use crate::mpv::MpvEvent;
+use crate::mpv::{MpvEvent, MpvSession};
 use crate::report::Report;
 use color_eyre::eyre::{WrapErr, eyre};
 use futures_util::{SinkExt, StreamExt};
@@ -14,7 +14,7 @@ use jellysink_core::jellyfin::auth::{Api, is_auth_expired};
 use jellysink_core::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
 use serde_json::json;
 use std::time::{Duration, Instant};
-use tokio::time::sleep;
+use tokio::time::{Interval, MissedTickBehavior, sleep};
 
 type WsMessage = tokio_tungstenite::tungstenite::Message;
 type WsError = tokio_tungstenite::tungstenite::Error;
@@ -49,21 +49,11 @@ pub(crate) async fn run(
 ) -> color_eyre::Result<()> {
     let mut backoff = BACKOFF_MIN;
     let api = Api::from_credentials(&creds)?;
-    let (mpv_tx, mut mpv_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, MpvEvent)>();
-    let (report_tx, report_task) = spawn_report_sink(api.clone());
-    let _report_task = AbortOnDrop(report_task);
-    let mut rt = Runtime::new(
-        api,
-        config,
-        paths,
-        mpv_tx,
-        report_tx,
-        creds.username,
-        status_tx,
-    );
+    let (report_tx, _report_task) = spawn_report_sink(api.clone());
+    let mut rt = Runtime::new(api, config, paths, report_tx, creds.username, status_tx);
     loop {
         let started = Instant::now();
-        match run_session(&mut rt, &mut mpv_rx, &mut ext_rx, &shutdown).await {
+        match run_session(&mut rt, &mut ext_rx, &shutdown).await {
             // Only shutdown ends a session cleanly.
             Ok(()) => break,
             Err(e) => {
@@ -77,7 +67,7 @@ pub(crate) async fn run(
             }
         }
         // Nothing here touches `rt`: playback rides out the gap, and mpv events
-        // raised meanwhile stay queued on `mpv_rx` for the next session.
+        // raised meanwhile stay queued on its `MpvSession` for the next session.
         tokio::select! {
             _ = shutdown.fired() => break,
             _ = sleep(backoff) => {}
@@ -95,7 +85,7 @@ fn spawn_ws_reader<S>(
     mut ws_read: S,
 ) -> (
     tokio::sync::mpsc::UnboundedReceiver<WsIncoming>,
-    tokio::task::JoinHandle<()>,
+    AbortOnDrop,
 )
 where
     S: StreamExt<Item = Result<WsMessage, WsError>> + Unpin + Send + 'static,
@@ -113,43 +103,51 @@ where
                     }
                     Err(e) => tracing::debug!("ws parse: {e:#}"),
                 },
-                Ok(WsMessage::Close(_)) | Err(_) => break,
+                Ok(WsMessage::Close(_)) => break,
+                Err(e) => {
+                    tracing::warn!("websocket read failed: {e}");
+                    break;
+                }
                 _ => {}
             }
         }
     });
-    (rx, task)
+    (rx, AbortOnDrop(task))
 }
 
 /// Serialises session reports onto one task, so a Stopped can never overtake
 /// the Start before it. The task owns the [`Api`], so a report costs no clone.
-fn spawn_report_sink(
-    api: Api,
-) -> (
-    tokio::sync::mpsc::UnboundedSender<Report>,
-    tokio::task::JoinHandle<()>,
-) {
+fn spawn_report_sink(api: Api) -> (tokio::sync::mpsc::UnboundedSender<Report>, AbortOnDrop) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Report>();
     let task = tokio::spawn(async move {
         while let Some(report) = rx.recv().await {
-            let r = match &report {
-                Report::Start(s) => jellyfin::playing(&api, s).await,
-                Report::Progress(s) => jellyfin::progress(&api, s).await,
-                Report::Stopped(s) => jellyfin::stopped(&api, s).await,
-            };
-            if let Err(e) = r {
-                tracing::debug!("session report failed: {e:#}");
+            if let Err(e) = jellyfin::post_report(&api, &report).await {
+                tracing::warn!("session report failed: {e:#}");
             }
         }
     });
-    (tx, task)
+    (tx, AbortOnDrop(task))
+}
+
+/// Delays rather than skips a late tick: a late keepalive still has to be sent.
+fn keepalive_interval(period: Duration) -> Interval {
+    let mut keepalive = tokio::time::interval(period);
+    keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    keepalive
+}
+
+/// Pends forever with no mpv, so the arm is idle between plays.
+async fn next_mpv_event(mpv: &mut Option<MpvSession>) -> MpvEvent {
+    match mpv {
+        Some(mpv) => mpv.next_event().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// One WebSocket session against an already-running [`Runtime`]. `Ok(())` only
 /// for shutdown; every other end is an `Err` the caller reconnects from.
 async fn run_session(
     rt: &mut Runtime,
-    mpv_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(u64, MpvEvent)>,
     ext_rx: &mut tokio::sync::mpsc::UnboundedReceiver<CastEvent>,
     shutdown: &Signal,
 ) -> color_eyre::Result<()> {
@@ -159,34 +157,31 @@ async fn run_session(
     tracing::info!("connecting websocket");
     let (ws, _) = tokio_tungstenite::connect_async(&ws_url)
         .await
-        .wrap_err("websocket connect")?;
+        .wrap_err_with(|| format!("connecting the websocket to {}", rt.api.server))?;
     tracing::info!("websocket connected");
     let (mut ws_write, ws_read) = ws.split();
 
-    let (mut ws_rx, ws_task) = spawn_ws_reader(ws_read);
-    let _ws_task = AbortOnDrop(ws_task);
+    let (mut ws_rx, _ws_task) = spawn_ws_reader(ws_read);
 
     rt.reannounce().await;
 
-    let mut keepalive = tokio::time::interval(Duration::from_secs(30));
+    let mut keepalive = keepalive_interval(Duration::from_secs(30));
     let mut progress = tokio::time::interval(Duration::from_secs(1));
-    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    progress.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    // Not fatal like the websocket/mpv channels above: MPRIS is optional, and
-    // every clone of its sender lives forever in `cmd_run`.
+    // Not fatal like the websocket channel above: MPRIS is optional, and every
+    // clone of its sender lives forever in `cmd_run`.
     let mut ext_closed = false;
 
     loop {
         tokio::select! {
             _ = shutdown.fired() => return Ok(()),
             _ = keepalive.tick() => {
-                let msg = tokio_tungstenite::tungstenite::Message::Text(
-                    json!({"MessageType":"KeepAlive"}).to_string().into(),
-                );
-                if ws_write.send(msg).await.is_err() {
-                    return Err(eyre!("websocket send failed"));
-                }
+                let msg = WsMessage::Text(json!({"MessageType":"KeepAlive"}).to_string().into());
+                ws_write
+                    .send(msg)
+                    .await
+                    .wrap_err_with(|| format!("sending a keepalive to {}", rt.api.server))?;
             }
             _ = progress.tick() => {
                 rt.tick_progress().await;
@@ -201,10 +196,7 @@ async fn run_session(
                     // The server dictates the interval; halve it so a tick is
                     // never the one that arrives late.
                     Some(WsIncoming::ForceKeepAlive { seconds }) => {
-                        keepalive =
-                            tokio::time::interval(Duration::from_secs((seconds / 2).max(1)));
-                        keepalive
-                            .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                        keepalive = keepalive_interval(Duration::from_secs((seconds / 2).max(1)));
                     }
                     Some(WsIncoming::KeepAlive) => {}
                     Some(WsIncoming::Ignored { message_type }) => {
@@ -215,16 +207,8 @@ async fn run_session(
                     None => return Err(eyre!("websocket closed")),
                 }
             }
-            tagged = mpv_rx.recv() => {
-                match tagged {
-                    Some((generation, ev)) if generation == rt.mpv_gen => {
-                        rt.on_mpv_event(ev).await;
-                    }
-                    // From a previous mpv session; see `mpv_gen`.
-                    Some(_) => {}
-                    // Unreachable while `run` runs; a daemon should not panic.
-                    None => return Err(eyre!("mpv event channel closed")),
-                }
+            ev = next_mpv_event(&mut rt.mpv) => {
+                rt.on_mpv_event(ev).await;
             }
             ev = ext_rx.recv(), if !ext_closed => {
                 match ev {

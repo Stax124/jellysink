@@ -1,6 +1,6 @@
 use super::profile::{capabilities, device_profile};
 use crate::media::PlayRequest;
-use crate::report::PlayingState;
+use crate::report::Report;
 use color_eyre::eyre::WrapErr;
 use jellysink_core::jellyfin::auth::Api;
 use jellysink_core::jellyfin::url::encode_query_value;
@@ -50,21 +50,11 @@ pub(crate) async fn playback_info(
         .wrap_err_with(|| format!("decoding PlaybackInfo for {item_id}"))
 }
 
-pub(crate) async fn playing(api: &Api, state: &PlayingState) -> color_eyre::Result<()> {
-    post_session(api, "/Sessions/Playing", state).await
-}
-
-pub(crate) async fn progress(api: &Api, state: &PlayingState) -> color_eyre::Result<()> {
-    post_session(api, "/Sessions/Playing/Progress", state).await
-}
-
-pub(crate) async fn stopped(api: &Api, state: &PlayingState) -> color_eyre::Result<()> {
-    post_session(api, "/Sessions/Playing/Stopped", state).await
-}
-
-async fn post_session(api: &Api, path: &str, state: &PlayingState) -> color_eyre::Result<()> {
-    let body = state.to_json();
-    let resp = api.post_json_unchecked(path, &body).await?;
+pub(crate) async fn post_report(api: &Api, report: &Report) -> color_eyre::Result<()> {
+    let path = report.path();
+    let resp = api
+        .post_json_unchecked(path, &report.state().to_json())
+        .await?;
     if !resp.status().is_success() {
         tracing::debug!(status = %resp.status(), path, "session report rejected");
     }

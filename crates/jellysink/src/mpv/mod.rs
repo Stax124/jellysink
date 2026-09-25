@@ -7,8 +7,8 @@ mod ipc;
 
 pub(crate) use event::{EndFileReason, MpvEvent, SelectedTrack};
 
+use crate::runtime::task::AbortOnDrop;
 use color_eyre::eyre::{WrapErr, eyre};
-use event::mpv_event_for;
 use ipc::{
     IpcMessage, as_bool_property, as_f64_property, as_i64_property, encode_command, parse_ipc_line,
 };
@@ -24,32 +24,31 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{sleep, timeout};
 
-struct Pending {
-    tx: oneshot::Sender<Result<Value, String>>,
-}
+type Reply = oneshot::Sender<Result<Value, String>>;
 
 /// Drops pending requests whose caller has gone away (timed out or cancelled).
 /// mpv never replies to those, so they would leak a `oneshot::Sender` each.
-fn evict_abandoned(pending: &mut HashMap<i64, Pending>) -> usize {
+fn evict_abandoned(pending: &mut HashMap<i64, Reply>) -> usize {
     let before = pending.len();
-    pending.retain(|_, p| !p.tx.is_closed());
+    pending.retain(|_, reply| !reply.is_closed());
     before - pending.len()
 }
 
-pub(crate) struct MpvSession {
-    child: Child,
-    cmd_tx: mpsc::UnboundedSender<IpcCmd>,
-    socket: PathBuf,
-    next_id: i64,
+struct Request {
+    line: String,
+    id: i64,
+    reply: Reply,
 }
 
-enum IpcCmd {
-    Request {
-        line: String,
-        id: i64,
-        reply: oneshot::Sender<Result<Value, String>>,
-    },
-    Shutdown,
+/// One mpv process. Its events live and die with it, so dropping the session
+/// also drops whatever it had queued.
+pub(crate) struct MpvSession {
+    child: Child,
+    requests: mpsc::UnboundedSender<Request>,
+    events: mpsc::UnboundedReceiver<MpvEvent>,
+    _ipc: AbortOnDrop,
+    socket: PathBuf,
+    next_id: i64,
 }
 
 impl MpvSession {
@@ -57,11 +56,11 @@ impl MpvSession {
         mpv_path: &str,
         extra_args: &[String],
         socket: PathBuf,
-    ) -> color_eyre::Result<(Self, mpsc::UnboundedReceiver<MpvEvent>)> {
+    ) -> color_eyre::Result<Self> {
         if let Some(parent) = socket.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .wrap_err("creating mpv socket dir")?;
+                .wrap_err_with(|| format!("creating {}", parent.display()))?;
         }
         if let Err(e) = tokio::fs::remove_file(&socket).await
             && e.kind() != std::io::ErrorKind::NotFound
@@ -85,7 +84,7 @@ impl MpvSession {
 
         let stream = wait_for_socket(&socket, Duration::from_secs(8))
             .await
-            .wrap_err("waiting for mpv IPC socket")?;
+            .wrap_err_with(|| format!("waiting for mpv IPC socket {}", socket.display()))?;
         // mpv creates the socket under the ambient umask, and its
         // `http-header-fields` carries the Jellyfin access token.
         if let Err(e) =
@@ -94,19 +93,23 @@ impl MpvSession {
             tracing::warn!("could not restrict {}: {e}", socket.display());
         }
 
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let (ev_tx, ev_rx) = mpsc::unbounded_channel();
-        tokio::spawn(ipc_loop(stream, cmd_rx, ev_tx));
+        let (requests, request_rx) = mpsc::unbounded_channel();
+        let (event_tx, events) = mpsc::unbounded_channel();
+        let ipc = AbortOnDrop(tokio::spawn(ipc_loop(stream, request_rx, event_tx)));
 
-        Ok((
-            Self {
-                child,
-                cmd_tx,
-                socket,
-                next_id: 1,
-            },
-            ev_rx,
-        ))
+        Ok(Self {
+            child,
+            requests,
+            events,
+            _ipc: ipc,
+            socket,
+            next_id: 1,
+        })
+    }
+
+    /// A closed channel means the IPC loop ended, which only a dead mpv causes.
+    pub(crate) async fn next_event(&mut self) -> MpvEvent {
+        self.events.recv().await.unwrap_or(MpvEvent::Exited)
     }
 
     fn next_request_id(&mut self) -> i64 {
@@ -116,21 +119,18 @@ impl MpvSession {
     }
 
     async fn command(&mut self, args: Vec<Value>) -> color_eyre::Result<Value> {
+        let command = command_label(&args);
         let id = self.next_request_id();
         let line = encode_command(id, &args);
-        let (tx, rx) = oneshot::channel();
-        self.cmd_tx
-            .send(IpcCmd::Request {
-                line,
-                id,
-                reply: tx,
-            })
-            .map_err(|_| eyre!("mpv IPC closed"))?;
-        match timeout(Duration::from_secs(10), rx).await {
+        let (reply, answer) = oneshot::channel();
+        self.requests
+            .send(Request { line, id, reply })
+            .map_err(|_| eyre!("mpv {command}: IPC on {} closed", self.socket.display()))?;
+        match timeout(Duration::from_secs(10), answer).await {
             Ok(Ok(Ok(v))) => Ok(v),
-            Ok(Ok(Err(e))) => Err(eyre!("mpv command error: {e}")),
-            Ok(Err(_)) => Err(eyre!("mpv command dropped")),
-            Err(_) => Err(eyre!("mpv command timed out")),
+            Ok(Ok(Err(e))) => Err(eyre!("mpv {command}: {e}")),
+            Ok(Err(_)) => Err(eyre!("mpv {command}: dropped")),
+            Err(_) => Err(eyre!("mpv {command}: timed out")),
         }
     }
 
@@ -160,38 +160,46 @@ impl MpvSession {
         as_bool_property(name, &self.get_property(name).await?)
     }
 
-    pub(crate) async fn quit_and_wait(&mut self) -> color_eyre::Result<()> {
+    /// IPC `quit`, then `SIGTERM`, then `SIGKILL`; `Drop` removes the socket.
+    pub(crate) async fn quit(mut self) {
+        // mpv may close the socket before answering; the escalation covers a real failure.
         let _ = self.command(vec![json!("quit")]).await;
-        let _ = self.cmd_tx.send(IpcCmd::Shutdown);
         if timeout(Duration::from_secs(3), self.child.wait())
             .await
             .is_ok()
         {
-            let _ = tokio::fs::remove_file(&self.socket).await;
-            return Ok(());
+            return;
         }
         if let Some(id) = self.child.id()
             && let Some(pid) = rustix::process::Pid::from_raw(id as i32)
+            && let Err(e) = rustix::process::kill_process(pid, rustix::process::Signal::TERM)
         {
-            let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
+            tracing::warn!("could not SIGTERM mpv ({id}): {e}");
         }
-        match timeout(Duration::from_secs(2), self.child.wait()).await {
-            Ok(_) => {}
-            Err(_) => {
-                let _ = self.child.kill().await;
-                let _ = self.child.wait().await;
-            }
+        if timeout(Duration::from_secs(2), self.child.wait())
+            .await
+            .is_err()
+            && let Err(e) = self.child.kill().await
+        {
+            tracing::warn!("could not kill mpv: {e}");
         }
-        let _ = tokio::fs::remove_file(&self.socket).await;
-        Ok(())
     }
 }
 
 impl Drop for MpvSession {
     fn drop(&mut self) {
-        let _ = self.cmd_tx.send(IpcCmd::Shutdown);
         let _ = self.child.start_kill();
         let _ = std::fs::remove_file(&self.socket);
+    }
+}
+
+/// The command and, for a property access, the property. Never a later
+/// argument: a `loadfile` URL can carry the access token.
+fn command_label(args: &[Value]) -> String {
+    let name = args.first().and_then(Value::as_str).unwrap_or("command");
+    match args.get(1).and_then(Value::as_str) {
+        Some(property) if name.ends_with("_property") => format!("{name} {property}"),
+        _ => name.to_string(),
     }
 }
 
@@ -212,59 +220,51 @@ async fn wait_for_socket(path: &Path, max: Duration) -> color_eyre::Result<UnixS
 
 async fn ipc_loop(
     stream: UnixStream,
-    mut cmd_rx: mpsc::UnboundedReceiver<IpcCmd>,
-    ev_tx: mpsc::UnboundedSender<MpvEvent>,
+    mut requests: mpsc::UnboundedReceiver<Request>,
+    events: mpsc::UnboundedSender<MpvEvent>,
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
-    let mut pending: HashMap<i64, Pending> = HashMap::new();
+    let mut pending: HashMap<i64, Reply> = HashMap::new();
 
     loop {
         tokio::select! {
-            cmd = cmd_rx.recv() => {
-                match cmd {
-                    Some(IpcCmd::Request { line, id, reply }) => {
-                        let evicted = evict_abandoned(&mut pending);
-                        if evicted > 0 {
-                            tracing::debug!(evicted, "dropped mpv IPC requests the caller gave up on");
-                        }
-                        pending.insert(id, Pending { tx: reply });
-                        if let Err(e) = writer.write_all(line.as_bytes()).await {
-                            tracing::warn!("mpv IPC write failed: {e}");
-                            break;
-                        }
-                    }
-                    Some(IpcCmd::Shutdown) | None => break,
+            request = requests.recv() => {
+                let Some(Request { line, id, reply }) = request else {
+                    break;
+                };
+                let evicted = evict_abandoned(&mut pending);
+                if evicted > 0 {
+                    tracing::debug!(evicted, "dropped mpv IPC requests the caller gave up on");
+                }
+                pending.insert(id, reply);
+                if let Err(e) = writer.write_all(line.as_bytes()).await {
+                    tracing::warn!("mpv IPC write failed: {e}");
+                    break;
                 }
             }
             line = lines.next_line() => {
-                match line {
-                    Ok(Some(line)) => {
-                        match parse_ipc_line(&line) {
-                            Ok(IpcMessage::Reply { request_id, error, data }) => {
-                                if let Some(p) = pending.remove(&request_id) {
-                                    let r = if error == "success" {
-                                        Ok(data)
-                                    } else {
-                                        Err(error)
-                                    };
-                                    let _ = p.tx.send(r);
-                                }
-                            }
-                            Ok(other) => {
-                                if let Some(ev) = mpv_event_for(&other)
-                                    && ev_tx.send(ev).is_err()
-                                {
-                                    break;
-                                }
-                            }
-                            Err(e) => tracing::warn!("unparseable mpv IPC line: {e:#}"),
-                        }
-                    }
-                    Ok(None) | Err(_) => {
-                        let _ = ev_tx.send(MpvEvent::Exited);
+                let line = match line {
+                    Ok(Some(line)) => line,
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::warn!("mpv IPC read failed: {e}");
                         break;
                     }
+                };
+                match parse_ipc_line(&line) {
+                    Ok(IpcMessage::Reply { request_id, result }) => {
+                        if let Some(reply) = pending.remove(&request_id) {
+                            let _ = reply.send(result);
+                        }
+                    }
+                    Ok(IpcMessage::Event(Some(event))) => {
+                        if events.send(event).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(IpcMessage::Event(None)) => {}
+                    Err(e) => tracing::warn!("unparseable mpv IPC line: {e:#}"),
                 }
             }
         }

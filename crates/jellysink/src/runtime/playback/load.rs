@@ -1,23 +1,26 @@
 //! Getting a prepared play into mpv: the stream URL, where the access token
 //! rides, and spawning mpv when there is none.
 
-use crate::media::PreparedPlay;
+use crate::media::{PreparedPlay, TrackKind};
 use crate::mpv::MpvSession;
 use crate::runtime::state::Runtime;
-use crate::runtime::task::AbortOnDrop;
-use color_eyre::eyre::eyre;
+use color_eyre::eyre::WrapErr;
+use jellysink_core::config::{Config, MpvArgs, Paths};
 use jellysink_core::jellyfin::auth::Api;
 
 impl Runtime {
-    pub(super) async fn load_into_existing(
-        &mut self,
-        prepared: &PreparedPlay,
-        item_id: &str,
-    ) -> color_eyre::Result<()> {
-        let Some(mpv) = self.mpv.as_mut() else {
-            return Err(eyre!("mpv missing during reuse"));
+    /// `loadfile ... replace` into the running mpv, spawning one first if
+    /// there is none.
+    pub(super) async fn load_current(&mut self, prepared: &PreparedPlay) -> color_eyre::Result<()> {
+        let mpv = match self.mpv.take() {
+            Some(mpv) => mpv,
+            None => spawn_mpv(&self.config, &self.paths).await?,
         };
-        let auth = apply_auth(&self.api, mpv, prepared, item_id, self.window.has_next()).await;
+        let mpv = self.mpv.insert(mpv);
+        self.transitioning = true;
+        // Items mpv autoplays skip this foreign-host check and the header follows
+        // mpv into them, so with a next item queued the token rides the URL.
+        let auth = apply_auth(&self.api, mpv, prepared, self.window.has_next()).await?;
         mpv.loadfile(&auth.url, Some(prepared.title.as_str()))
             .await?;
         self.mpv_auth_header_set = auth.header_set;
@@ -27,87 +30,43 @@ impl Runtime {
         if let Err(e) = mpv.set_mute(self.muted).await {
             tracing::warn!("could not restore mute in mpv: {e:#}");
         }
-        if let Err(e) = mpv.unpause().await {
+        if let Err(e) = mpv.set_pause(false).await {
             tracing::warn!("could not unpause mpv: {e:#}");
         }
         Ok(())
     }
-
-    pub(super) async fn spawn_and_load(
-        &mut self,
-        prepared: &PreparedPlay,
-        item_id: &str,
-    ) -> color_eyre::Result<()> {
-        // Re-read mpv_args on every spawn so edits apply to the next play
-        // without restarting the daemon.
-        let mpv_args = jellysink_core::config::MpvArgs::load(&self.paths)
-            .inspect_err(|e| {
-                tracing::warn!("mpv_args unreadable; spawning without extra args: {e:#}");
-            })
-            .unwrap_or_default();
-        let (mut mpv, events) =
-            MpvSession::spawn(&self.config.mpv_path, &mpv_args.0, self.paths.mpv_socket()).await?;
-        mpv.set_keep_open().await?;
-        if let Err(e) = mpv.observe_subtitle_track().await {
-            tracing::warn!(
-                "cannot observe mpv's subtitle track ({e:#}); a track picked in the mpv \
-                 window will not be remembered or reported"
-            );
-        }
-        if let Err(e) = mpv.observe_audio_track().await {
-            tracing::warn!(
-                "cannot observe mpv's audio track ({e:#}); a track picked in the mpv \
-                 window will not be remembered or reported"
-            );
-        }
-        tracing::info!("mpv spawned");
-
-        let auth = apply_auth(
-            &self.api,
-            &mut mpv,
-            prepared,
-            item_id,
-            self.window.has_next(),
-        )
-        .await;
-        if let Err(e) = mpv.loadfile(&auth.url, Some(prepared.title.as_str())).await {
-            let _ = mpv.quit_and_wait().await;
-            return Err(e);
-        }
-        self.mpv_auth_header_set = auth.header_set;
-        if let Err(e) = mpv.set_volume(self.volume).await {
-            tracing::warn!("could not set volume in the new mpv: {e:#}");
-        }
-        if let Err(e) = mpv.set_mute(self.muted).await {
-            tracing::warn!("could not set mute in the new mpv: {e:#}");
-        }
-
-        self.mpv_gen = self.mpv_gen.wrapping_add(1);
-        let generation = self.mpv_gen;
-        let tx = self.mpv_tx.clone();
-        // The assignment drops — and so aborts — the previous forwarder. Events
-        // it already queued stay on the shared channel; `generation` drops those.
-        self.mpv_events = Some(AbortOnDrop(tokio::spawn(async move {
-            let mut events = events;
-            while let Some(ev) = events.recv().await {
-                if tx.send((generation, ev)).is_err() {
-                    break;
-                }
-            }
-        })));
-        self.mpv = Some(mpv);
-        self.transitioning = true;
-        Ok(())
-    }
 }
 
-fn stream_url_with_token(api: &Api, item_id: &str, prepared: &PreparedPlay) -> String {
+async fn spawn_mpv(config: &Config, paths: &Paths) -> color_eyre::Result<MpvSession> {
+    // Re-read mpv_args on every spawn so edits apply to the next play
+    // without restarting the daemon.
+    let mpv_args = MpvArgs::load(paths)
+        .inspect_err(|e| {
+            tracing::warn!("mpv_args unreadable; spawning without extra args: {e:#}");
+        })
+        .unwrap_or_default();
+    let mut mpv = MpvSession::spawn(&config.mpv_path, &mpv_args.0, paths.mpv_socket()).await?;
+    mpv.set_keep_open().await?;
+    for kind in [TrackKind::Subtitle, TrackKind::Audio] {
+        if let Err(e) = mpv.observe_track(kind).await {
+            tracing::warn!(
+                kind = kind.as_str(),
+                "cannot observe mpv's track ({e:#}); a track picked in the mpv window \
+                 will not be remembered or reported"
+            );
+        }
+    }
+    tracing::info!("mpv spawned");
+    Ok(mpv)
+}
+
+fn stream_url_with_token(api: &Api, prepared: &PreparedPlay) -> String {
     if prepared.url.contains("ApiKey=") {
         prepared.url.clone()
     } else {
         jellysink_core::jellyfin::url::direct_stream_url(
             &api.server,
-            item_id,
+            &prepared.item_id,
             &prepared.media_source_id,
             prepared.live_stream_id.as_deref(),
             Some(&api.token),
@@ -126,38 +85,27 @@ async fn apply_auth(
     api: &Api,
     mpv: &mut MpvSession,
     prepared: &PreparedPlay,
-    item_id: &str,
     force_url_token: bool,
-) -> AppliedAuth {
+) -> color_eyre::Result<AppliedAuth> {
     if !force_url_token && prepared.uses_auth_header {
-        match mpv.apply_auth_header(&api.mpv_auth_header_field()).await {
-            Ok(()) => {
-                return AppliedAuth {
-                    url: prepared.url.clone(),
-                    header_set: true,
-                };
-            }
-            Err(e) => {
-                tracing::warn!("could not set mpv auth header ({e:#}); putting ApiKey on the URL");
-                return AppliedAuth {
-                    url: stream_url_with_token(api, item_id, prepared),
-                    header_set: false,
-                };
-            }
+        if let Err(e) = mpv.apply_auth_header(&api.mpv_auth_header_field()).await {
+            tracing::warn!("could not set mpv auth header ({e:#}); putting ApiKey on the URL");
+            return Ok(AppliedAuth {
+                url: stream_url_with_token(api, prepared),
+                header_set: false,
+            });
         }
+        return Ok(AppliedAuth {
+            url: prepared.url.clone(),
+            header_set: true,
+        });
     }
-    let _ = mpv.clear_auth_header().await;
-    AppliedAuth {
-        url: stream_url_with_token(api, item_id, prepared),
+    // A header left from an earlier item would reach this one's subtitle host.
+    mpv.clear_auth_header()
+        .await
+        .wrap_err("clearing mpv's Authorization header")?;
+    Ok(AppliedAuth {
+        url: stream_url_with_token(api, prepared),
         header_set: false,
-    }
+    })
 }
-
-/// Resume offsets only apply when positive.
-pub(super) fn resume_seek_ticks(start_ticks: Option<i64>) -> Option<i64> {
-    start_ticks.filter(|t| *t > 0)
-}
-
-#[cfg(test)]
-#[path = "load_test.rs"]
-mod tests;

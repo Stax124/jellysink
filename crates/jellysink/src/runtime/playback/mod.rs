@@ -5,8 +5,6 @@ mod load;
 mod progress;
 mod tracks;
 
-use load::resume_seek_ticks;
-
 use crate::media::PlayRequest;
 use crate::mpv::SelectedTrack;
 use crate::runtime::state::Runtime;
@@ -29,11 +27,7 @@ impl Runtime {
 
         let reuse = self.mpv.is_some();
         if reuse {
-            if let Some(mpv) = self.mpv.as_mut() {
-                let live = mpv.time_pos().await.ok();
-                self.last_ticks =
-                    jellysink_core::ticks::coalesce_position_ticks(live, self.last_ticks);
-            }
+            self.sample_position().await;
             self.send_stopped();
             self.transitioning = true;
         }
@@ -55,34 +49,26 @@ impl Runtime {
             tracing::debug!(item = %item_id, "no item metadata; skipping series expand");
         }
 
-        if reuse {
-            if let Err(e) = self.load_into_existing(&prepared, &item_id).await {
-                tracing::error!("{e:#}");
-                self.stop_playback(false).await;
-                return Ok(());
-            }
-        } else if let Err(e) = self.spawn_and_load(&prepared, &item_id).await {
+        if let Err(e) = self.load_current(&prepared).await {
             tracing::error!("{e:#}");
+            self.stop_playback(false).await;
             return Ok(());
         }
 
-        self.current = Some(prepared);
-        self.item_id = Some(item_id);
-        self.paused = false;
-        self.stopping = false;
-        self.last_ticks = req.start_ticks.unwrap_or(0);
-        self.external_subtitle_track_ids.clear();
-
-        self.pending_start_ticks = resume_seek_ticks(req.start_ticks);
-
-        self.send_start();
         tracing::info!(
-            item = %self.item_id.as_deref().unwrap_or("?"),
-            title = %self.current.as_ref().map(|p| p.title.as_str()).unwrap_or("?"),
+            item = %prepared.item_id,
+            title = %prepared.title,
             queue = self.window.len(),
             index = self.window.index(),
             "playing"
         );
+        self.current = Some(prepared);
+        self.paused = false;
+        self.last_ticks = req.start_ticks.unwrap_or(0);
+        self.external_subtitle_track_ids.clear();
+        self.pending_start_ticks = req.start_ticks.filter(|ticks| *ticks > 0);
+
+        self.send_start();
         // `loadfile ... replace` wiped mpv's playlist, so refill it around the
         // current file.
         self.fill_forward_into_mpv().await;
@@ -90,33 +76,43 @@ impl Runtime {
         Ok(())
     }
 
+    /// A jump whose item cannot be prepared stops playback: nothing could
+    /// describe what mpv is now playing.
     pub(in crate::runtime) async fn adopt_playlist_pos(&mut self) -> color_eyre::Result<()> {
         let playlist_pos = self
             .mpv
             .as_mut()
             .ok_or_else(|| eyre!("mpv missing"))?
             .playlist_pos()
-            .await?
-            .max(0) as usize;
+            .await?;
         let Some(queue_index) = self.window.queue_index_at(playlist_pos) else {
             return Ok(());
         };
         let item_id = self.window.items()[queue_index].clone();
-        if self.item_id.as_deref() == Some(item_id.as_str()) {
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|current| current.item_id == item_id)
+        {
             return Ok(());
         }
+        // Via `prepare_item` (which caches plain requests itself) so remembered
+        // tracks also reach a playlist jump and mpv's own autoplay.
+        let prepared = match self.prepare_item(&item_id, &PlayRequest::default()).await {
+            Ok((prepared, _)) => prepared,
+            Err(e) => {
+                self.stop_playback(true).await;
+                return Err(e.wrap_err(format!("preparing {item_id} after a playlist jump")));
+            }
+        };
         self.send_stopped();
         self.window.adopt_index(queue_index);
         tracing::info!(item = %item_id, index = queue_index, "adopted mpv playlist jump");
-        // Via `prepare_item` (which caches plain requests itself) so remembered
-        // tracks also reach a playlist jump and mpv's own autoplay.
-        let (prepared, _) = self.prepare_item(&item_id, &PlayRequest::default()).await?;
+        let title = prepared.title.clone();
         self.current = Some(prepared);
-        self.item_id = Some(item_id);
         self.last_ticks = 0;
         self.external_subtitle_track_ids.clear();
-        if let Some(title) = self.current.as_ref().map(|p| p.title.clone())
-            && let Some(mpv) = self.mpv.as_mut()
+        if let Some(mpv) = self.mpv.as_mut()
             && let Err(e) = mpv.set_property("force-media-title", json!(title)).await
         {
             tracing::warn!("could not set mpv's media title: {e:#}");
@@ -127,40 +123,39 @@ impl Runtime {
 
     pub(in crate::runtime) async fn stop_playback(&mut self, report: bool) {
         tracing::info!(
-            item = %self.item_id.as_deref().unwrap_or("?"),
+            item = %self.current.as_ref().map_or("?", |current| current.item_id.as_str()),
             position_s = jellysink_core::ticks::ticks_to_seconds(self.last_ticks),
             "stopping playback"
         );
-        self.stopping = true;
         self.transitioning = false;
         // A stale resume offset must never seek a later item.
         self.pending_start_ticks = None;
         self.prepared.clear();
         self.titles.clear();
         self.window.clear();
-        let live = if let Some(mpv) = self.mpv.as_mut() {
-            mpv.time_pos().await.ok()
-        } else {
-            None
-        };
-        // A teardown sample can fail or read 0 (window closed, IPC gone).
-        self.last_ticks = jellysink_core::ticks::coalesce_position_ticks(live, self.last_ticks);
+        self.sample_position().await;
         if report {
             self.send_stopped();
         }
-        if let Some(mut mpv) = self.mpv.take() {
-            let _ = mpv.quit_and_wait().await;
+        if let Some(mpv) = self.mpv.take() {
+            mpv.quit().await;
         }
-        self.mpv_gen = self.mpv_gen.wrapping_add(1);
-        self.mpv_events = None;
         self.current = None;
-        self.item_id = None;
         self.external_subtitle_track_ids.clear();
         self.audio.settled = SelectedTrack::Unresolved;
         self.subtitle.settled = SelectedTrack::Unresolved;
         self.paused = false;
-        self.stopping = false;
         self.publish_status();
+    }
+
+    /// A failed or zero sample keeps the last known position: mpv reads 0
+    /// while a file unloads, and fails once its window is closed.
+    pub(in crate::runtime) async fn sample_position(&mut self) {
+        let live = match self.mpv.as_mut() {
+            Some(mpv) => mpv.time_pos().await.ok(),
+            None => None,
+        };
+        self.last_ticks = jellysink_core::ticks::coalesce_position_ticks(live, self.last_ticks);
     }
 
     pub(in crate::runtime) async fn toggle_pause(&mut self) -> color_eyre::Result<()> {
@@ -175,11 +170,7 @@ impl Runtime {
 
     pub(in crate::runtime) async fn apply_pause(&mut self, paused: bool) -> color_eyre::Result<()> {
         if let Some(mpv) = self.mpv.as_mut() {
-            if paused {
-                mpv.pause().await?;
-            } else {
-                mpv.unpause().await?;
-            }
+            mpv.set_pause(paused).await?;
             self.paused = paused;
             tracing::info!(paused, "pause");
             self.send_progress();

@@ -1,10 +1,8 @@
 //! The typed commands we send mpv, and the argument shapes it insists on.
 
 use super::MpvSession;
-use super::event::{
-    AUDIO_TRACK_OBSERVER_ID, AUDIO_TRACK_PROPERTY, SUBTITLE_TRACK_OBSERVER_ID,
-    SUBTITLE_TRACK_PROPERTY, SelectedTrack, selected_track_from_property,
-};
+use super::event::{SelectedTrack, selected_track_from_property};
+use crate::media::TrackKind;
 use color_eyre::eyre::WrapErr;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -30,19 +28,18 @@ where
     body
 }
 
-pub(crate) fn loadlist_append_args(path: &str) -> [Value; 3] {
-    [json!("loadlist"), json!(path), json!("append")]
-}
-
 /// `insert-at` and the index must stay separate arguments; `"insert-at0"` is
 /// `invalid parameter`.
-pub(crate) fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
-    [
-        json!("loadlist"),
-        json!(path),
-        json!("insert-at"),
-        json!(index),
-    ]
+pub(crate) fn loadlist_args(path: &str, index: Option<usize>) -> Vec<Value> {
+    match index {
+        Some(index) => vec![
+            json!("loadlist"),
+            json!(path),
+            json!("insert-at"),
+            json!(index),
+        ],
+        None => vec![json!("loadlist"), json!(path), json!("append")],
+    }
 }
 
 /// `yes` auto-plays the rest of the playlist and emits the `end-file` autoplay
@@ -50,17 +47,22 @@ pub(crate) fn loadlist_insert_at_args(path: &str, index: usize) -> [Value; 4] {
 pub(crate) const KEEP_OPEN: &str = "yes";
 
 pub(crate) fn max_subtitle_track_id_from_track_list(list: &Value) -> i64 {
-    let mut max = 0i64;
-    if let Some(arr) = list.as_array() {
-        for t in arr {
-            if t.get("type").and_then(Value::as_str) == Some("sub")
-                && let Some(id) = t.get("id").and_then(Value::as_i64)
-            {
-                max = max.max(id);
-            }
-        }
+    list.as_array()
+        .into_iter()
+        .flatten()
+        .filter(|track| track.get("type").and_then(Value::as_str) == Some("sub"))
+        .filter_map(|track| track.get("id").and_then(Value::as_i64))
+        .max()
+        .unwrap_or(0)
+}
+
+/// mpv echoes it back on every change; we match on the property name, so it
+/// only has to be distinct per observer.
+fn observer_id(kind: TrackKind) -> i64 {
+    match kind {
+        TrackKind::Audio => 1,
+        TrackKind::Subtitle => 2,
     }
-    max
 }
 
 impl MpvSession {
@@ -81,48 +83,23 @@ impl MpvSession {
         Ok(())
     }
 
-    /// Appends every entry in one `loadlist`. Titles come from `#EXTINF`.
-    pub(crate) async fn loadlist_append(
+    /// Every entry in one `loadlist`, titled by `#EXTINF`: appended, or spliced
+    /// in at `index`, which leaves playback alone and shifts `playlist-pos`.
+    pub(crate) async fn loadlist<T, U>(
         &mut self,
-        entries: &[(&str, &str)],
-    ) -> color_eyre::Result<()> {
-        if entries.is_empty() {
-            return Ok(());
-        }
-        let path = self.socket.with_file_name("append.m3u");
-        self.loadlist(&path, playlist_m3u(entries.iter().copied()), None)
-            .await
-    }
-
-    /// Splices every entry in at `index` in one `loadlist`. Playback is
-    /// unaffected; mpv shifts `playlist-pos`.
-    pub(crate) async fn loadlist_insert_at(
-        &mut self,
-        entries: &[(&str, &str)],
-        index: usize,
-    ) -> color_eyre::Result<()> {
-        if entries.is_empty() {
-            return Ok(());
-        }
-        let path = self.socket.with_file_name("insert.m3u");
-        self.loadlist(&path, playlist_m3u(entries.iter().copied()), Some(index))
-            .await
-    }
-
-    /// The M3U file is what carries each entry's title.
-    async fn loadlist(
-        &mut self,
-        path: &Path,
-        body: String,
+        entries: &[(T, U)],
         index: Option<usize>,
-    ) -> color_eyre::Result<()> {
-        write_private(path, &body).await?;
-        let args: Vec<Value> = match index {
-            Some(i) => loadlist_insert_at_args(&path.to_string_lossy(), i).to_vec(),
-            None => loadlist_append_args(&path.to_string_lossy()).to_vec(),
-        };
-        let result = self.command(args).await;
-        if let Err(e) = tokio::fs::remove_file(path).await {
+    ) -> color_eyre::Result<()>
+    where
+        T: AsRef<str>,
+        U: AsRef<str>,
+    {
+        let path = self.socket.with_file_name("playlist.m3u");
+        write_private(&path, &playlist_m3u(entries.iter().map(|(t, u)| (t, u)))).await?;
+        let result = self
+            .command(loadlist_args(&path.to_string_lossy(), index))
+            .await;
+        if let Err(e) = tokio::fs::remove_file(&path).await {
             tracing::warn!("could not remove {}: {e}", path.display());
         }
         result?;
@@ -141,13 +118,13 @@ impl MpvSession {
         Ok(())
     }
 
-    /// mpv reports `-1` while idle; that is a real answer, not a failure.
-    pub(crate) async fn playlist_pos(&mut self) -> color_eyre::Result<i64> {
-        self.get_i64("playlist-pos").await
+    /// mpv reports `-1` while idle, which reads as position 0.
+    pub(crate) async fn playlist_pos(&mut self) -> color_eyre::Result<usize> {
+        Ok(usize::try_from(self.get_i64("playlist-pos").await?).unwrap_or(0))
     }
 
-    pub(crate) async fn playlist_count(&mut self) -> color_eyre::Result<i64> {
-        self.get_i64("playlist-count").await
+    pub(crate) async fn playlist_count(&mut self) -> color_eyre::Result<usize> {
+        Ok(usize::try_from(self.get_i64("playlist-count").await?).unwrap_or(0))
     }
 
     pub(crate) async fn set_keep_open(&mut self) -> color_eyre::Result<()> {
@@ -168,17 +145,13 @@ impl MpvSession {
         self.set_property("http-header-fields", json!([])).await
     }
 
-    pub(crate) async fn pause(&mut self) -> color_eyre::Result<()> {
-        self.set_property("pause", json!(true)).await
-    }
-
-    pub(crate) async fn unpause(&mut self) -> color_eyre::Result<()> {
-        self.set_property("pause", json!(false)).await
+    pub(crate) async fn set_pause(&mut self, paused: bool) -> color_eyre::Result<()> {
+        self.set_property("pause", json!(paused)).await
     }
 
     pub(crate) async fn toggle_pause(&mut self) -> color_eyre::Result<()> {
-        let paused = self.get_bool("pause").await?;
-        self.set_property("pause", json!(!paused)).await
+        self.command(vec![json!("cycle"), json!("pause")]).await?;
+        Ok(())
     }
 
     pub(crate) async fn seek_absolute(&mut self, seconds: f64) -> color_eyre::Result<()> {
@@ -188,8 +161,7 @@ impl MpvSession {
     }
 
     pub(crate) async fn set_volume(&mut self, volume: i64) -> color_eyre::Result<()> {
-        self.set_property("volume", json!(volume.clamp(0, 100)))
-            .await
+        self.set_property("volume", json!(volume)).await
     }
 
     pub(crate) async fn add_volume(&mut self, delta: i64) -> color_eyre::Result<i64> {
@@ -203,60 +175,35 @@ impl MpvSession {
         self.set_property("mute", json!(mute)).await
     }
 
-    /// `None` or a negative id means `aid=no`, where `cycle audio` lands after
-    /// the last track.
-    pub(crate) async fn set_audio_track_id(
+    /// `None` or a negative id means off (`aid=no`, where `cycle audio` lands
+    /// after the last track).
+    pub(crate) async fn set_track_id(
         &mut self,
-        audio_track_id: Option<i64>,
+        kind: TrackKind,
+        track_id: Option<i64>,
     ) -> color_eyre::Result<()> {
-        match audio_track_id {
-            Some(id) if id >= 0 => self.set_property(AUDIO_TRACK_PROPERTY, json!(id)).await,
-            _ => self.set_property(AUDIO_TRACK_PROPERTY, json!("no")).await,
-        }
+        let value = match track_id {
+            Some(id) if id >= 0 => json!(id),
+            _ => json!("no"),
+        };
+        self.set_property(kind.mpv_property(), value).await
     }
 
-    pub(crate) async fn audio_track(&mut self) -> color_eyre::Result<SelectedTrack> {
+    pub(crate) async fn selected_track(
+        &mut self,
+        kind: TrackKind,
+    ) -> color_eyre::Result<SelectedTrack> {
         Ok(selected_track_from_property(
-            &self.get_property(AUDIO_TRACK_PROPERTY).await?,
+            &self.get_property(kind.mpv_property()).await?,
         ))
     }
 
     /// So a track picked in the mpv window, not a Jellyfin client, is noticed.
-    pub(crate) async fn observe_audio_track(&mut self) -> color_eyre::Result<()> {
+    pub(crate) async fn observe_track(&mut self, kind: TrackKind) -> color_eyre::Result<()> {
         self.command(vec![
             json!("observe_property"),
-            json!(AUDIO_TRACK_OBSERVER_ID),
-            json!(AUDIO_TRACK_PROPERTY),
-        ])
-        .await?;
-        Ok(())
-    }
-
-    pub(crate) async fn set_subtitle_track_id(
-        &mut self,
-        subtitle_track_id: Option<i64>,
-    ) -> color_eyre::Result<()> {
-        match subtitle_track_id {
-            Some(id) if id >= 0 => self.set_property(SUBTITLE_TRACK_PROPERTY, json!(id)).await,
-            _ => {
-                self.set_property(SUBTITLE_TRACK_PROPERTY, json!("no"))
-                    .await
-            }
-        }
-    }
-
-    pub(crate) async fn subtitle_track(&mut self) -> color_eyre::Result<SelectedTrack> {
-        Ok(selected_track_from_property(
-            &self.get_property(SUBTITLE_TRACK_PROPERTY).await?,
-        ))
-    }
-
-    /// So a track picked in the mpv window, not a Jellyfin client, is noticed.
-    pub(crate) async fn observe_subtitle_track(&mut self) -> color_eyre::Result<()> {
-        self.command(vec![
-            json!("observe_property"),
-            json!(SUBTITLE_TRACK_OBSERVER_ID),
-            json!(SUBTITLE_TRACK_PROPERTY),
+            json!(observer_id(kind)),
+            json!(kind.mpv_property()),
         ])
         .await?;
         Ok(())
@@ -268,8 +215,9 @@ impl MpvSession {
     }
 
     pub(crate) async fn toggle_fullscreen(&mut self) -> color_eyre::Result<()> {
-        let fullscreen = self.get_bool("fullscreen").await?;
-        self.set_property("fullscreen", json!(!fullscreen)).await
+        self.command(vec![json!("cycle"), json!("fullscreen")])
+            .await?;
+        Ok(())
     }
 
     pub(crate) async fn time_pos(&mut self) -> color_eyre::Result<f64> {

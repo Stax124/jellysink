@@ -1,17 +1,7 @@
 //! What an inbound mpv message means to the runtime.
 
-use super::ipc::IpcMessage;
+use crate::media::TrackKind;
 use serde_json::Value;
-
-pub(crate) const SUBTITLE_TRACK_PROPERTY: &str = "sid";
-pub(crate) const AUDIO_TRACK_PROPERTY: &str = "aid";
-
-/// `observe_property` id for [`SUBTITLE_TRACK_PROPERTY`]. We match on the
-/// property name, so only being distinct from other observers matters.
-pub(super) const SUBTITLE_TRACK_OBSERVER_ID: i64 = 1;
-
-/// See [`SUBTITLE_TRACK_OBSERVER_ID`]; only has to differ from it.
-pub(super) const AUDIO_TRACK_OBSERVER_ID: i64 = 2;
 
 /// What mpv answers for a track-id property such as `sid`. `false` (off) and
 /// `auto` (not picked yet) must stay apart: a loading file is not a decision.
@@ -82,36 +72,35 @@ impl std::fmt::Display for EndFileReason {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MpvEvent {
     EndFile {
         reason: EndFileReason,
     },
     FileLoaded,
-    /// mpv's selected subtitle track changed. Carries no track id on purpose:
-    /// this is handled a whole file load later, so the runtime re-reads `sid`.
-    SubtitleTrackChanged,
-    /// mpv's selected audio track changed. Carries no track id, for the same
-    /// reason [`MpvEvent::SubtitleTrackChanged`] does not.
-    AudioTrackChanged,
+    /// mpv's selected track changed. Carries no track id on purpose: this is
+    /// handled a whole file load later, so the runtime re-reads `aid`/`sid`.
+    TrackChanged(TrackKind),
     Exited,
 }
 
-pub(super) fn mpv_event_for(msg: &IpcMessage) -> Option<MpvEvent> {
-    match msg {
-        IpcMessage::Event { name, reason } => match name.as_str() {
-            "end-file" => Some(MpvEvent::EndFile {
-                reason: EndFileReason::parse(reason.as_deref()),
+impl MpvEvent {
+    /// `None` for an event the runtime does not act on.
+    pub(super) fn parse(name: &str, message: &Value) -> Option<Self> {
+        match name {
+            "end-file" => Some(Self::EndFile {
+                reason: EndFileReason::parse(message.get("reason").and_then(Value::as_str)),
             }),
-            "file-loaded" => Some(MpvEvent::FileLoaded),
+            "file-loaded" => Some(Self::FileLoaded),
+            "property-change" => {
+                let property = message.get("name").and_then(Value::as_str)?;
+                [TrackKind::Audio, TrackKind::Subtitle]
+                    .into_iter()
+                    .find(|kind| kind.mpv_property() == property)
+                    .map(Self::TrackChanged)
+            }
             _ => None,
-        },
-        IpcMessage::PropertyChange { property } => match property.as_str() {
-            SUBTITLE_TRACK_PROPERTY => Some(MpvEvent::SubtitleTrackChanged),
-            AUDIO_TRACK_PROPERTY => Some(MpvEvent::AudioTrackChanged),
-            _ => None,
-        },
-        IpcMessage::Reply { .. } => None,
+        }
     }
 }
 

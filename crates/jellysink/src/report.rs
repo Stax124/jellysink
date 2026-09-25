@@ -1,5 +1,4 @@
 use serde_json::{Value, json};
-use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PlayingState {
@@ -12,13 +11,18 @@ pub(crate) struct PlayingState {
     pub(crate) volume: i64,
     pub(crate) audio_stream_index: i64,
     pub(crate) subtitle_stream_index: i64,
-    pub(crate) can_seek: bool,
-    /// The prebuilt `NowPlayingQueue` payload; see `PlaylistWindow::now_playing`.
-    pub(crate) now_playing_queue: Arc<Vec<Value>>,
+    /// Every queued item id, in order.
+    pub(crate) queue: Vec<String>,
 }
 
 impl PlayingState {
     pub(crate) fn to_json(&self) -> Value {
+        let now_playing_queue: Vec<Value> = self
+            .queue
+            .iter()
+            .enumerate()
+            .map(|(i, id)| json!({"Id": id, "PlaylistItemId": format!("playlistItem{i}")}))
+            .collect();
         json!({
             "VolumeLevel": self.volume,
             "IsMuted": self.is_muted,
@@ -30,9 +34,9 @@ impl PlayingState {
             "PlayMethod": "DirectPlay",
             "PlaySessionId": self.play_session_id,
             "MediaSourceId": self.media_source_id,
-            "CanSeek": self.can_seek,
+            "CanSeek": true,
             "ItemId": self.item_id,
-            "NowPlayingQueue": *self.now_playing_queue,
+            "NowPlayingQueue": now_playing_queue,
         })
     }
 }
@@ -42,6 +46,22 @@ pub(crate) enum Report {
     Start(PlayingState),
     Progress(PlayingState),
     Stopped(PlayingState),
+}
+
+impl Report {
+    pub(crate) fn path(&self) -> &'static str {
+        match self {
+            Self::Start(_) => "/Sessions/Playing",
+            Self::Progress(_) => "/Sessions/Playing/Progress",
+            Self::Stopped(_) => "/Sessions/Playing/Stopped",
+        }
+    }
+
+    pub(crate) fn state(&self) -> &PlayingState {
+        match self {
+            Self::Start(state) | Self::Progress(state) | Self::Stopped(state) => state,
+        }
+    }
 }
 
 #[cfg(test)]
