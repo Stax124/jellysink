@@ -314,9 +314,10 @@ every terminal gets a picture rather than a hole.
 
 Images are fetched through `Api::primary_image`, which goes through `Api::get`
 and so carries the cached auth header. `jellyfin::url::image_url` is *not* used
-here: that one puts the token in the query string because MPRIS hands the URL to
-a desktop widget to fetch itself, and it stays JPEG at a fixed 600 px because
-WebP is not a safe assumption about someone else's widget. It names a quality
+here: that one is for MPRIS, which hands the URL to a desktop widget to fetch
+itself, so it carries no token (the image endpoint is anonymous), and it stays
+JPEG at a fixed 600 px because WebP is not a safe assumption about someone
+else's widget. It names a quality
 for the same reason the covers do — a measured 265 KB poster came back at 226 KB
 under the cap alone, and at 75 KB once the quality was named.
 

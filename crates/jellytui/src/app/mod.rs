@@ -22,7 +22,7 @@ use jellysink_core::VERSION;
 use jellysink_core::config::Paths;
 use jellysink_core::instance;
 use jellysink_core::jellyfin::auth::Api;
-use jellysink_core::jellyfin::browse::{EPISODE_LIMIT, ItemQuery};
+use jellysink_core::jellyfin::browse::ItemQuery;
 use jellysink_core::jellyfin::model::{Item, ItemList};
 use jellysink_core::status::PlayerStatus;
 use ratatui::backend::Backend;

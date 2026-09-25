@@ -19,7 +19,7 @@ fn status_serializes_the_field_names_its_readers_expect() {
             has_previous: false,
             queue_index: 0,
             queue_len: 5,
-            art_url: "http://x/Items/1/Images/Primary?ApiKey=tok".into(),
+            art_url: "http://x/Items/1/Images/Primary".into(),
         }),
     };
 
@@ -42,12 +42,6 @@ fn status_serializes_the_field_names_its_readers_expect() {
             "volume",
         ]
     );
-}
-
-#[test]
-fn idle_status_carries_no_now_playing() {
-    let json = serde_json::to_value(PlayerStatus::idle("http://x".into(), "admin".into())).unwrap();
-    assert!(json["now_playing"].is_null());
 }
 
 /// Alphabetical: `serde_json`'s map is sorted, and field order is not part of

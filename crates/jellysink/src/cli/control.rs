@@ -11,11 +11,6 @@ pub(crate) fn cmd_stop(paths: &Paths) -> color_eyre::Result<()> {
 pub(crate) fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
     let status = instance::request_status(paths)?;
     if json {
-        let mut status = status;
-        if let Some(now_playing) = &mut status.now_playing {
-            now_playing.art_url =
-                jellysink_core::jellyfin::url::redact_api_key(&now_playing.art_url);
-        }
         println!("{}", serde_json::to_string_pretty(&status)?);
         return Ok(());
     }

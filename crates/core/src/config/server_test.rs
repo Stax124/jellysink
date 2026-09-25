@@ -33,6 +33,22 @@ fn default_port_is_left_implicit() {
 }
 
 #[test]
+fn ipv6_host_keeps_its_brackets() {
+    assert_eq!(
+        normalize_server_url("[::1]:8096").unwrap(),
+        "http://[::1]:8096"
+    );
+}
+
+#[test]
+fn credentials_query_and_fragment_are_dropped() {
+    assert_eq!(
+        normalize_server_url("https://user:pw@host/jellyfin/?x=1#top").unwrap(),
+        "https://host/jellyfin"
+    );
+}
+
+#[test]
 fn subpath_is_kept() {
     assert_eq!(
         normalize_server_url("http://host:8096/jellyfin/").unwrap(),

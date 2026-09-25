@@ -1,6 +1,6 @@
 use super::auth::Api;
-use super::encode_query_value;
 use super::model::Session;
+use super::url::encode_query_value;
 use color_eyre::eyre::{Result, WrapErr};
 use serde::Deserialize;
 
@@ -24,15 +24,7 @@ impl Api {
             encode_query_value(item_id),
         );
         tracing::debug!(item_id, start_ticks, "PlayNow");
-        self.post_command(&path).await
-    }
-
-    async fn post_command(&self, path: &str) -> Result<()> {
-        self.post(path)
-            .await?
-            .error_for_status()
-            .wrap_err_with(|| format!("POST {path}"))?;
-        Ok(())
+        self.post(&path).await
     }
 }
 

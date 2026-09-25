@@ -16,16 +16,14 @@ mod view;
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use jellysink_core::UsageError;
 use jellysink_core::config::{Config, Credentials, Paths};
 use jellysink_core::jellyfin::auth::Api;
-use jellysink_core::usage_err;
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
     name = "jellytui",
-    version = env!("CARGO_PKG_VERSION"),
+    version,
     about = "Browse Jellyfin in the terminal and play in jellysink"
 )]
 struct Cli {
@@ -59,16 +57,7 @@ async fn main() -> Result<()> {
         Some(Command::Update { check, force }) => cli::cmd_update(&paths, check, force).await,
         None => run(paths).await,
     };
-    match result {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            if let Some(usage) = err.downcast_ref::<UsageError>() {
-                eprintln!("{usage}");
-                std::process::exit(1);
-            }
-            Err(err)
-        }
-    }
+    jellysink_core::error::exit_on_usage_error(result)
 }
 
 async fn run(paths: Paths) -> Result<()> {
@@ -76,8 +65,7 @@ async fn run(paths: Paths) -> Result<()> {
     // be reported on the normal screen.
     let logs = logs::install();
     let config = Config::load(&paths)?;
-    let credentials = Credentials::load(&paths)?
-        .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
+    let credentials = Credentials::load_required(&paths)?;
     let api = Api::from_credentials(&credentials)?;
     // Before the alternate screen is taken: the protocol query writes to
     // stdout and reads the terminal's answer back off stdin.

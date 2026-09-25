@@ -30,8 +30,6 @@ pub struct NowPlaying {
     pub has_previous: bool,
     pub queue_index: usize,
     pub queue_len: usize,
-    /// The item's primary image, carrying the access token in the query
-    /// string — see [`crate::jellyfin::url::image_url`].
     pub art_url: String,
 }
 

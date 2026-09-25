@@ -65,7 +65,7 @@ fn the_auth_header_is_computed_once_and_matches_the_free_function() {
     };
     let api = Api::from_credentials(&creds).unwrap();
     assert_eq!(
-        api.auth_header(),
+        api.auth_header,
         authorization_header(&api.device_name, "dev", Some("sekrit"))
     );
     assert_eq!(api.server, "http://s", "trailing slash is trimmed");

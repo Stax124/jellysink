@@ -27,10 +27,7 @@ impl App {
                     Source::Episodes {
                         series_id,
                         season_id,
-                    } => {
-                        api.episodes(&series_id, Some(&season_id), EPISODE_LIMIT)
-                            .await
-                    }
+                    } => api.episodes(&series_id, &season_id).await,
                 }
             },
             move |items| Msg::Level(depth, items),
@@ -212,10 +209,7 @@ impl App {
         let api = self.api.clone();
         self.spawn(
             "playing_episodes",
-            async move {
-                api.episodes(&series_id, Some(&season_id), EPISODE_LIMIT)
-                    .await
-            },
+            async move { api.episodes(&series_id, &season_id).await },
             move |items| Msg::PlayingEpisodes { item_id, items },
         );
     }

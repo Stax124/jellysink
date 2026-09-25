@@ -1,5 +1,3 @@
-use super::encode_query_value;
-
 /// Stream URLs carry the access token whenever the Authorization header is not
 /// in play, and those URLs end up in `Debug` output and color-eyre captures.
 pub fn redact_api_key(url: &str) -> String {
@@ -41,13 +39,26 @@ pub fn direct_stream_url(
 const MPRIS_ART_MAX_PIXELS: u32 = 600;
 const MPRIS_ART_QUALITY: u32 = 85;
 
-/// The item's primary image, for MPRIS `mpris:artUrl`. Using JPEG format rather than WebP to ensure compatibility with all clients.
-pub fn image_url(server: &str, item_id: &str, token: &str) -> String {
+/// The item's primary image, for MPRIS `mpris:artUrl`: JPEG, because WebP is not a safe
+/// assumption about a desktop widget. No token: the endpoint is anonymous and this goes on D-Bus.
+pub fn image_url(server: &str, item_id: &str) -> String {
     let server = server.trim_end_matches('/');
     format!(
-        "{server}/Items/{item_id}/Images/Primary?maxWidth={MPRIS_ART_MAX_PIXELS}&maxHeight={MPRIS_ART_MAX_PIXELS}&format=Jpg&quality={MPRIS_ART_QUALITY}&ApiKey={}",
-        encode_query_value(token)
+        "{server}/Items/{item_id}/Images/Primary?maxWidth={MPRIS_ART_MAX_PIXELS}&maxHeight={MPRIS_ART_MAX_PIXELS}&format=Jpg&quality={MPRIS_ART_QUALITY}"
     )
+}
+
+pub fn encode_query_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

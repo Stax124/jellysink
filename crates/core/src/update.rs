@@ -14,7 +14,7 @@ use std::process::Command;
 const REPO_OWNER: &str = "Stax124";
 const REPO_NAME: &str = "jellysink";
 
-pub const JELLYSINK_BIN: &str = "jellysink";
+pub(crate) const JELLYSINK_BIN: &str = "jellysink";
 pub const JELLYTUI_BIN: &str = "jellytui";
 
 fn release_target() -> Option<&'static str> {
@@ -76,13 +76,8 @@ pub async fn check(bin_name: &str) -> color_eyre::Result<Option<String>> {
         .map(|release| release.version().to_string()))
 }
 
-/// `dest` of `None` replaces the running executable; `Some` one beside it,
-/// whose own `--version` is then the baseline. `Ok(None)` means already current.
-///
-/// `force` ignores that baseline, so the latest release installs over any version.
-///
-/// Safe on a binary that is running: the install renames over the path, so that
-/// process keeps the inode it mapped.
+/// `dest` of `None` replaces the running executable, `Some` one beside it whose `--version`
+/// is the baseline `force` ignores. `Ok(None)` means already current.
 pub async fn install(
     bin_name: &str,
     dest: Option<&Path>,

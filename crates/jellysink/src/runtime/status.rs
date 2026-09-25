@@ -21,11 +21,7 @@ impl Runtime {
                     has_previous: self.window.index() > 0,
                     queue_index: self.window.index(),
                     queue_len: self.window.len(),
-                    art_url: jellysink_core::jellyfin::url::image_url(
-                        &self.api.server,
-                        item_id,
-                        &self.api.token,
-                    ),
+                    art_url: jellysink_core::jellyfin::url::image_url(&self.api.server, item_id),
                 });
         PlayerStatus {
             server: self.api.server.clone(),

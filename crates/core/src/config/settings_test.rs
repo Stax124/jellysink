@@ -1,22 +1,12 @@
 use super::*;
+use std::fs;
 use tempfile::TempDir;
-
-#[test]
-fn config_roundtrip_and_set() {
-    let tmp = TempDir::new().unwrap();
-    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
-    let mut cfg = Config::default();
-    cfg.set(Field::MpvPath, "/usr/bin/mpv").unwrap();
-    cfg.save(&paths).unwrap();
-    let loaded = Config::load(&paths).unwrap();
-    assert_eq!(loaded.mpv_path, "/usr/bin/mpv");
-}
 
 #[test]
 fn unknown_config_key_errors_and_names_the_valid_ones() {
     let err = Field::parse("nope").unwrap_err();
     assert!(
-        err.downcast_ref::<crate::UsageError>().is_some(),
+        err.downcast_ref::<crate::error::UsageError>().is_some(),
         "expected UsageError, got {err:?}"
     );
     let msg = err.to_string();
@@ -34,11 +24,19 @@ fn every_field_parses_back_from_its_own_name() {
 
 #[test]
 fn mpv_args_is_not_stored_in_config_toml() {
-    let mut cfg = Config::default();
-    assert_eq!(cfg.get(Field::MpvArgs), None);
-    assert!(
-        !cfg.set(Field::MpvArgs, "--fullscreen").unwrap(),
-        "the caller writes this to mpv_args.conf instead"
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
+    Field::MpvArgs
+        .write(&paths, "--fullscreen --volume=50")
+        .unwrap();
+    assert_eq!(
+        Field::MpvArgs.read(&paths).unwrap(),
+        "--fullscreen --volume=50"
+    );
+    assert!(!paths.config_file().exists());
+    assert_eq!(
+        MpvArgs::load(&paths).unwrap().0,
+        ["--fullscreen", "--volume=50"]
     );
 }
 
@@ -58,10 +56,11 @@ fn load_does_not_create_a_config_file() {
 
 #[test]
 fn invalid_autoplay_value_is_a_usage_error() {
-    let mut cfg = Config::default();
-    let err = cfg.set(Field::Autoplay, "maybe").unwrap_err();
+    let tmp = TempDir::new().unwrap();
+    let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
+    let err = Field::Autoplay.write(&paths, "maybe").unwrap_err();
     assert!(
-        err.downcast_ref::<crate::UsageError>().is_some(),
+        err.downcast_ref::<crate::error::UsageError>().is_some(),
         "expected UsageError, got {err:?}"
     );
     assert!(err.to_string().contains("true/false"));
@@ -91,10 +90,7 @@ fn a_key_that_is_no_longer_a_field_is_ignored() {
 fn autoplay_off_survives_a_save_and_reload() {
     let tmp = TempDir::new().unwrap();
     let paths = Paths::from_override(Some(tmp.path().to_path_buf())).unwrap();
-    let mut cfg = Config::default();
-    cfg.set(Field::Autoplay, "false").unwrap();
-    cfg.save(&paths).unwrap();
-    let loaded = Config::load(&paths).unwrap();
-    assert!(!loaded.autoplay);
-    assert_eq!(loaded.get(Field::Autoplay).as_deref(), Some("false"));
+    Field::Autoplay.write(&paths, "false").unwrap();
+    assert!(!Config::load(&paths).unwrap().autoplay);
+    assert_eq!(Field::Autoplay.read(&paths).unwrap(), "false");
 }

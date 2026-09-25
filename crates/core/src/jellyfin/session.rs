@@ -21,22 +21,19 @@ struct RawMessage {
 }
 
 pub fn websocket_url(server: &str, token: &str, device_id: &str) -> color_eyre::Result<String> {
-    let mut url = reqwest::Url::parse(server).wrap_err("server URL")?;
+    let mut url =
+        reqwest::Url::parse(server).wrap_err_with(|| format!("parsing server URL {server:?}"))?;
     let scheme = match url.scheme() {
         "https" => "wss",
         _ => "ws",
     };
     url.set_scheme(scheme)
-        .map_err(|_| eyre!("could not set websocket scheme"))?;
-    let mut path = url.path().trim_end_matches('/').to_string();
-    if path == "/" {
-        path.clear();
-    }
-    path.push_str("/socket");
+        .map_err(|()| eyre!("could not set a websocket scheme on {server}"))?;
+    let path = format!("{}/socket", url.path().trim_end_matches('/'));
     url.set_path(&path);
     url.query_pairs_mut()
         .clear()
-        .append_pair("api_key", token)
+        .append_pair("ApiKey", token)
         .append_pair("deviceId", device_id);
     Ok(url.to_string())
 }

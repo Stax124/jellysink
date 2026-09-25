@@ -137,11 +137,7 @@ impl Visit for Message {
 pub(crate) fn install() -> LogBuffer {
     let buffer = LogBuffer::new();
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
+        .with(jellysink_core::logging::log_filter())
         .with(Capture {
             buffer: buffer.clone(),
             started: Instant::now(),

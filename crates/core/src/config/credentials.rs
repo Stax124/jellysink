@@ -1,9 +1,10 @@
-use super::Paths;
-use super::atomic_write;
+use super::{Paths, atomic_write, read_optional};
+use crate::usage_err;
 use color_eyre::eyre::WrapErr;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
+use std::io::ErrorKind;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Credentials {
@@ -30,29 +31,31 @@ impl fmt::Debug for Credentials {
 impl Credentials {
     pub fn load(paths: &Paths) -> color_eyre::Result<Option<Self>> {
         let path = paths.cred_file();
-        if !path.exists() {
+        let Some(text) = read_optional(&path)? else {
             return Ok(None);
-        }
-        let text =
-            fs::read_to_string(&path).wrap_err_with(|| format!("reading {}", path.display()))?;
-        let creds: Self =
-            serde_json::from_str(&text).wrap_err_with(|| format!("parsing {}", path.display()))?;
-        Ok(Some(creds))
+        };
+        serde_json::from_str(&text)
+            .map(Some)
+            .wrap_err_with(|| format!("parsing {}", path.display()))
+    }
+
+    pub fn load_required(paths: &Paths) -> color_eyre::Result<Self> {
+        Self::load(paths)?.ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))
     }
 
     pub fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
         paths.ensure()?;
         let text = serde_json::to_string_pretty(self).wrap_err("serializing cred.json")?;
-        atomic_write(&paths.cred_file(), text.as_bytes(), 0o600)?;
-        Ok(())
+        atomic_write(&paths.cred_file(), text.as_bytes(), 0o600)
     }
 
     pub fn remove(paths: &Paths) -> color_eyre::Result<()> {
         let path = paths.cred_file();
-        if path.exists() {
-            fs::remove_file(&path).wrap_err_with(|| format!("removing {}", path.display()))?;
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e).wrap_err_with(|| format!("removing {}", path.display())),
         }
-        Ok(())
     }
 }
 

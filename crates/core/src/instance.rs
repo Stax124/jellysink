@@ -21,19 +21,20 @@ pub struct InstanceLock {
 impl InstanceLock {
     pub fn acquire(paths: &Paths) -> color_eyre::Result<Self> {
         paths.ensure()?;
+        let lock_file = paths.lock_file();
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(paths.lock_file())
-            .wrap_err("opening instance.lock")?;
+            .open(&lock_file)
+            .wrap_err_with(|| format!("opening {}", lock_file.display()))?;
         match flock(&file, FlockOperation::NonBlockingLockExclusive) {
             Ok(()) => Ok(Self { _file: file }),
             Err(e) if e == rustix::io::Errno::WOULDBLOCK => Err(usage_err(
                 "jellysink is already running (use `jellysink stop`)",
             )),
-            Err(e) => Err(eyre!(e).wrap_err("locking instance.lock")),
+            Err(e) => Err(eyre!(e).wrap_err(format!("locking {}", lock_file.display()))),
         }
     }
 }
@@ -71,7 +72,7 @@ pub fn parse_instance_command(buf: &str) -> Option<InstanceCommand> {
 
 /// Whether another jellysink holds the instance lock — the lock, not the socket
 /// file, which a SIGKILL leaves behind.
-pub fn is_running(paths: &Paths) -> bool {
+pub(crate) fn is_running(paths: &Paths) -> bool {
     // Not `create(true)`: probing should not leave a lock file behind.
     let Ok(file) = File::open(paths.lock_file()) else {
         return false;
@@ -140,7 +141,7 @@ pub fn request_stop(paths: &Paths) -> color_eyre::Result<()> {
     request(paths, InstanceCommand::Stop).map(|_| ())
 }
 
-pub fn request_restart(paths: &Paths) -> color_eyre::Result<()> {
+pub(crate) fn request_restart(paths: &Paths) -> color_eyre::Result<()> {
     request(paths, InstanceCommand::Restart).map(|_| ())
 }
 

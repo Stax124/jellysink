@@ -1,10 +1,10 @@
 use super::auth::Api;
-use super::encode_query_value;
+use super::url::encode_query_value;
 use color_eyre::eyre::{Result, WrapErr};
 use serde_json::Value;
 
 const ITEM_FIELDS: &str = "Overview,ProductionYear,RecursiveItemCount,ChildCount,Genres";
-pub const EPISODE_LIMIT: u32 = 500;
+const EPISODE_LIMIT: u32 = 500;
 
 /// Sizes are rounded up to this so the server's resize cache is hit rather
 /// than re-encoded per terminal; `specs/tui.md` has the why.
@@ -120,41 +120,25 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// One season, for a frontend that shows a synopsis. `Overview` costs a
-    /// few hundred bytes an episode — worth it here, not in
-    /// [`Api::episodes_all`].
-    pub async fn episodes(
-        &self,
-        series_id: &str,
-        season_id: Option<&str>,
-        limit: u32,
-    ) -> Result<Value> {
-        self.episodes_listing(series_id, season_id, limit, true)
-            .await
+    /// One season, with the `Overview` a synopsis needs: a few hundred bytes
+    /// an episode, which [`Api::episodes_all`] leaves out.
+    pub async fn episodes(&self, series_id: &str, season_id: &str) -> Result<Value> {
+        self.episodes_listing(series_id, Some(season_id)).await
     }
 
     /// The whole series in aired order
     pub async fn episodes_all(&self, series_id: &str) -> Result<Value> {
-        self.episodes_listing(series_id, None, EPISODE_LIMIT, false)
-            .await
+        self.episodes_listing(series_id, None).await
     }
 
-    async fn episodes_listing(
-        &self,
-        series_id: &str,
-        season_id: Option<&str>,
-        limit: u32,
-        with_overview: bool,
-    ) -> Result<Value> {
+    async fn episodes_listing(&self, series_id: &str, season_id: Option<&str>) -> Result<Value> {
         let mut path = format!(
-            "/Shows/{series_id}/Episodes?userId={}&Limit={limit}",
+            "/Shows/{series_id}/Episodes?userId={}&Limit={EPISODE_LIMIT}",
             encode_query_value(&self.user_id)
         );
         if let Some(season_id) = season_id {
             path.push_str("&seasonId=");
             path.push_str(&encode_query_value(season_id));
-        }
-        if with_overview {
             path.push_str("&Fields=Overview");
         }
         tracing::debug!(path, "GET episodes");
@@ -180,7 +164,7 @@ impl Api {
             response
                 .bytes()
                 .await
-                .wrap_err("reading image bytes")?
+                .wrap_err_with(|| format!("reading GET {path}"))?
                 .to_vec(),
         ))
     }
@@ -193,33 +177,33 @@ impl Api {
         self.get_json(&path).await
     }
 
-    /// Continue Watching; the modern path only exists from Jellyfin 10.9
+    /// Continue Watching
     pub async fn resume(&self, limit: u32) -> Result<Value> {
         let user_id = encode_query_value(&self.user_id);
-        let path = format!("/UserItems/Resume?userId={user_id}&Limit={limit}&MediaTypes=Video");
-        let modern = match self.get_json(&path).await {
-            Ok(listing) => return Ok(listing),
-            Err(modern) => modern,
-        };
+        let modern = format!("/UserItems/Resume?userId={user_id}&Limit={limit}&MediaTypes=Video");
         let legacy = format!("/Users/{user_id}/Items/Resume?Limit={limit}&MediaTypes=Video");
-        self.get_json(&legacy)
-            .await
-            .wrap_err_with(|| format!("{modern:#}"))
+        with_legacy_fallback(self.get_json(&modern), self.get_json(&legacy)).await
     }
-    pub async fn get_item(&self, item_id: &str) -> color_eyre::Result<Value> {
-        let path = format!(
-            "/Items/{item_id}?userId={}",
-            encode_query_value(&self.user_id)
-        );
-        match self.get_json(&path).await {
-            Ok(item) => Ok(item),
-            Err(err) => {
-                tracing::debug!(%err, path, "item lookup failed; trying legacy endpoint");
-                let legacy = format!("/Users/{}/Items/{item_id}", self.user_id);
-                self.get_json(&legacy).await
-            }
-        }
+
+    pub async fn get_item(&self, item_id: &str) -> Result<Value> {
+        let user_id = encode_query_value(&self.user_id);
+        let modern = format!("/Items/{item_id}?userId={user_id}");
+        let legacy = format!("/Users/{user_id}/Items/{item_id}");
+        with_legacy_fallback(self.get_json(&modern), self.get_json(&legacy)).await
     }
+}
+
+/// `legacy` is the pre-10.9 `/Users/{id}/…` form, awaited only once `modern` has failed.
+pub(super) async fn with_legacy_fallback<T>(
+    modern: impl Future<Output = Result<T>>,
+    legacy: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    let modern_err = match modern.await {
+        Ok(value) => return Ok(value),
+        Err(e) => e,
+    };
+    tracing::debug!("{modern_err:#}; trying the legacy endpoint");
+    legacy.await.wrap_err_with(|| format!("{modern_err:#}"))
 }
 
 #[cfg(test)]

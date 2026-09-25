@@ -7,14 +7,12 @@ use jellysink_core::VERSION;
 use jellysink_core::config::{Config, Credentials, Paths, device_name};
 use jellysink_core::instance::InstanceLock;
 use jellysink_core::update::{check, exec_updated, restart_exe_path};
-use jellysink_core::usage_err;
 
 pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     tracing::info!("jellysink {VERSION}");
 
     let config = Config::load_or_create(&paths)?;
-    let creds = Credentials::load(&paths)?
-        .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
+    let creds = Credentials::load_required(&paths)?;
 
     let exe = restart_exe_path(&std::env::current_exe().wrap_err("resolving current executable")?);
 

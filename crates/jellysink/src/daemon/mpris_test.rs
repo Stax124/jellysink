@@ -18,7 +18,7 @@ pub(super) fn playing_status(paused: bool, has_next: bool, has_previous: bool) -
             has_previous,
             queue_index: 2,
             queue_len: 5,
-            art_url: "http://x/Items/item-1/Images/Primary?ApiKey=tok".into(),
+            art_url: "http://x/Items/item-1/Images/Primary".into(),
         }),
     }
 }
@@ -69,7 +69,7 @@ fn metadata_is_empty_when_idle_and_carries_the_title_when_playing() {
     let title = <&str>::try_from(meta.get("xesam:title").unwrap()).unwrap();
     assert_eq!(title, "Ep 1");
     let art = <&str>::try_from(meta.get("mpris:artUrl").unwrap()).unwrap();
-    assert_eq!(art, "http://x/Items/item-1/Images/Primary?ApiKey=tok");
+    assert_eq!(art, "http://x/Items/item-1/Images/Primary");
 }
 
 /// No length, no seek bar in any desktop widget.
