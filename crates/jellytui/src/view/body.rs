@@ -1,42 +1,32 @@
 //! The three screen bodies: the Home shelves, a browse level and search
 //! results.
 
-use super::{ACCENT, DIM};
+use super::{ACCENT, DIM, SELECTED, panel};
 use crate::app::{App, HomePane};
+use crate::nav::Rows;
 use crate::view::{grid, rail};
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
-/// The two Home shelves, one above the other. Each is a single row of tiles,
-/// which is all half the body has the height for.
-pub(super) fn shelves(body: Rect) -> [Rect; 2] {
+/// The two Home shelves, one above the other and indexed by `HomePane`. Each
+/// is a single row of tiles, which is all half the body has the height for.
+pub(crate) fn shelves(body: Rect) -> [Rect; 2] {
     Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(body)
-}
-
-pub(crate) fn shelf_rect(body: Rect, pane: HomePane) -> Rect {
-    let [resume, next_up] = shelves(body);
-    match pane {
-        HomePane::Resume => resume,
-        HomePane::NextUp => next_up,
-    }
 }
 
 pub(super) fn render_home(app: &App, frame: &mut Frame, area: Rect) {
     for (pane, rect) in HomePane::ALL.into_iter().zip(shelves(area)) {
-        let shelf = app.shelf(pane);
         grid::render(
             frame,
             rect,
             Line::from(format!(" {} ", pane.title())),
             grid::View {
-                items: &shelf.items,
-                selected: shelf.selected,
-                offset: shelf.offset,
-                rows: grid::SHELF_ROWS,
+                rows: app.shelf(pane),
+                metrics: app.shelf_metrics(pane),
                 focused: app.home_pane == pane,
             },
             &app.covers,
@@ -54,41 +44,31 @@ pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
         .map(|level| level.title.as_str())
         .collect::<Vec<_>>()
         .join(" › ");
-    let title = if level.loading {
+    let title = if level.rows.loading {
         format!("{trail} — loading…")
     } else {
         trail
     };
-    if app.grid_metrics().is_some() {
+    if let Some(metrics) = app.grid_metrics() {
         grid::render(
             frame,
             area,
             Line::from(format!(" {title} ")),
             grid::View {
-                items: &level.items,
-                selected: level.selected,
-                offset: level.offset,
-                rows: grid::TARGET_ROWS,
+                rows: &level.rows,
+                metrics: Some(metrics),
                 focused: true,
             },
             &app.covers,
         );
         return;
     }
-    let (area, rail_area) = rail::split(area);
-    render_list(frame, area, &title, &level.items, level.selected);
-    if let Some(rail_area) = rail_area {
-        rail::render(
-            frame,
-            rail_area,
-            level.items.get(level.selected),
-            &app.covers,
-        );
-    }
+    let area = rail::beside(frame, area, level.rows.selected_item(), &app.covers);
+    render_list(frame, area, &title, &level.rows);
 }
 
 pub(super) fn render_search(app: &App, frame: &mut Frame, area: Rect) {
-    let (area, rail_area) = rail::split(area);
+    let area = rail::beside(frame, area, app.results.selected_item(), &app.covers);
     let [input, results] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
     let search_box = Block::default().borders(Borders::ALL).title(" Search ");
@@ -101,31 +81,13 @@ pub(super) fn render_search(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         format!("Results ({})", app.results.items.len())
     };
-    render_list(
-        frame,
-        results,
-        &title,
-        &app.results.items,
-        app.results.selected,
-    );
-    if let Some(rail_area) = rail_area {
-        rail::render(
-            frame,
-            rail_area,
-            app.results.items.get(app.results.selected),
-            &app.covers,
-        );
-    }
+    render_list(frame, results, &title, &app.results);
 }
 
-fn render_list(frame: &mut Frame, area: Rect, title: &str, items: &[Item], selected: usize) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(ACCENT))
-        .title(format!(" {title} "))
-        .border_type(BorderType::Rounded);
+fn render_list(frame: &mut Frame, area: Rect, title: &str, rows: &Rows) {
+    let block = panel(format!(" {title} ")).border_style(Style::default().fg(ACCENT));
 
-    if items.is_empty() {
+    if rows.items.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled("nothing here", Style::default().fg(DIM))).block(block),
             area,
@@ -133,14 +95,11 @@ fn render_list(frame: &mut Frame, area: Rect, title: &str, items: &[Item], selec
         return;
     }
 
-    let rows: Vec<ListItem> = items.iter().map(row).collect();
-    let list = List::new(rows).block(block).highlight_style(
-        Style::default()
-            .fg(ACCENT)
-            .add_modifier(Modifier::REVERSED | Modifier::BOLD),
-    );
+    let list = List::new(rows.items.iter().map(row))
+        .block(block)
+        .highlight_style(SELECTED);
     let mut state = ListState::default();
-    state.select(Some(selected));
+    state.select(Some(rows.selected));
     frame.render_stateful_widget(list, area, &mut state);
 }
 

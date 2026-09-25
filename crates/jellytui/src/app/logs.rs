@@ -3,23 +3,21 @@
 use super::*;
 
 impl App {
-    /// The lines to draw and whether the view is still following the tail.
-    /// Anchored by sequence number, so eviction slides rather than jumps it.
-    pub(crate) fn log_window(&self, height: u16) -> (Vec<LogLine>, bool) {
+    /// The lines to draw. Anchored by sequence number, so eviction slides
+    /// rather than jumps the view.
+    pub(crate) fn log_window(&self, height: u16) -> Vec<LogLine> {
         let height = usize::from(height);
-        let (first_seq, len) = self.logs.extent();
-        let tail = len.saturating_sub(height);
-        let Some(anchor) = self.log_anchor else {
-            return (self.logs.window(tail, height), true);
-        };
-        let start = usize::try_from(anchor.saturating_sub(first_seq))
-            .unwrap_or(usize::MAX)
-            .min(tail);
-        (self.logs.window(start, height), start == tail)
+        let (_, start, _) = self.log_start(height);
+        self.logs.window(start, height)
     }
 
-    pub(crate) fn scroll_logs(&mut self, delta: isize) {
-        let height = usize::from(self.body_area().height);
+    pub(crate) fn logs_following(&self) -> bool {
+        self.log_anchor.is_none()
+    }
+
+    /// `(first_seq, start, tail)`: the top line's sequence base, its index, and
+    /// the furthest down it can go.
+    fn log_start(&self, height: usize) -> (u64, usize, usize) {
         let (first_seq, len) = self.logs.extent();
         let tail = len.saturating_sub(height);
         let start = self
@@ -28,24 +26,15 @@ impl App {
                 usize::try_from(anchor.saturating_sub(first_seq)).unwrap_or(usize::MAX)
             })
             .min(tail);
+        (first_seq, start, tail)
+    }
+
+    fn scroll_logs(&mut self, delta: isize) {
+        let (first_seq, start, tail) = self.log_start(usize::from(self.body_area().height));
         let moved = start.saturating_add_signed(delta).min(tail);
         // Reaching the bottom resumes following: a view pinned exactly at the
         // tail would otherwise stop moving as soon as the next line arrived.
         self.log_anchor = (moved < tail).then(|| first_seq + moved as u64);
-    }
-
-    pub(crate) fn logs_to_top(&mut self) {
-        let (first_seq, _) = self.logs.extent();
-        self.log_anchor = Some(first_seq);
-    }
-
-    pub(crate) fn logs_to_bottom(&mut self) {
-        self.log_anchor = None;
-    }
-
-    pub(crate) fn clear_logs(&mut self) {
-        self.logs.clear();
-        self.log_anchor = None;
     }
 
     /// Whether the log pane claimed this intent. Movement means scrolling
@@ -57,9 +46,12 @@ impl App {
             Intent::Down => self.scroll_logs(1),
             Intent::PageUp => self.scroll_logs(-page),
             Intent::PageDown => self.scroll_logs(page),
-            Intent::Top => self.logs_to_top(),
-            Intent::Bottom => self.logs_to_bottom(),
-            Intent::ClearLogs => self.clear_logs(),
+            Intent::Top => self.log_anchor = Some(self.logs.extent().0),
+            Intent::Bottom => self.log_anchor = None,
+            Intent::ClearLogs => {
+                self.logs.clear();
+                self.log_anchor = None;
+            }
             Intent::Back => self.toggle_logs(),
             _ => return false,
         }
@@ -67,7 +59,7 @@ impl App {
     }
 
     /// `L` is a toggle, so it has to remember what it covered up.
-    pub(crate) fn toggle_logs(&mut self) {
+    pub(super) fn toggle_logs(&mut self) {
         self.screen = if self.screen == Screen::Logs {
             self.screen_before_logs
         } else {

@@ -8,10 +8,12 @@ pub(crate) use disk::CoverDisk;
 use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::jellyfin::auth::Api;
 use jellysink_core::jellyfin::model::Item;
+use ratatui::Frame;
 use ratatui::backend::WindowSize;
 use ratatui::layout::{Rect, Size};
 use ratatui_image::FilterType;
 use ratatui_image::FontSize;
+use ratatui_image::Image;
 use ratatui_image::Resize;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::Protocol;
@@ -22,13 +24,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 pub(super) const CACHE_CAPACITY: usize = 64;
 
 /// How far a measured cell must be from the encoded one to count as another
-/// display rather than the window's padding. A scale factor is at least a
-/// quarter away, so this only has to clear the padding.
+/// display rather than the window's padding.
 const NEW_GRID_THRESHOLD: f32 = 0.05;
 
-/// Which image to draw, how large, and against which pixel grid. Both sizes are
-/// part of the identity: a protocol is encoded against one rect at one cell
-/// size, so after a resize the old encoding is wrong rather than stale.
+/// Which image to draw, how large, and against which pixel grid: a protocol is
+/// encoded against one rect at one cell size, so after a resize it is wrong.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct CoverKey {
     item_id: String,
@@ -95,6 +95,16 @@ impl Covers {
         self.ready.get(key)
     }
 
+    /// Draws `item`'s cover into `area` if it has arrived, and nothing if not.
+    pub(super) fn draw(&self, frame: &mut Frame, item: &Item, area: Rect) {
+        if let Some(protocol) = self
+            .key(item, area.as_size())
+            .and_then(|key| self.protocol(&key))
+        {
+            frame.render_widget(Image::new(protocol), area);
+        }
+    }
+
     /// Whether the caller should start a request for `key`, marking it in
     /// flight if so.
     pub(super) fn claim(&mut self, key: &CoverKey) -> bool {
@@ -155,9 +165,8 @@ impl Covers {
     }
 }
 
-/// The picker again at `cell` pixels per cell, keeping the protocol the startup
-/// query settled on. Deprecated in favour of that query, which cannot run a
-/// second time with the alternate screen up.
+/// The picker again at `cell` pixels per cell, keeping the startup query's
+/// protocol. Deprecated for that query, which cannot run under the alternate screen.
 fn repicker(picker: &Picker, cell: Size) -> Picker {
     #[allow(deprecated)]
     let mut rebuilt = Picker::from_fontsize(FontSize::new(cell.width, cell.height));
@@ -165,9 +174,8 @@ fn repicker(picker: &Picker, cell: Size) -> Picker {
     rebuilt
 }
 
-/// The shape of an item's primary image, as width ÷ height. The server's own
-/// measurement wins where it sent one; a grid sizes every tile from its first
-/// row, so the kind has to answer for the rest.
+/// The shape of an item's primary image, as width ÷ height: the server's own
+/// measurement where it sent one, otherwise a guess from the kind.
 pub(super) fn primary_aspect(item: &Item) -> f32 {
     let wide = matches!(item.kind(), "Episode" | "CollectionFolder" | "UserView");
     item.primary_image_aspect_ratio
@@ -221,16 +229,13 @@ pub(super) fn cell_size(window: WindowSize) -> Option<Size> {
     ))
 }
 
-/// Queries the terminal for its graphics protocol and cell size. Has to run
-/// before the alternate screen is taken: the query goes out on stdout and the
-/// answer comes back on stdin.
+/// Queries the terminal for its graphics protocol and cell size.
 pub(super) fn detect_picker() -> Picker {
     Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
 }
 
 /// One cover, resized by the server rather than downloaded whole. Decode and
-/// encode are real CPU work on the thread that draws, so they go to
-/// `spawn_blocking` along with the disk cache.
+/// encode are real CPU work, so they run in `spawn_blocking` with the disk cache.
 pub(super) async fn fetch(
     api: &Api,
     picker: Picker,

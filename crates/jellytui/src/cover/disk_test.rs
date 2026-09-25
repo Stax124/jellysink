@@ -1,6 +1,5 @@
 use super::*;
 use ratatui::layout::Size;
-use serde::Deserialize;
 use std::time::Duration;
 
 fn age(path: &Path, seconds: u64) {
@@ -9,19 +8,13 @@ fn age(path: &Path, seconds: u64) {
 }
 
 fn key(item_id: &str, box_: Size) -> CoverKey {
-    let item = jellysink_core::jellyfin::model::Item::deserialize(serde_json::json!({
+    let item = crate::test_support::item(serde_json::json!({
         "Id": item_id,
         "Name": item_id,
         "Type": "Series",
         "ImageTags": { "Primary": "tag" },
-    }))
-    .unwrap();
-    super::super::Covers::new(
-        ratatui_image::picker::Picker::halfblocks(),
-        CoverDisk::disabled(),
-    )
-    .key(&item, box_)
-    .unwrap()
+    }));
+    crate::test_support::covers().key(&item, box_).unwrap()
 }
 
 #[test]

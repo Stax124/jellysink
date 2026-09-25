@@ -1,16 +1,16 @@
 //! The cover grid: how many tiles fit, which of them are on screen, and the
 //! tiles themselves.
 
-use super::{ACCENT, DIM, to_width};
+use super::{ACCENT, DIM, panel, to_width};
 use crate::cover::{self, Covers};
+use crate::nav::Rows;
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 use ratatui_image::FontSize;
-use ratatui_image::Image;
 
 const GAP: u16 = 1;
 /// The per-tile progress track. An eighth block (`▔`) is a hairline at any font
@@ -31,9 +31,9 @@ const MIN_COLUMNS: u16 = 4;
 /// What a grid has to lay out: the rows of tiles it aims to fill the height
 /// with, and how many items there are to fill them. Both bound the answer.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Shape {
-    pub(crate) target_rows: u16,
-    pub(crate) item_count: usize,
+struct Shape {
+    target_rows: u16,
+    item_count: usize,
 }
 
 /// The narrowest a cover may be, whatever the height says. A 2:3 poster stays
@@ -43,8 +43,7 @@ fn minimum_cover_width(aspect: f32) -> u16 {
 }
 
 /// The tallest a cover may be if `target_rows` of them are to fit, or `None`
-/// when the area is too short for that many at the minimum tile width. A single
-/// row is capped by the area instead, since a taller tile is not drawn at all.
+/// when they cannot at the minimum width. One row is capped by the area instead.
 fn cover_height_budget(
     area: Rect,
     aspect: f32,
@@ -83,14 +82,10 @@ fn preferred_cover_width(area: Rect, aspect: f32, font_size: FontSize, shape: Sh
 pub(crate) struct Metrics {
     pub(crate) columns: usize,
     pub(crate) rows: usize,
-    cover: Size,
+    pub(crate) cover: Size,
 }
 
 impl Metrics {
-    pub(crate) fn cover_size(&self) -> Size {
-        self.cover
-    }
-
     pub(crate) fn page(&self) -> usize {
         self.columns * self.rows
     }
@@ -101,7 +96,7 @@ impl Metrics {
 }
 
 /// Tile geometry for the grid's *inner* area — see [`inner`].
-pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> Metrics {
+fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> Metrics {
     let preferred = preferred_cover_width(area, aspect, font_size, shape);
     let columns = (area.width.saturating_add(GAP) / preferred.saturating_add(GAP)).max(1);
     let evened = ((area.width.saturating_sub(GAP * (columns - 1))) / columns).max(1);
@@ -127,6 +122,25 @@ pub(crate) fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape
     }
 }
 
+/// The grid `items` fill in `area`, the block included; `None` when there are none.
+pub(crate) fn metrics_for(
+    area: Rect,
+    items: &[Item],
+    font_size: FontSize,
+    target_rows: u16,
+) -> Option<Metrics> {
+    let first = items.first()?;
+    Some(metrics(
+        inner(area),
+        cover::primary_aspect(first),
+        font_size,
+        Shape {
+            target_rows,
+            item_count: items.len(),
+        },
+    ))
+}
+
 /// Scrolls by the least that brings the selection back on screen.
 pub(crate) fn scroll_to(offset: usize, selected: usize, metrics: &Metrics) -> usize {
     let row = selected / metrics.columns;
@@ -139,26 +153,20 @@ pub(crate) fn scroll_to(offset: usize, selected: usize, metrics: &Metrics) -> us
     }
 }
 
-pub(crate) fn inner(area: Rect) -> Rect {
+fn inner(area: Rect) -> Rect {
     block(Line::default(), true).inner(area)
 }
 
 fn block(title: Line<'_>, focused: bool) -> Block<'_> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(if focused { ACCENT } else { DIM }))
-        .border_type(BorderType::Rounded)
-        .title(title)
+    panel(title).border_style(Style::default().fg(if focused { ACCENT } else { DIM }))
 }
 
 /// What a grid draws and where its cursor is. Home draws two of these at once,
 /// so neither the rows nor the focus can be read back off the screen.
 pub(crate) struct View<'a> {
-    pub(crate) items: &'a [Item],
-    pub(crate) selected: usize,
-    pub(crate) offset: usize,
-    /// Rows of tiles to size the covers for.
-    pub(crate) rows: u16,
+    pub(crate) rows: &'a Rows,
+    /// The same metrics the cover requests were made for; `None` when empty.
+    pub(crate) metrics: Option<Metrics>,
     pub(crate) focused: bool,
 }
 
@@ -169,11 +177,10 @@ pub(crate) fn render(
     view: View<'_>,
     covers: &Covers,
 ) {
-    let items = view.items;
     let block = block(title, view.focused);
     let area_inner = block.inner(area);
     frame.render_widget(block, area);
-    let Some(first) = items.first() else {
+    let Some(metrics) = view.metrics else {
         frame.render_widget(
             Paragraph::new(Span::styled("nothing here", Style::default().fg(DIM))),
             area_inner,
@@ -181,16 +188,7 @@ pub(crate) fn render(
         return;
     };
 
-    let metrics = metrics(
-        area_inner,
-        cover::primary_aspect(first),
-        covers.font_size(),
-        Shape {
-            target_rows: view.rows,
-            item_count: items.len(),
-        },
-    );
-    let start = view.offset * metrics.columns;
+    let start = view.rows.offset * metrics.columns;
     let top = area_inner.y;
     let stride = metrics.cover.width + GAP;
     // The covers cannot spend what the height budget left over, so the row is
@@ -200,7 +198,8 @@ pub(crate) fn render(
         .saturating_mul(stride)
         .saturating_sub(GAP);
     let left = area_inner.x + area_inner.width.saturating_sub(used) / 2;
-    for (index, item) in items.iter().enumerate().skip(start).take(metrics.page()) {
+    let items = view.rows.items.iter().enumerate();
+    for (index, item) in items.skip(start).take(metrics.page()) {
         let slot = index - start;
         let column = u16::try_from(slot % metrics.columns).unwrap_or(0);
         let row = u16::try_from(slot / metrics.columns).unwrap_or(0);
@@ -213,7 +212,7 @@ pub(crate) fn render(
         if tile.bottom() > area_inner.bottom() || tile.right() > area_inner.right() {
             continue;
         }
-        let caption = caption_style(index == view.selected, view.focused);
+        let caption = caption_style(index == view.rows.selected, view.focused);
         render_tile(frame, tile, item, caption, covers);
     }
 }
@@ -234,13 +233,7 @@ fn render_tile(frame: &mut Frame, tile: Rect, item: &Item, caption: Style, cover
         height: tile.height.saturating_sub(LABEL_HEIGHT),
         ..tile
     };
-    if let Some(protocol) = covers
-        .key(item, cover.as_size())
-        .as_ref()
-        .and_then(|key| covers.protocol(key))
-    {
-        frame.render_widget(Image::new(protocol), cover);
-    }
+    covers.draw(frame, item, cover);
 
     let rows = [
         watched_rule(item, cover.width),

@@ -16,7 +16,6 @@ fn app_showing(rows: u16, lines: usize) -> App {
 
 fn messages(app: &App, rows: u16) -> Vec<String> {
     app.log_window(rows)
-        .0
         .iter()
         .map(|line| line.message.clone())
         .collect()

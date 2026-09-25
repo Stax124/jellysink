@@ -44,7 +44,7 @@ the daemon's. The alternative — a `jellysink browse` subcommand owning its own
 users have under systemd, and it would mean two ways to be a player.
 
 **Two consequences.** The frontend is useless without a running daemon and says
-so rather than failing obscurely (`session_id` sets the "jellysink is not
+so rather than failing obscurely (`session_id` sets the "jellysink not
 connected" line). And anything it sends must be something `cast.rs` parses —
 the two halves are joined through a third process, so a misspelled command name
 fails silently at runtime. `core`'s `jellyfin/remote_test.rs` holds the
@@ -90,9 +90,11 @@ the daemon's own binary was one of the two replaced: a restart ends playback, an
 a frontend-only update is not worth that.
 
 The check runs once at startup and, when it finds something, sets the header
-badge; failure is a log line and nothing more. `u` ends the loop rather than
-downloading behind the TUI: `App::run` returns an `Exit`, `view::leave()` runs
-as it always does, and `main` installs on the normal screen before
+badge; failure is a log line and nothing more. `App::update` keeps the check's
+state rather than a bare offer, so `u` pressed before it answers, or after it
+failed, says so instead of calling the binary current. `u` ends the loop rather
+than downloading behind the TUI: `App::run` returns an `Exit`,
+`ratatui::restore()` runs as it always does, and `main` installs on the normal screen before
 `exec_updated` brings the TUI back. Suspending and re-entering the alternate
 screen would leave the detached input thread parked in `read` with no way to
 hand stdin back.
@@ -105,16 +107,20 @@ Jellyfin's own.
 ## Staying responsive
 
 Every request runs in a spawned task reporting back over one `mpsc` channel
-(`Msg`), so no keystroke waits on HTTP. Three staleness rules follow, and they
-are the same rule three times — **the view outlives the thing it points into**:
+(`Msg`), so no keystroke waits on HTTP. Four staleness rules follow, and they
+are the same rule four times — **the view outlives the thing it points into**:
 
 - **Search** is debounced `SEARCH_DEBOUNCE` and each request carries a
   generation number, so a slow earlier response is dropped rather than
   overwriting a newer one.
-- **Level loads** carry their depth. If the user goes back before the rows
-  arrive, the depth no longer indexes into the stack and the rows are dropped.
-- **`Level::fill`** pulls the cursor back into range when a reload returns fewer
+- **Level loads** carry their depth and their `Source`, and land only on the
+  level at that depth that asked for that source. A depth alone is not enough:
+  going back and opening another level puts a different one at the same depth.
+- **`Rows::fill`** pulls the cursor back into range when a reload returns fewer
   rows, because the selection outlives the list it points into.
+- **`App::rescroll`** runs at the head of every loop iteration, for each grid on
+  screen, so a reload or a resize that moves the cursor off the drawn tiles
+  scrolls it back as a keypress would.
 
 ## Where the footer's state comes from
 
@@ -142,9 +148,6 @@ Two things follow:
   which also means the footer works for playback started from a phone or the web
   app.
 
-Seeking is computed from the last polled position, so it can be up to a second
-stale; invisible at ten-second steps.
-
 ## Reloading on a playback change
 
 Browse rows are fetched once, when the level is opened, so an episode watched
@@ -165,8 +168,8 @@ fires before it arms — doing it the other way round collapses the deferral to
 nothing. A second is free here: the poll ticks anyway, so this costs a `bool`
 and no timer.
 
-The first poll is exempt, by the same `player_polled` guard the daemon-connected
-log line uses: startup has just loaded Home, and finding something already
+The first poll is exempt — `Daemon::Unknown`, the state the daemon-connected
+log line checks too: startup has just loaded Home, and finding something already
 playing is not news about it.
 
 What reloads is the current screen plus Home, always — Continue Watching and
@@ -229,11 +232,13 @@ Libraries screen that changed shape with its sort order would be the bug.
 Two screens override it. **Search** is always a list — its rows are mixed kinds,
 so a grid would be tiles of three different shapes. **Home** is two grids,
 Continue Watching above Next Up, each owning half the body and holding a single
-row, which is why `grid::metrics` takes the rows it is asked to fill rather than
-assuming `TARGET_ROWS`. A shelf scrolls horizontally, so the `offset` that
+row, which is why `grid::metrics_for` takes the rows it is asked to fill rather
+than assuming `TARGET_ROWS`. A shelf scrolls horizontally, so the `offset` that
 scrolls a level by rows scrolls a shelf by screenfuls of one.
 `App::visible_covers` asks for the tiles in both shelves while `grid_metrics`
-answers for the focused one only, so Home does not go through it.
+answers for the focused one only, so Home does not go through it. `grid::render`
+draws with the `Metrics` `App` worked out rather than its own, so the covers
+requested and the tiles drawn cannot disagree.
 
 The list beside a rail is split by share rather than a fixed width
 (`rail::split`): half each, because a row is text that elides gracefully while
@@ -243,7 +248,7 @@ is no rail at all.
 **Keys.** A grid has a second axis, so `h`/`j`/`k`/`l` and all four arrows move
 the cursor while one is focused and `Esc` is the only way back. Up and down move
 by a whole row, which is why `App` stores the terminal size each iteration —
-both sides call `grid::metrics`. On Home they move between the shelves instead
+key handling and the draw both take the grid's `Metrics` from it. On Home they move between the shelves instead
 (`App::move_vertically`), each keeping its own cursor. Left and right mean *only*
 that: `keys.rs` stays a pure mapping and `App::apply` drops `Intent::Left`/
 `Right` unless a grid is focused, so in a list `Esc` and `Enter` are the single
@@ -297,8 +302,8 @@ would grow out of the height with them.
 `Metrics::rows` is what the grid **draws**, not what it could hold: the height
 budget always divides by `TARGET_ROWS`, so a level too short to fill the grid
 never spends the second row's height on a taller cover, and a level with one row
-of items reserves one row of height. Tiles are drawn from the top of the body, which is the only place the
-leftover can go — a wide screen caps the tile by width, so the covers cannot
+of items reserves one row of height. Tiles are drawn from the top of the body,
+which is the only place the leftover can go — a wide screen caps the tile by width, so the covers cannot
 grow into the spare height however it is divided, and centring a block against
 rows that were never going to be drawn is what puts a gap above the only row
 there is.
@@ -403,8 +408,8 @@ out at the size of the box, never in the box itself.
 
 Decode and encode run in `spawn_blocking` — jellytui is a `current_thread`
 runtime and both are real CPU work on the thread that draws. The finished
-`Protocol` comes back over the existing `Msg` channel, so no `select!` arm was
-added.
+`Protocol` comes back over the `Msg` channel like every other reply, so covers
+need no `select!` arm of their own.
 
 Fetches are throttled to one batch per `COVER_THROTTLE`, and `Covers::claim`
 keeps a resting cursor, and a second visit to the same row, to one request. The
@@ -434,8 +439,7 @@ redraw per failure, forever. `Covers::give_up` therefore files a failure
 alongside an image the server does not have: both land in `unavailable`, both
 are answered from memory for the rest of the session, and only a display-scale
 change clears them. An evicted key was never failed, so eviction is unaffected —
-and since the disk cache, re-fetching it is a local read rather than a round
-trip. Both a failure and an absent image log at `debug`, because the next one of
+and re-fetching it is a read from the disk cache rather than a round trip. Both a failure and an absent image log at `debug`, because the next one of
 these should be readable in the `L` pane rather than inferred from a blank tile.
 
 ### The disk cache
@@ -493,6 +497,10 @@ season. Both are keyed by the item id they were asked for and dropped if
 playback has moved on. Until they land the daemon's `display_title` holds the
 screen, so it is never blank.
 
+The lookup is sent once per item id (`App::playing_requested`), not whenever the
+poll finds no item: a lookup that failed, or is still in flight, would otherwise
+go out again every second, with a warning and a header complaint each time.
+
 ## The log pane
 
 `L` opens it and `L` or Esc closes it. It is not in the tab strip: the strip
@@ -532,9 +540,9 @@ the alternate screen:
 
 - `jellytui` never calls `init_tracing`, which builds a `fmt` layer on stdout.
   It installs a subscriber of its own whose only sink is memory.
-- `view::enter` installs a panic hook that restores the terminal before
-  delegating, so a panic (or a color_eyre report) does not leave the user in a
-  raw-mode alternate screen.
+- `view::enter` is `ratatui::try_init`, which installs a panic hook that
+  restores the terminal before delegating, so a panic does not leave the user
+  in a raw-mode alternate screen.
 
 `crossterm::event::read` blocks, so input is read on a dedicated OS thread and
 forwarded over a channel into the `select!` loop. That thread is detached: at

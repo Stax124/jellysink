@@ -7,17 +7,18 @@ mod player;
 mod request;
 mod update;
 
-pub(crate) use browse::Shelf;
 use msg::Msg;
+pub(crate) use player::Daemon;
+pub(crate) use update::UpdateCheck;
 
 use crate::cover::{self, CoverDisk, CoverKey, Covers};
 use crate::keys::{self, Intent};
 use crate::logs::{LogBuffer, LogLine};
-use crate::nav::{self, End, Level, Source};
+use crate::nav::{self, End, Level, Rows, Source};
 use crate::view::{grid, playing, rail};
 
 use crate::view;
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::VERSION;
 use jellysink_core::config::Paths;
 use jellysink_core::instance;
@@ -87,26 +88,24 @@ pub(crate) struct App {
     rx: UnboundedReceiver<Msg>,
     pub(crate) screen: Screen,
     pub(crate) home_pane: HomePane,
-    pub(crate) resume: Shelf,
-    pub(crate) next_up: Shelf,
+    /// Indexed by `HomePane`; each keeps its cursor while the other has focus.
+    shelves: [Rows; 2],
     pub(crate) stack: Vec<Level>,
     pub(crate) query: String,
-    pub(crate) results: Level,
-    pub(crate) player: Option<PlayerStatus>,
-    /// Until the first poll answers, "no daemon" is not yet a fact about it,
-    /// so the footer must not report one.
-    pub(crate) player_polled: bool,
-    /// The playing item and the rest of its season, both keyed by the item id
-    /// they describe.
+    pub(crate) results: Rows,
+    pub(crate) daemon: Daemon,
+    /// The playing item, keyed by the id it describes.
     pub(crate) playing_item: Option<(String, Item)>,
-    pub(crate) playing_episodes: Level,
+    /// The id last looked up, so a lookup that failed is not sent again every poll.
+    playing_requested: Option<String>,
+    pub(crate) playing_episodes: Rows,
     /// Needed only to address commands, and `/Sessions` is expensive, so it is
     /// fetched once in the background rather than polled.
     session_id: Option<String>,
     pub(crate) covers: Covers,
     /// The last size the terminal reported, so a cover box can be worked out
     /// between frames rather than only while one is being drawn.
-    viewport: Size,
+    pub(crate) viewport: Size,
     cover_due: Option<tokio::time::Instant>,
     /// When the next batch may go out. `None` until the first one has.
     cover_ready_at: Option<tokio::time::Instant>,
@@ -123,8 +122,8 @@ pub(crate) struct App {
     /// Armed by a playback change and fired by the *following* poll: the daemon
     /// publishes the new status before its `Stopped` report reaches the server.
     reload_due: bool,
-    /// The offered version. Not `message`, which the next keypress clears.
-    pub(crate) update_offer: Option<String>,
+    /// Not `message`, which the next keypress clears.
+    pub(crate) update: UpdateCheck,
     quit: Option<Exit>,
 }
 
@@ -143,15 +142,14 @@ impl App {
             rx,
             screen: Screen::Home,
             home_pane: HomePane::Resume,
-            resume: Shelf::default(),
-            next_up: Shelf::default(),
+            shelves: Default::default(),
             stack: Vec::new(),
             query: String::new(),
-            results: Level::loading("Search", Source::Libraries),
-            player: None,
-            player_polled: false,
+            results: Rows::loading(),
+            daemon: Daemon::Unknown,
             playing_item: None,
-            playing_episodes: Level::loading("Episodes", Source::Libraries),
+            playing_requested: None,
+            playing_episodes: Rows::default(),
             session_id: None,
             covers: Covers::new(picker, disk),
             viewport: Size::default(),
@@ -166,7 +164,7 @@ impl App {
             search_generation: 0,
             search_due: None,
             reload_due: false,
-            update_offer: None,
+            update: UpdateCheck::Pending,
             quit: None,
         }
     }
@@ -191,9 +189,9 @@ impl App {
             if let Ok(window) = terminal.backend_mut().window_size() {
                 self.covers.set_cell_size(cover::cell_size(window));
             }
-            self.tick_covers();
+            self.prepare_frame();
             if let Err(e) = terminal.draw(|frame| view::render(&self, frame)) {
-                break Err(e.into());
+                break Err(e).wrap_err("drawing the terminal");
             }
             let (search_deadline, cover_deadline) = (self.search_due, self.cover_due);
             tokio::select! {
@@ -216,7 +214,7 @@ impl App {
                 break Ok(exit);
             }
         };
-        view::leave();
+        ratatui::restore();
         result
     }
 

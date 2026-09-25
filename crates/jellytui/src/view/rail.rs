@@ -1,5 +1,6 @@
 //! The detail rail: cover and metadata for whichever row holds the cursor.
 
+use super::{ACCENT, DIM, panel};
 use crate::cover::{self, Covers};
 use jellysink_core::jellyfin::model::Item;
 use jellysink_core::ticks::ticks_to_seconds;
@@ -7,9 +8,8 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect, Size};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui_image::FontSize;
-use ratatui_image::Image;
 
 /// Below this the rail would leave the list too narrow to read, so the screen
 /// stays a full-width list.
@@ -17,7 +17,7 @@ const MIN_BODY_WIDTH: u16 = 90;
 
 /// Splits a body area into the list and the rail beside it. Half each: a row is
 /// text and elides gracefully, where the cover is worth the width.
-pub(crate) fn split(body: Rect) -> (Rect, Option<Rect>) {
+fn split(body: Rect) -> (Rect, Option<Rect>) {
     if body.width < MIN_BODY_WIDTH {
         return (body, None);
     }
@@ -25,9 +25,19 @@ pub(crate) fn split(body: Rect) -> (Rect, Option<Rect>) {
     (list, Some(rail))
 }
 
+/// Draws the rail for `item` if the body has room for one, and returns what is
+/// left for the list.
+pub(crate) fn beside(frame: &mut Frame, body: Rect, item: Option<&Item>, covers: &Covers) -> Rect {
+    let (list, rail) = split(body);
+    if let Some(rail) = rail {
+        render(frame, rail, item, covers);
+    }
+    list
+}
+
 /// The box the cover occupies inside the rail. Height is capped at three fifths
 /// so a 2:3 poster leaves room for the text under it.
-pub(crate) fn cover_rect(rail: Rect, item: &Item, font_size: FontSize) -> Rect {
+fn cover_rect(rail: Rect, item: &Item, font_size: FontSize) -> Rect {
     let inner = block().inner(rail);
     cover::fit(
         inner,
@@ -38,19 +48,15 @@ pub(crate) fn cover_rect(rail: Rect, item: &Item, font_size: FontSize) -> Rect {
 }
 
 /// The size a rail cover is encoded for, or `None` when this body has no rail.
-/// Both the fetch and the renderer come through [`cover_rect`].
 pub(crate) fn cover_size(body: Rect, item: &Item, font_size: FontSize) -> Option<Size> {
     Some(cover_rect(split(body).1?, item, font_size).as_size())
 }
 
 fn block() -> Block<'static> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .title(" Details ")
+    panel(" Details ")
 }
 
-pub(crate) fn render(frame: &mut Frame, rail: Rect, item: Option<&Item>, covers: &Covers) {
+fn render(frame: &mut Frame, rail: Rect, item: Option<&Item>, covers: &Covers) {
     let block = block();
     let inner = block.inner(rail);
     frame.render_widget(block, rail);
@@ -59,13 +65,7 @@ pub(crate) fn render(frame: &mut Frame, rail: Rect, item: Option<&Item>, covers:
     };
 
     let cover = cover_rect(rail, item, covers.font_size());
-    if let Some(protocol) = covers
-        .key(item, cover.as_size())
-        .as_ref()
-        .and_then(|key| covers.protocol(key))
-    {
-        frame.render_widget(Image::new(protocol), cover);
-    }
+    covers.draw(frame, item, cover);
 
     let [_, details] = Layout::vertical([
         Constraint::Length(cover.height.saturating_add(1)),
@@ -73,45 +73,44 @@ pub(crate) fn render(frame: &mut Frame, rail: Rect, item: Option<&Item>, covers:
     ])
     .areas(inner);
     frame.render_widget(
-        Paragraph::new(lines(item)).wrap(Wrap { trim: true }),
+        Paragraph::new(lines(item, true)).wrap(Wrap { trim: true }),
         details,
     );
 }
 
-fn lines(item: &Item) -> Vec<Line<'static>> {
+pub(super) fn lines(item: &Item, with_genres: bool) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(Span::styled(
             item.label(),
             Style::default().add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(meta(item), Style::default().fg(super::DIM))),
+        Line::from(Span::styled(meta(item), Style::default().fg(DIM))),
     ];
-    if !item.genres.is_empty() {
+    if with_genres && !item.genres.is_empty() {
         lines.push(Line::from(Span::styled(
             item.genres.join(" · "),
-            Style::default().fg(super::DIM),
+            Style::default().fg(DIM),
         )));
     }
     if let Some(rating) = item.community_rating {
         lines.push(Line::from(Span::styled(
             format!("★ {rating:.1}"),
-            Style::default().fg(super::ACCENT),
+            Style::default().fg(ACCENT),
         )));
     }
     lines.push(Line::default());
     if let Some(overview) = &item.overview {
         lines.push(Line::from(Span::styled(
             overview.clone(),
-            Style::default().fg(super::DIM),
+            Style::default().fg(DIM),
         )));
     }
     lines
 }
 
-/// The one line under the title, skipping whatever the server did not send. A
-/// folder counts children rather than printing a runtime, because a series'
-/// `RunTimeTicks` is the nominal length of one episode.
-pub(crate) fn meta(item: &Item) -> String {
+/// The line under the title, skipping whatever the server did not send. A folder
+/// counts children: a series' `RunTimeTicks` is the nominal length of one episode.
+fn meta(item: &Item) -> String {
     let year = item.production_year.map(|year| year.to_string());
     let left = item.unplayed_count().map(|count| format!("{count} left"));
     let episodes = item

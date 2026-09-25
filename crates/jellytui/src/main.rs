@@ -1,6 +1,5 @@
-//! jellytui: a terminal frontend that browses Jellyfin and casts to a running
-//! jellysink. Never calls `init_tracing`, which would paint over the alternate
-//! screen; see `crate::logs` and `specs/tui.md`.
+//! jellytui: browses Jellyfin in the terminal and casts to a running jellysink.
+//! Never calls `init_tracing`, whose `fmt` layer would paint over the alternate screen.
 
 mod app;
 mod cli;

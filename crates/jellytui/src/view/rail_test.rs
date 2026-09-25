@@ -1,5 +1,5 @@
 use super::*;
-use serde::Deserialize;
+use crate::test_support::item;
 
 const FONT_SIZE: FontSize = FontSize {
     width: 8,
@@ -7,20 +7,18 @@ const FONT_SIZE: FontSize = FontSize {
 };
 
 fn episode() -> Item {
-    Item::deserialize(serde_json::json!({
+    item(serde_json::json!({
         "Id": "e1", "Name": "The Grim Barbarity of Optics", "Type": "Episode",
         "SeriesName": "Severance", "IndexNumber": 5, "ParentIndexNumber": 1,
         "ProductionYear": 2022, "OfficialRating": "TV-MA",
         "RunTimeTicks": 28_800_000_000i64
     }))
-    .unwrap()
 }
 
 fn series() -> Item {
-    Item::deserialize(serde_json::json!({
+    item(serde_json::json!({
         "Id": "s1", "Name": "Severance", "Type": "Series"
     }))
-    .unwrap()
 }
 
 #[test]
@@ -73,14 +71,13 @@ fn the_meta_line_skips_whatever_the_server_did_not_send() {
 
 #[test]
 fn a_series_counts_its_children_rather_than_claiming_one_episode_as_its_runtime() {
-    let slime = Item::deserialize(serde_json::json!({
+    let slime = item(serde_json::json!({
         "Id": "s1", "Name": "That Time I Got Reincarnated as a Slime", "Type": "Series",
         "ProductionYear": 2018, "OfficialRating": "TV-14",
         "RunTimeTicks": 14_400_000_000i64,
         "ChildCount": 5, "RecursiveItemCount": 103,
         "UserData": {"UnplayedItemCount": 46, "Played": false}
-    }))
-    .unwrap();
+    }));
     assert_eq!(
         meta(&slime),
         "2018 · 5 seasons · 103 episodes · 46 left · TV-14"
@@ -89,23 +86,21 @@ fn a_series_counts_its_children_rather_than_claiming_one_episode_as_its_runtime(
 
 #[test]
 fn a_season_names_its_series_and_what_is_left_of_it() {
-    let season = Item::deserialize(serde_json::json!({
+    let season = item(serde_json::json!({
         "Id": "n2", "Name": "Season 2", "Type": "Season", "IndexNumber": 2,
         "SeriesName": "Slime", "ProductionYear": 2021,
         "ChildCount": 24, "RecursiveItemCount": 24,
         "UserData": {"UnplayedItemCount": 22, "Played": false}
-    }))
-    .unwrap();
+    }));
     assert_eq!(meta(&season), "Slime · 2021 · 24 episodes · 22 left");
 }
 
 #[test]
 fn a_one_season_show_is_not_pluralised_and_a_finished_one_has_nothing_left() {
-    let single = Item::deserialize(serde_json::json!({
+    let single = item(serde_json::json!({
         "Id": "s2", "Name": "Alya", "Type": "Series", "ProductionYear": 2024,
         "ChildCount": 1, "RecursiveItemCount": 12,
         "UserData": {"UnplayedItemCount": 0, "Played": true}
-    }))
-    .unwrap();
+    }));
     assert_eq!(meta(&single), "2024 · 1 season · 12 episodes");
 }
