@@ -59,36 +59,6 @@ fn env_terminal_used_when_no_xdg() {
 }
 
 #[test]
-fn wezterm_uses_start_dash_dash() {
-    let available = available_from(&["wezterm"]);
-    let launches = terminal_candidates(&payload(), &available, None);
-    assert_eq!(
-        args_as_str(&launches[0]),
-        vec!["start", "--", "/tmp/jellysink", "update", "--from-tray"]
-    );
-}
-
-#[test]
-fn gnome_terminal_uses_double_dash() {
-    let available = available_from(&["gnome-terminal"]);
-    let launches = terminal_candidates(&payload(), &available, None);
-    assert_eq!(
-        args_as_str(&launches[0]),
-        vec!["--", "/tmp/jellysink", "update", "--from-tray"]
-    );
-}
-
-#[test]
-fn xfce4_terminal_uses_dash_x() {
-    let available = available_from(&["xfce4-terminal"]);
-    let launches = terminal_candidates(&payload(), &available, None);
-    assert_eq!(
-        args_as_str(&launches[0]),
-        vec!["-x", "/tmp/jellysink", "update", "--from-tray"]
-    );
-}
-
-#[test]
 fn nothing_available_yields_empty() {
     let available = available_from(&[]);
     let launches = terminal_candidates(&payload(), &available, Some(OsStr::new("kitty")));

@@ -2,6 +2,7 @@
 //! Fail-open like the tray: no session bus is a warning, not a fatal error.
 
 use crate::daemon::signal::Signal;
+use jellysink_core::APP_NAME;
 use jellysink_core::cast::CastEvent;
 use jellysink_core::status::PlayerStatus;
 use jellysink_core::ticks::{micros_to_ticks, ticks_to_micros};
@@ -62,7 +63,7 @@ impl RootIface {
 
     #[zbus(property)]
     fn identity(&self) -> String {
-        "jellysink".to_string()
+        APP_NAME.to_string()
     }
 
     #[zbus(property)]
@@ -273,28 +274,38 @@ fn seeked_position(previous: &PlayerStatus, current: &PlayerStatus) -> Option<i6
 }
 
 async fn emit_changes(connection: zbus::Connection, mut status_rx: watch::Receiver<PlayerStatus>) {
+    let iface_ref = match connection
+        .object_server()
+        .interface::<_, PlayerIface>(OBJECT_PATH)
+        .await
+    {
+        Ok(iface_ref) => iface_ref,
+        Err(e) => {
+            tracing::warn!("mpris: looking up {OBJECT_PATH}: {e}");
+            return;
+        }
+    };
     let mut previous = status_rx.borrow().clone();
     while status_rx.changed().await.is_ok() {
         let current = status_rx.borrow().clone();
-        let Ok(iface_ref) = connection
-            .object_server()
-            .interface::<_, PlayerIface>(OBJECT_PATH)
-            .await
-        else {
-            return;
+        let emitted = async {
+            let iface = iface_ref.get().await;
+            let ctx = iface_ref.signal_emitter();
+            iface.playback_status_changed(ctx).await?;
+            iface.metadata_changed(ctx).await?;
+            iface.can_go_next_changed(ctx).await?;
+            iface.can_go_previous_changed(ctx).await?;
+            iface.can_play_changed(ctx).await?;
+            iface.can_pause_changed(ctx).await?;
+            iface.can_seek_changed(ctx).await?;
+            iface.volume_changed(ctx).await?;
+            if let Some(position) = seeked_position(&previous, &current) {
+                PlayerIface::seeked(ctx, position).await?;
+            }
+            Ok::<_, zbus::Error>(())
         };
-        let iface = iface_ref.get().await;
-        let ctx = iface_ref.signal_emitter();
-        let _ = iface.playback_status_changed(ctx).await;
-        let _ = iface.metadata_changed(ctx).await;
-        let _ = iface.can_go_next_changed(ctx).await;
-        let _ = iface.can_go_previous_changed(ctx).await;
-        let _ = iface.can_play_changed(ctx).await;
-        let _ = iface.can_pause_changed(ctx).await;
-        let _ = iface.can_seek_changed(ctx).await;
-        let _ = iface.volume_changed(ctx).await;
-        if let Some(position) = seeked_position(&previous, &current) {
-            let _ = PlayerIface::seeked(ctx, position).await;
+        if let Err(e) = emitted.await {
+            tracing::warn!("mpris: emitting property changes: {e}");
         }
         previous = current;
     }
