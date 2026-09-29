@@ -1,11 +1,13 @@
 use super::*;
+use crate::jellyfin::url::redact_api_key;
 
 #[test]
 fn ws_url_http() {
-    let u = websocket_url("http://h:8096", "tok", "dev").unwrap();
+    let u = websocket_url("http://h:8096", "sekrit", "dev").unwrap();
     assert!(u.starts_with("ws://h:8096/socket?"));
-    assert!(u.contains("api_key=tok"));
+    assert!(u.contains("ApiKey=sekrit"));
     assert!(u.contains("deviceId=dev"));
+    assert!(!redact_api_key(&u).contains("sekrit"));
 }
 
 #[test]

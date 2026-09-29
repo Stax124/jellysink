@@ -31,10 +31,10 @@ translation layer:
 | `subtitle_url`                      | Jellyfin index → absolute URL to `sub-add`  |
 | `audios` / `subtitles`              | every stream mpv can actually be pointed at |
 
-The reverse directions (`jellyfin_embedded_audio_index`,
-`jellyfin_embedded_subtitle_index`) are linear scans of those maps — one entry
-per stream, read once per track change, so a second `HashMap` kept in sync is
-not worth it.
+`track_ids(kind)` and `candidates(kind)` pick the side for a `TrackKind`. The
+reverse direction (`Runtime::jellyfin_index_of`) is a linear scan of the same
+map — one entry per stream, read once per track change, so a second `HashMap`
+kept in sync is not worth it.
 
 `sub-add`ed subtitles are the exception: their ids are not in `StreamMaps` but
 in `Runtime::external_subtitle_track_ids`, because they only exist once mpv has
@@ -79,9 +79,8 @@ differently, or come from another provider, so "index 3" is not the same track
 twice. A choice is stored as an *identity* — `TrackId` (`media/track.rs`) — and
 re-matched against whatever the next item offers.
 
-`TrackId` is one struct used for both kinds; `SubtitleId` and `AudioId` are
-aliases of it, and only which `Runtime` field a value lands in keeps the two
-memories apart. `is_forced` and `is_external` are subtitle notions, always
+`TrackId` is one struct used for both kinds, and only which `Runtime` field a
+value lands in keeps the two memories apart. `is_forced` and `is_external` are subtitle notions, always
 `false` for audio, so their weights add the same constant to every audio
 candidate and cannot change a ranking.
 
@@ -143,8 +142,8 @@ for an item with no streams of that kind at all.
 | 2    | The remembered preference | Only when this item has a matching track.                                      |
 | 3    | `server_default`          | The fallback.                                                                  |
 
-`audio.rs` and `subtitle.rs` are two thin wrappers that fix `TrackKind` and give
-the caller a kind-named function; the matching itself is one copy of the code.
+It takes a `TrackKind` for its log lines only; the matching is one copy of the
+code for both.
 
 `TrackPreference::Off` resolves to `-1`, an explicit *no* rather than
 "unspecified". For subtitles it has to: `sub-add` selects the track it adds, so
@@ -184,13 +183,12 @@ mpv's own — its config's default track, or the last `sub-add`ed one.
 
 A Jellyfin client is not the only way to change tracks. `j` and `#` in the mpv
 window are, and in practice they are the usual way. mpv reports both as a
-property change on `sid` / `aid`, registered by `observe_subtitle_track` and
-`observe_audio_track` (`mpv/command.rs`).
+property change on `sid` / `aid`, registered by `observe_track` (`mpv/command.rs`)
+once per kind.
 
 ### Why the event carries no value
 
-`MpvEvent::SubtitleTrackChanged` and `MpvEvent::AudioTrackChanged` deliberately
-carry no track id. Property changes arrive on their own channel and are handled
+`MpvEvent::TrackChanged(kind)` deliberately carries no track id. Property changes arrive on their own channel and are handled
 a whole file load later than they were emitted, so the value in the message is
 routinely stale: mpv's auto-selection during a load reaches the runtime *after*
 `configure_streams` has already applied our choice over it. The runtime re-reads
@@ -206,11 +204,11 @@ struct TrackState {
 }
 ```
 
-`Runtime` holds one for `audio` and one for `subtitle`; `track_state(kind)` /
-`track_state_mut(kind)` (`runtime/playback/tracks.rs`) are the only places that
-match on `kind`. Everything else — `apply_track`, `adopt_mpv_track`,
-`remember_track`, `settle_track` — takes a `TrackKind` and runs the same code
-for either.
+`Runtime` holds one for `audio` and one for `subtitle`, picked by
+`track_state(kind)` / `track_state_mut(kind)` (`runtime/playback/tracks.rs`).
+A `match` on `kind` only ever selects which field or property a value lives
+in; the logic — `apply_track`, `adopt_mpv_track`, `remember_track`,
+`settle_track` — takes a `TrackKind` and runs the same code for either.
 
 `settled` is mpv's selection as of the last time it was *ours*: written
 optimistically by `apply_track` (to what it asked mpv for) and by `settle_track`
@@ -231,7 +229,7 @@ loading as the user switching subtitles off.
 
 ### `adopt_mpv_track` (`runtime/playback/tracks.rs`)
 
-1. Return early while `transitioning` or `stopping`, or with no current item — a
+1. Return early while `transitioning`, or with no current item — a
    file still loading reports the selection of neither the old file nor the
    configured new one.
 2. Read the live property. If it equals the settled value, nothing happened.
@@ -287,7 +285,8 @@ stopping playback is not the user disowning their choice.
 - **One slot per kind, most recent only.** Not per series, not per language
   pair, and not persisted — restarting the daemon forgets it.
 - **External audio is never selectable.** A Jellyfin client asking for one gets
-  the "not found in the embedded audio map" warning and mpv keeps what it had.
+  the "requested stream index is in neither the embedded nor the external track
+  map" warning and mpv keeps what it had.
 - **A track only mpv knows about cannot be remembered.** It becomes the baseline
   so events stop re-firing, but there is no identity to match next episode.
 - **The gate is a hard filter.** A provider that renames a track *and* changes
@@ -299,9 +298,8 @@ stopping playback is not the user disowning their choice.
 
 ## Where this is tested
 
-Matching and forgetting in `media/track_test.rs`; the two `sid`/`aid` counter
-gates above in `media/streams_test.rs`; the precedence table once per side in
-`media/audio_test.rs` and `media/subtitle_test.rs`; the tri-state and the
-observers in `mpv/event_test.rs` and `mpv/command_test.rs`. Anything that turns
+Matching, forgetting and the precedence table in `media/track_test.rs`; the two
+`sid`/`aid` counter gates above in `media/streams_test.rs`; the tri-state and
+the property-change events in `mpv/event_test.rs`. Anything that turns
 out to be mpv behaving other than as described above belongs in
 `mpv/integration_test.rs`.

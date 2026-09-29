@@ -2,6 +2,7 @@
 //! were encoded into. Nothing here may fail a cover — every path degrades to a miss.
 
 use super::CoverKey;
+use color_eyre::eyre::WrapErr;
 use jellysink_core::config::atomic_write;
 use jellysink_core::jellyfin::browse::bucket_pixels;
 use std::fs;
@@ -74,10 +75,10 @@ impl CoverDisk {
             return;
         }
         if let Err(err) = fs::create_dir_all(&self.dir)
-            .map_err(color_eyre::Report::from)
+            .wrap_err_with(|| format!("creating {}", self.dir.display()))
             .and_then(|()| atomic_write(&self.path(key), bytes, 0o644))
         {
-            tracing::debug!(%err, "cover not cached");
+            tracing::debug!("cover not cached: {err:#}");
             return;
         }
         let before = self

@@ -8,7 +8,6 @@ mod runtime;
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use jellysink_core::UsageError;
 use jellysink_core::config::Paths;
 use jellysink_core::logging::init_tracing;
 use std::path::PathBuf;
@@ -19,7 +18,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[derive(Parser)]
 #[command(
     name = "jellysink",
-    version = env!("CARGO_PKG_VERSION"),
+    version,
     about = "Headless Jellyfin cast target that plays in MPV"
 )]
 struct Cli {
@@ -83,16 +82,7 @@ enum ConfigCmd {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    match try_main().await {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            if let Some(usage) = err.downcast_ref::<UsageError>() {
-                eprintln!("{usage}");
-                std::process::exit(1);
-            }
-            Err(err)
-        }
-    }
+    jellysink_core::error::exit_on_usage_error(try_main().await)
 }
 
 async fn try_main() -> Result<()> {

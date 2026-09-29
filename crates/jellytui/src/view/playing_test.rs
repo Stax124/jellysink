@@ -1,10 +1,6 @@
 use super::*;
-use crate::test_support::app;
-use jellysink_core::status::NowPlaying;
-use jellysink_core::status::PlayerStatus;
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use serde::Deserialize;
+use crate::app::Daemon;
+use crate::test_support::{app, item};
 
 const FONT_SIZE: FontSize = FontSize {
     width: 8,
@@ -12,50 +8,20 @@ const FONT_SIZE: FontSize = FontSize {
 };
 
 fn drawn(app: &App) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(100, 26)).unwrap();
-    terminal
-        .draw(|frame| render(app, frame, frame.area()))
-        .unwrap();
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .chunks(100)
-        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n")
+    crate::test_support::drawn(100, 26, |frame| render(app, frame, frame.area()))
 }
 
 fn playing(app: &mut App, item_id: &str, title: &str) {
-    app.player_polled = true;
-    app.player = Some(PlayerStatus {
-        server: "s".into(),
-        username: "u".into(),
-        now_playing: Some(NowPlaying {
-            item_id: item_id.into(),
-            title: title.into(),
-            position_ticks: 0,
-            run_time_ticks: Some(14_220_809_999),
-            is_paused: false,
-            is_muted: false,
-            volume: 70,
-            has_next: true,
-            has_previous: false,
-            queue_index: 0,
-            queue_len: 9,
-            art_url: String::new(),
-        }),
-    });
+    app.daemon = Daemon::Connected(crate::test_support::playing(item_id, title));
 }
 
 fn episode(id: &str, number: i64, name: &str) -> Item {
-    Item::deserialize(serde_json::json!({
+    item(serde_json::json!({
         "Id": id, "Name": name, "Type": "Episode", "SeriesName": "Severance",
         "IndexNumber": number, "ParentIndexNumber": 1, "ProductionYear": 2022,
         "OfficialRating": "TV-MA", "RunTimeTicks": 28_800_000_000i64,
         "Overview": "The severed floor keeps a wing nobody will admit exists."
     }))
-    .unwrap()
 }
 
 #[test]
@@ -86,7 +52,7 @@ fn nothing_playing_says_so_rather_than_drawing_an_empty_frame() {
     let mut app = app();
     assert!(drawn(&app).contains("checking"));
 
-    app.player_polled = true;
+    app.daemon = Daemon::Absent;
     assert!(drawn(&app).contains("jellysink not connected"));
 }
 

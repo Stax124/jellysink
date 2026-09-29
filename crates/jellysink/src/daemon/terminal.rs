@@ -1,17 +1,16 @@
 //! Open a command in the user's terminal emulator (tray update progress).
 
+use jellysink_core::APP_NAME;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 
-const APP_TITLE: &str = "jellysink";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TerminalLaunch {
-    pub(crate) program: PathBuf,
-    pub(crate) args: Vec<OsString>,
+struct TerminalLaunch {
+    program: PathBuf,
+    args: Vec<OsString>,
 }
 
 /// Fallbacks after `xdg-terminal-exec` and `$TERMINAL`. Prefix is the exec flag(s).
@@ -39,56 +38,45 @@ fn exec_prefix(basename: &str) -> &'static [&'static str] {
         .unwrap_or(&["-e"])
 }
 
-pub(crate) fn terminal_candidates(
+fn terminal_candidates(
     argv: &[impl AsRef<OsStr>],
     available: &dyn Fn(&str) -> Option<PathBuf>,
     env_terminal: Option<&OsStr>,
 ) -> Vec<TerminalLaunch> {
-    let payload: Vec<OsString> = argv.iter().map(|a| a.as_ref().to_os_string()).collect();
+    let launch = |program: PathBuf, prefix: &[&str]| TerminalLaunch {
+        program,
+        args: prefix
+            .iter()
+            .map(OsString::from)
+            .chain(argv.iter().map(|arg| arg.as_ref().to_os_string()))
+            .collect(),
+    };
     let mut out = Vec::new();
 
     if let Some(program) = available("xdg-terminal-exec") {
-        let mut args = vec![
-            OsString::from(format!("--title={APP_TITLE}")),
-            OsString::from("--"),
-        ];
-        args.extend(payload.iter().cloned());
-        out.push(TerminalLaunch { program, args });
+        out.push(launch(program, &[&format!("--title={APP_NAME}"), "--"]));
     }
 
     if let Some(term) = env_terminal {
-        let lookup = term.to_str().unwrap_or("");
         let by_name = Path::new(term)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        if let Some(program) = available(lookup).or_else(|| {
-            if by_name != lookup {
-                available(by_name)
-            } else {
-                None
-            }
-        }) {
-            let mut args: Vec<OsString> = exec_prefix(by_name)
-                .iter()
-                .map(|s| OsString::from(*s))
-                .collect();
-            args.extend(payload.iter().cloned());
-            out.push(TerminalLaunch { program, args });
+        if let Some(program) = available(term.to_str().unwrap_or("")).or_else(|| available(by_name))
+        {
+            out.push(launch(program, exec_prefix(by_name)));
         }
     }
 
-    for (name, prefix) in FALLBACKS {
-        if let Some(program) = available(name) {
-            let mut args: Vec<OsString> = prefix.iter().map(|s| OsString::from(*s)).collect();
-            args.extend(payload.iter().cloned());
-            out.push(TerminalLaunch { program, args });
-        }
-    }
+    out.extend(
+        FALLBACKS
+            .iter()
+            .filter_map(|(name, prefix)| Some(launch(available(name)?, prefix))),
+    );
     out
 }
 
-pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
+fn find_on_path(name: &str) -> Option<PathBuf> {
     let p = Path::new(name);
     if p.is_absolute() {
         return p.is_file().then(|| p.to_path_buf());
@@ -113,12 +101,6 @@ pub(crate) async fn spawn_in_terminal(argv: &[impl AsRef<OsStr>]) -> std::io::Re
 }
 
 async fn spawn_launches(launches: &[TerminalLaunch]) -> std::io::Result<()> {
-    if launches.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "no terminal emulator found",
-        ));
-    }
     let mut last_err =
         std::io::Error::new(std::io::ErrorKind::NotFound, "no terminal emulator found");
     for launch in launches {
@@ -141,9 +123,8 @@ async fn spawn_launches(launches: &[TerminalLaunch]) -> std::io::Result<()> {
     Err(last_err)
 }
 
-/// Ok if the child still runs or exited 0 (double-fork), Err if it exited
-/// non-zero before `timeout`. Awaited: polling fifteen candidate terminals
-/// would busy-wait seconds of the daemon's one runtime thread.
+/// Ok if the child still runs or exited 0 (double-fork), Err if it exited non-zero
+/// before `timeout`. Awaited: polling would busy-wait the daemon's one runtime thread.
 async fn spawn_looks_ok(child: &mut Child, timeout: Duration) -> std::io::Result<()> {
     match tokio::time::timeout(timeout, child.wait()).await {
         // Still running when the probe expired: it launched.

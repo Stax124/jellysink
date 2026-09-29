@@ -1,9 +1,6 @@
 use super::*;
-use crate::cover::CoverDisk;
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui_image::picker::Picker;
-use serde::Deserialize;
+use crate::test_support::{covers, item, render_buffer};
+use ratatui::buffer::Buffer;
 use serde_json::json;
 
 const FONT_SIZE: FontSize = FontSize {
@@ -43,45 +40,43 @@ fn tiles_fill_the_row_and_posters_pack_tighter_than_stills() {
     }
 }
 
+/// A grid of `items` drawn into `area`, and the metrics it was drawn with.
+fn draw_grid(items: Vec<Item>, area: Rect) -> (Buffer, Metrics) {
+    let covers = covers();
+    let grid = metrics_for(area, &items, covers.font_size(), TARGET_ROWS).unwrap();
+    let mut rows = Rows::default();
+    rows.fill(items);
+    let buffer = render_buffer(area.width, area.height, |frame| {
+        let view = View {
+            rows: &rows,
+            metrics: Some(grid),
+            focused: true,
+        };
+        render(frame, area, Line::from(" Shows "), view, &covers);
+    });
+    (buffer, grid)
+}
+
+/// The first row the progress rule under a cover is drawn on.
+fn rule_row(buffer: &Buffer) -> u16 {
+    let area = buffer.area;
+    (0..area.height)
+        .find(|y| (0..area.width).any(|x| buffer[(x, *y)].symbol() == TRACK))
+        .expect("the rule under a cover is drawn")
+}
+
 #[test]
 fn covers_in_a_row_are_a_single_column_apart() {
-    let covers = Covers::new(Picker::halfblocks(), CoverDisk::disabled());
-    let series: Vec<Item> = (0..8)
+    let series = (0..8)
         .map(|index| item(json!({"Id": index.to_string(), "Name": "Slime", "Type": "Series"})))
         .collect();
     let area = Rect::new(0, 0, 80, 30);
-    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-    terminal
-        .draw(|frame| {
-            render(
-                frame,
-                area,
-                Line::from(" Shows "),
-                View {
-                    items: &series,
-                    selected: 0,
-                    offset: 0,
-                    rows: TARGET_ROWS,
-                    focused: true,
-                },
-                &covers,
-            );
-        })
-        .unwrap();
+    let (buffer, grid) = draw_grid(series, area);
 
-    let buffer = terminal.backend().buffer();
-    let rule = (0..area.height)
-        .find(|y| (0..area.width).any(|x| buffer[(x, *y)].symbol() == TRACK))
-        .expect("the rule under a cover is drawn");
+    let rule = rule_row(&buffer);
     let ruled: Vec<u16> = (0..area.width)
         .filter(|x| buffer[(*x, rule)].symbol() == TRACK)
         .collect();
-    let grid = metrics(
-        inner(area),
-        cover::primary_aspect(&series[0]),
-        covers.font_size(),
-        full(TARGET_ROWS),
-    );
     let first = *ruled.first().expect("the rule row has a cover on it");
     let stride = grid.cover.width + GAP;
     let expected: Vec<u16> = (0..columns(&grid))
@@ -187,46 +182,14 @@ fn a_level_too_short_to_fill_the_grid_reserves_no_row_for_what_it_has_not_got() 
 fn tiles_hang_from_the_top_rather_than_floating_in_the_middle_of_the_body() {
     // Centring a block against rows the level never draws is what leaves half
     // a tile of blank above the only row there is.
-    let covers = Covers::new(Picker::halfblocks(), CoverDisk::disabled());
-    let libraries: Vec<Item> = (0..3)
+    let libraries = (0..3)
         .map(|index| {
             item(json!({"Id": index.to_string(), "Name": "Lib", "Type": "CollectionFolder"}))
         })
         .collect();
     let area = Rect::new(0, 0, 60, 30);
-    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-    terminal
-        .draw(|frame| {
-            render(
-                frame,
-                area,
-                Line::from(" Libraries "),
-                View {
-                    items: &libraries,
-                    selected: 0,
-                    offset: 0,
-                    rows: TARGET_ROWS,
-                    focused: true,
-                },
-                &covers,
-            );
-        })
-        .unwrap();
-
-    let buffer = terminal.backend().buffer();
-    let rule = (0..area.height)
-        .find(|y| (0..area.width).any(|x| buffer[(x, *y)].symbol() == TRACK))
-        .expect("the rule under a cover is drawn");
-    let grid = metrics(
-        inner(area),
-        cover::primary_aspect(&libraries[0]),
-        covers.font_size(),
-        Shape {
-            target_rows: TARGET_ROWS,
-            item_count: libraries.len(),
-        },
-    );
-    assert_eq!(rule, inner(area).y + grid.cover.height);
+    let (buffer, grid) = draw_grid(libraries, area);
+    assert_eq!(rule_row(&buffer), inner(area).y + grid.cover.height);
 }
 
 #[test]
@@ -266,10 +229,6 @@ fn a_shelf_spends_the_width_the_cover_cannot_use_on_more_tiles() {
         shelf.cover.width < minimum_cover_width(2.0 / 3.0),
         "{shelf:?}"
     );
-}
-
-fn item(raw: serde_json::Value) -> Item {
-    Item::deserialize(raw).unwrap()
 }
 
 #[test]

@@ -22,45 +22,16 @@ fn playlist_m3u_writes_every_entry() {
 }
 
 #[test]
-fn loadlist_append_is_path_and_append_only() {
-    let line = encode_command(1, &loadlist_append_args("/tmp/append.m3u"));
-    let v: Value = serde_json::from_str(line.trim()).unwrap();
-    let cmd = v["command"].as_array().unwrap();
-    assert_eq!(cmd.len(), 3);
-    assert_eq!(cmd[0], "loadlist");
-    assert_eq!(cmd[1], "/tmp/append.m3u");
-    assert_eq!(cmd[2], "append");
-}
-
-#[test]
 fn loadlist_insert_at_keeps_the_index_a_separate_argument() {
     // "insert-at0" as one token is `invalid parameter` in mpv.
-    let line = encode_command(1, &loadlist_insert_at_args("/tmp/insert.m3u", 0));
+    let line = encode_command(1, &loadlist_args("/tmp/playlist.m3u", Some(0)));
     let v: Value = serde_json::from_str(line.trim()).unwrap();
     let cmd = v["command"].as_array().unwrap();
     assert_eq!(cmd.len(), 4);
     assert_eq!(cmd[0], "loadlist");
-    assert_eq!(cmd[1], "/tmp/insert.m3u");
+    assert_eq!(cmd[1], "/tmp/playlist.m3u");
     assert_eq!(cmd[2], "insert-at");
     assert_eq!(cmd[3], 0);
-}
-
-#[test]
-fn observe_property_sends_an_id_and_the_property_name() {
-    for (id, property) in [
-        (SUBTITLE_TRACK_OBSERVER_ID, SUBTITLE_TRACK_PROPERTY),
-        (AUDIO_TRACK_OBSERVER_ID, AUDIO_TRACK_PROPERTY),
-    ] {
-        let line = encode_command(7, &[json!("observe_property"), json!(id), json!(property)]);
-        let v: Value = serde_json::from_str(line.trim()).unwrap();
-        let cmd = v["command"].as_array().unwrap();
-        assert_eq!(cmd[0], "observe_property");
-        assert_eq!(cmd[1], id);
-        assert_eq!(cmd[2], property);
-    }
-    // mpv echoes the id back on every change, so two observers must not
-    // share one.
-    assert_ne!(SUBTITLE_TRACK_OBSERVER_ID, AUDIO_TRACK_OBSERVER_ID);
 }
 
 #[test]

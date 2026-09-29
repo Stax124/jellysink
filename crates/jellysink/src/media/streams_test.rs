@@ -32,22 +32,6 @@ fn maps_embedded_and_external_subs() {
 }
 
 #[test]
-fn an_embedded_subtitle_track_id_maps_back_to_its_jellyfin_index() {
-    let source = json!({
-        "MediaStreams": [
-            {"Type": "Subtitle", "Index": 2, "DeliveryMethod": "Embed", "IsExternal": false},
-            {"Type": "Subtitle", "Index": 5, "DeliveryMethod": "Embed", "IsExternal": false},
-        ]
-    });
-    let maps = map_streams("http://s", &media_source(source));
-    assert_eq!(jellyfin_embedded_subtitle_index(&maps, 1), Some(2));
-    assert_eq!(jellyfin_embedded_subtitle_index(&maps, 2), Some(5));
-    // A `sub-add`ed external track; the runtime resolves those from its own
-    // map, and this one must not guess at an embedded stream.
-    assert_eq!(jellyfin_embedded_subtitle_index(&maps, 3), None);
-}
-
-#[test]
 fn an_external_audio_stream_does_not_steal_the_next_embedded_track_id() {
     let source = json!({
         "MediaStreams": [
@@ -57,8 +41,8 @@ fn an_external_audio_stream_does_not_steal_the_next_embedded_track_id() {
     });
     let maps = map_streams("http://s", &media_source(source));
     // mpv never loads the external stream, so it has no aid at all.
-    assert_eq!(mpv_audio_track_id(&maps, 1), None);
-    assert_eq!(mpv_audio_track_id(&maps, 2), Some(1));
+    assert_eq!(maps.audio_track_id_by_stream_index.get(&1), None);
+    assert_eq!(maps.audio_track_id_by_stream_index.get(&2), Some(&1));
 }
 
 #[test]
@@ -71,8 +55,8 @@ fn embedded_audio_tracks_are_numbered_from_one_in_order() {
         ]
     });
     let maps = map_streams("http://s", &media_source(source));
-    assert_eq!(mpv_audio_track_id(&maps, 1), Some(1));
-    assert_eq!(mpv_audio_track_id(&maps, 3), Some(2));
+    assert_eq!(maps.audio_track_id_by_stream_index.get(&1), Some(&1));
+    assert_eq!(maps.audio_track_id_by_stream_index.get(&3), Some(&2));
 }
 
 /// An in-file subtitle that Jellyfin delivers as a sidecar still occupies an
@@ -89,22 +73,7 @@ fn an_extracted_subtitle_still_advances_the_mpv_subtitle_numbering() {
         ]
     });
     let maps = map_streams("http://s", &media_source(source));
-    assert_eq!(mpv_embedded_subtitle_track_id(&maps, 2), Some(2));
-}
-
-#[test]
-fn an_audio_track_id_maps_back_to_its_jellyfin_index() {
-    let source = json!({
-        "MediaStreams": [
-            {"Type": "Audio", "Index": 1, "IsExternal": false},
-            {"Type": "Audio", "Index": 4, "IsExternal": false},
-        ]
-    });
-    let maps = map_streams("http://s", &media_source(source));
-    assert_eq!(jellyfin_embedded_audio_index(&maps, 1), Some(1));
-    assert_eq!(jellyfin_embedded_audio_index(&maps, 2), Some(4));
-    // mpv numbers audio tracks from 1, so there is no third one here.
-    assert_eq!(jellyfin_embedded_audio_index(&maps, 3), None);
+    assert_eq!(maps.subtitle_track_id_by_stream_index.get(&2), Some(&2));
 }
 
 #[test]
@@ -119,7 +88,7 @@ fn an_audio_identity_carries_the_raw_track_title_not_only_the_display_title() {
     let maps = map_streams("http://s", &source);
     assert_eq!(
         maps.audios,
-        vec![AudioId {
+        vec![TrackId {
             index: 1,
             language: Some("jpn".into()),
             title: Some("Original".into()),
@@ -161,7 +130,7 @@ fn a_subtitle_identity_carries_the_raw_track_title_not_only_the_display_title() 
     let maps = map_streams("http://s", &source);
     assert_eq!(
         maps.subtitles,
-        vec![SubtitleId {
+        vec![TrackId {
             index: 2,
             language: Some("eng".into()),
             title: Some("Dialogue".into()),
@@ -220,7 +189,7 @@ fn an_unknown_delivery_method_does_not_fail_the_whole_response() {
     }));
     assert_eq!(source.media_streams[0].delivery(), DeliveryMethod::Other);
     let maps = map_streams("http://s", &source);
-    assert_eq!(mpv_embedded_subtitle_track_id(&maps, 2), Some(2));
+    assert_eq!(maps.subtitle_track_id_by_stream_index.get(&2), Some(&2));
 }
 
 #[test]

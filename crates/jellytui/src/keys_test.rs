@@ -49,17 +49,18 @@ fn navigation_keys_keep_working_inside_the_search_box() {
 }
 
 #[test]
-fn arrows_navigate() {
-    // What left and right *mean* is the focused view's business, not this
-    // mapping's.
-    assert_eq!(
-        map(key(KeyCode::Left, KeyModifiers::NONE), false),
-        Some(Intent::Left)
-    );
-    assert_eq!(
-        map(key(KeyCode::Right, KeyModifiers::NONE), false),
-        Some(Intent::Right)
-    );
+fn a_shifted_arrow_is_plain_movement() {
+    // Shift is not special-cased, so nothing downstream has to know about it.
+    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+        assert_eq!(
+            map(key(KeyCode::Left, modifiers), false),
+            Some(Intent::Left)
+        );
+        assert_eq!(
+            map(key(KeyCode::Right, modifiers), false),
+            Some(Intent::Right)
+        );
+    }
 }
 
 #[test]
@@ -95,16 +96,6 @@ fn playback_keys_are_mpvs_and_are_not_bound_here() {
     for c in [' ', 's', 'n', 'p', 'm', 'f', '+', '=', '-'] {
         assert_eq!(map(press(c), false), None, "{c:?} is still bound");
     }
-    // Shift is not special-cased, so a shifted arrow is plain movement and
-    // nothing downstream has to know about the modifier.
-    assert_eq!(
-        map(key(KeyCode::Left, KeyModifiers::SHIFT), false),
-        Some(Intent::Left)
-    );
-    assert_eq!(
-        map(key(KeyCode::Right, KeyModifiers::SHIFT), false),
-        Some(Intent::Right)
-    );
 }
 
 #[test]
@@ -113,7 +104,7 @@ fn the_update_key_is_still_text_in_the_search_box() {
     assert_eq!(map(press('u'), true), Some(Intent::Type('u')));
 }
 
-/// `Ctrl-u` clears the query rather than starting an update.
+/// `Ctrl-u` leaves the search, clearing the query, rather than starting an update.
 #[test]
 fn ctrl_u_while_typing_is_not_the_update_key() {
     assert_eq!(

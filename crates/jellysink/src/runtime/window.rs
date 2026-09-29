@@ -1,6 +1,4 @@
 use crate::mpv::EndFileReason;
-use serde_json::{Value, json};
-use std::sync::Arc;
 
 /// The queue, plus how much of it mpv currently holds: mpv's playlist is always
 /// the contiguous slice `items[origin .. origin + head + 1 + tail]`. See
@@ -17,13 +15,10 @@ pub(super) struct PlaylistWindow {
     /// Previous episodes spliced into the queue but not yet into mpv; they wait
     /// out the `loadfile ... replace` that would wipe them.
     pending_prepend: Vec<String>,
-    /// The rendered `NowPlayingQueue` payload, rebuilt only when the queue
-    /// changes; it goes out once a second and can be 500 entries long.
-    now_playing: Arc<Vec<Value>>,
 }
 
 impl PlaylistWindow {
-    /// `start_current`: mpv is about to hold the current item and nothing else.
+    /// mpv is about to hold the current item and nothing else.
     pub(super) fn reset_to_current(&mut self) {
         self.origin = self.queue.index;
         self.head = 0;
@@ -31,8 +26,8 @@ impl PlaylistWindow {
         self.pending_prepend.clear();
     }
 
-    /// `stop_playback`: mpv holds nothing. `origin` is left alone; the next
-    /// `reset_to_current` sets it.
+    /// mpv holds nothing. `origin` is left alone; the next `reset_to_current`
+    /// sets it.
     pub(super) fn clear(&mut self) {
         self.head = 0;
         self.tail = 0;
@@ -77,7 +72,6 @@ impl PlaylistWindow {
     /// holds them for [`Self::take_pending_prepend`].
     pub(super) fn prepend(&mut self, previous: Vec<String>) -> usize {
         let n = self.queue.insert_before_current(previous.clone());
-        self.rebuild_now_playing();
         // Queue index and mpv position shift together, so only `head` grows.
         self.head += n;
         self.pending_prepend = previous;
@@ -115,18 +109,16 @@ impl PlaylistWindow {
         self.queue.advance()
     }
 
-    pub(super) fn previous(&mut self) -> Option<&str> {
-        self.queue.previous()
+    pub(super) fn previous(&mut self) {
+        self.queue.previous();
     }
 
     pub(super) fn replace(&mut self, items: Vec<String>, start_index: usize) {
         self.queue.replace(items, start_index);
-        self.rebuild_now_playing();
     }
 
     pub(super) fn append(&mut self, ids: Vec<String>) {
         self.queue.append(ids);
-        self.rebuild_now_playing();
     }
 
     /// Splices `ids` into the queue after the current item, returning the mpv
@@ -135,26 +127,8 @@ impl PlaylistWindow {
         let mpv_pos = self.expected_pos() + 1;
         let n = ids.len();
         self.queue.insert_next(ids);
-        self.rebuild_now_playing();
         self.tail += n;
         mpv_pos
-    }
-
-    pub(super) fn now_playing_queue(&self) -> Arc<Vec<Value>> {
-        Arc::clone(&self.now_playing)
-    }
-
-    /// Eager on mutation rather than lazy per report: mutations are a handful
-    /// per play, reports are one a second.
-    fn rebuild_now_playing(&mut self) {
-        self.now_playing = Arc::new(
-            self.queue
-                .items
-                .iter()
-                .enumerate()
-                .map(|(i, id)| json!({"Id": id, "PlaylistItemId": format!("playlistItem{i}")}))
-                .collect(),
-        );
     }
 
     /// Moves the current item to `index` after mpv jumped there on its own.
@@ -188,9 +162,6 @@ impl Queue {
     pub(super) fn replace(&mut self, items: Vec<String>, start_index: usize) {
         self.items = items;
         self.index = start_index.min(self.items.len().saturating_sub(1));
-        if self.items.is_empty() {
-            self.index = 0;
-        }
     }
 
     pub(super) fn insert_next(&mut self, ids: Vec<String>) {
@@ -221,17 +192,12 @@ impl Queue {
         }
     }
 
-    pub(super) fn previous(&mut self) -> Option<&str> {
-        if self.index > 0 {
-            self.index -= 1;
-            self.current()
-        } else {
-            self.current()
-        }
+    pub(super) fn previous(&mut self) {
+        self.index = self.index.saturating_sub(1);
     }
 
     pub(super) fn has_next(&self) -> bool {
-        !self.items.is_empty() && self.index + 1 < self.items.len()
+        self.index + 1 < self.items.len()
     }
 
     pub(super) fn peek_next(&self) -> Option<&str> {
@@ -246,12 +212,8 @@ pub(super) enum EndFileAction {
     Stop,
 }
 
-pub(super) fn end_file_action(
-    transitioning: bool,
-    stopping: bool,
-    reason: EndFileReason,
-) -> EndFileAction {
-    if transitioning || stopping {
+pub(super) fn end_file_action(transitioning: bool, reason: EndFileReason) -> EndFileAction {
+    if transitioning {
         return EndFileAction::Ignore;
     }
     match reason {

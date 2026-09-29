@@ -1,7 +1,4 @@
-use super::Paths;
-use super::atomic_write;
-use color_eyre::eyre::WrapErr;
-use std::fs;
+use super::{Paths, atomic_write, read_optional};
 
 /// Extra mpv argv, re-read on every spawn. Whitespace-separated; blank lines
 /// and `#` comments are ignored.
@@ -10,16 +7,11 @@ pub struct MpvArgs(pub Vec<String>);
 
 impl MpvArgs {
     pub fn load(paths: &Paths) -> color_eyre::Result<Self> {
-        let path = paths.mpv_args_file();
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let text =
-            fs::read_to_string(&path).wrap_err_with(|| format!("reading {}", path.display()))?;
+        let text = read_optional(&paths.mpv_args_file())?.unwrap_or_default();
         Ok(Self(parse_mpv_args(&text)))
     }
 
-    pub fn save(paths: &Paths, value: &str) -> color_eyre::Result<()> {
+    pub(super) fn save(paths: &Paths, value: &str) -> color_eyre::Result<()> {
         let args = parse_mpv_args(value);
         let mut text = String::new();
         for arg in &args {
@@ -27,12 +19,7 @@ impl MpvArgs {
             text.push('\n');
         }
         paths.ensure()?;
-        atomic_write(&paths.mpv_args_file(), text.as_bytes(), 0o644)?;
-        Ok(())
-    }
-
-    pub fn get(paths: &Paths) -> color_eyre::Result<String> {
-        Ok(Self::load(paths)?.0.join(" "))
+        atomic_write(&paths.mpv_args_file(), text.as_bytes(), 0o644)
     }
 }
 

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 impl Runtime {
     pub(super) async fn try_expand_from_playing_item(&mut self) {
-        let Some(item_id) = self.item_id.clone() else {
+        let Some(item_id) = self.current.as_ref().map(|current| current.item_id.clone()) else {
             return;
         };
         let item = match self.api.get_item(&item_id).await {
@@ -25,34 +25,28 @@ impl Runtime {
         let item_type = media::item_type(item);
         let series = media::series_id(item);
         let series_name = item.get("SeriesName").and_then(Value::as_str);
+        let (forward, prepend) = expansion_directions(
+            self.config.autoplay,
+            self.config.prepend_previous,
+            self.window.has_next(),
+        );
         tracing::info!(
             item = %current_id,
             item_type,
             series_id = series,
             series_name,
             autoplay = self.config.autoplay,
+            prepend_previous = self.config.prepend_previous,
             has_next = self.window.has_next(),
+            forward,
+            prepend,
             "considering series expand"
         );
-
-        // The two directions gate differently: a queue that already has a next
-        // item blocks the forward append but is exactly when we want a prepend.
-        let forward_reason = series_expand_skip_reason(
-            item_type,
-            series,
-            self.window.has_next(),
-            self.config.autoplay,
-        );
-        let prepend_reason = prepend_skip_reason(item_type, series, self.config.prepend_previous);
 
         // Fetched for any episode: the playlist selector's titles come from it
         // even when neither direction changes the queue.
         let (Some(series), Some("Episode")) = (series, item_type) else {
-            tracing::info!(
-                forward = forward_reason,
-                prepend = prepend_reason,
-                "skipping series expand"
-            );
+            tracing::info!("not an episode of a series; skipping series expand");
             return;
         };
 
@@ -66,58 +60,37 @@ impl Runtime {
         };
         self.titles.extend(media::episode_titles(&listing));
 
-        let Some((previous, rest)) = self.split_listing(&listing, current_id) else {
+        let listed = listing
+            .get("Items")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let total = listing.get("TotalRecordCount").and_then(Value::as_i64);
+        let Some((previous, rest)) = split_episode_ids(&listing, current_id) else {
+            tracing::info!(
+                current = %current_id,
+                listed,
+                total,
+                "current episode not in series listing; not expanding"
+            );
             return;
         };
-        self.append_remaining(rest, forward_reason, current_id);
-        if prepend_reason.is_none() {
-            self.prepend_missing(previous);
-        }
-    }
-
-    /// Splits the listing at the current episode, or `None` when it is not in
-    /// there (specials, library churn, over the 500-episode cap) — fail closed.
-    fn split_listing(
-        &self,
-        listing: &Value,
-        current_id: &str,
-    ) -> Option<(Vec<String>, Vec<String>)> {
-        let items = listing.get("Items").and_then(Value::as_array);
-        let listed = items.map(|a| a.len()).unwrap_or(0);
-        let current_in_listing = items.is_some_and(|a| {
-            a.iter()
-                .any(|it| it.get("Id").and_then(Value::as_str) == Some(current_id))
-        });
-        let (previous, rest) = split_episode_ids(listing, current_id);
-        let total = listing.get("TotalRecordCount").and_then(Value::as_i64);
         tracing::info!(
             listed,
             total,
             previous = previous.len(),
             remaining = rest.len(),
-            current_in_listing,
             "episodes listing"
         );
-        if !current_in_listing {
-            tracing::info!(
-                current = %current_id,
-                listed,
-                "current episode not in series listing; not expanding"
-            );
-            return None;
+        if forward {
+            self.append_remaining(rest, current_id);
         }
-        Some((previous, rest))
+        if prepend {
+            self.prepend_missing(previous);
+        }
     }
 
-    fn append_remaining(
-        &mut self,
-        rest: Vec<String>,
-        skip_reason: Option<&'static str>,
-        current_id: &str,
-    ) {
-        if let Some(reason) = skip_reason {
-            tracing::debug!(reason, "skipping forward append");
-        } else if rest.is_empty() {
+    fn append_remaining(&mut self, rest: Vec<String>, current_id: &str) {
+        if rest.is_empty() {
             tracing::info!(current = %current_id, "no remaining episodes to append");
         } else {
             tracing::info!(n = rest.len(), "queued remaining episodes");
@@ -126,64 +99,46 @@ impl Runtime {
         }
     }
 
+    /// Splices already-aired episodes into the queue only:
+    /// [`Self::fill_previous_into_mpv`] follows, since `replace` would wipe it.
     fn prepend_missing(&mut self, previous: Vec<String>) {
         // Advancing e6 -> e7 leaves e1..e6 already queued ahead of e7.
         let missing = ids_missing_from(&previous, self.window.items());
         if missing.is_empty() {
             tracing::debug!("previous episodes already in queue");
-        } else {
-            self.prepend_previous_episodes(missing);
+            return;
         }
-    }
-
-    /// Splices already-aired episodes into the queue only:
-    /// [`Self::fill_previous_into_mpv`] follows, since `replace` would wipe it.
-    fn prepend_previous_episodes(&mut self, previous: Vec<String>) {
-        let n = self.window.prepend(previous);
+        let n = self.window.prepend(missing);
         tracing::info!(n, head = self.window.head(), "prepended previous episodes");
         self.log_queue("after-prepend-previous");
     }
 }
 
-/// `(previous, remaining)` around `current_id`. Empty on both sides when the
-/// listing does not contain it — fail closed on specials / library churn.
+/// `(forward, prepend)`. Separate gates: a queue that already has a next item
+/// blocks the forward append but is exactly when the prepend is wanted.
+pub(in crate::runtime) fn expansion_directions(
+    autoplay: bool,
+    prepend_previous: bool,
+    has_next: bool,
+) -> (bool, bool) {
+    (autoplay && !has_next, prepend_previous)
+}
+
+/// `(previous, remaining)` around `current_id`, or `None` when the listing
+/// does not contain it — fail closed on specials, library churn and the cap.
 pub(in crate::runtime) fn split_episode_ids(
     episodes: &Value,
     current_id: &str,
-) -> (Vec<String>, Vec<String>) {
-    let Some(items) = episodes.get("Items").and_then(Value::as_array) else {
-        return (Vec::new(), Vec::new());
-    };
-    let ids: Vec<String> = items
+) -> Option<(Vec<String>, Vec<String>)> {
+    let ids: Vec<String> = episodes
+        .get("Items")
+        .and_then(Value::as_array)?
         .iter()
         .filter_map(|it| it.get("Id").and_then(Value::as_str).map(str::to_string))
         .collect();
-    match ids.iter().position(|id| id == current_id) {
-        Some(i) => {
-            let (before, after) = ids.split_at(i);
-            (before.to_vec(), after[1..].to_vec())
-        }
-        None => (Vec::new(), Vec::new()),
-    }
-}
-
-/// Whether this item could have previous episodes worth prepending. Ignores
-/// `has_next` and `autoplay`: both are about continuing forward.
-pub(in crate::runtime) fn prepend_skip_reason(
-    item_type: Option<&str>,
-    series_id: Option<&str>,
-    prepend_previous: bool,
-) -> Option<&'static str> {
-    if !prepend_previous {
-        return Some("prepend_previous disabled");
-    }
-    if item_type != Some("Episode") {
-        return Some("item is not an episode");
-    }
-    if series_id.is_none() {
-        return Some("item has no SeriesId");
-    }
-    None
+    let i = ids.iter().position(|id| id == current_id)?;
+    let (before, after) = ids.split_at(i);
+    Some((before.to_vec(), after[1..].to_vec()))
 }
 
 /// Keeps a re-run of the prepend from queueing the same episodes twice.
@@ -193,27 +148,6 @@ pub(in crate::runtime) fn ids_missing_from(ids: &[String], queue: &[String]) -> 
         .filter(|id| !present.contains(id.as_str()))
         .cloned()
         .collect()
-}
-
-pub(in crate::runtime) fn series_expand_skip_reason(
-    item_type: Option<&str>,
-    series_id: Option<&str>,
-    has_next: bool,
-    autoplay: bool,
-) -> Option<&'static str> {
-    if !autoplay {
-        return Some("autoplay disabled");
-    }
-    if has_next {
-        return Some("queue already has a next item");
-    }
-    if item_type != Some("Episode") {
-        return Some("item is not an episode");
-    }
-    if series_id.is_none() {
-        return Some("item has no SeriesId");
-    }
-    None
 }
 
 #[cfg(test)]

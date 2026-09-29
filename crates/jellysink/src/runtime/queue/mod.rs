@@ -4,7 +4,9 @@
 pub(super) mod expand;
 mod stubs;
 
-use crate::media::{self, PlayRequest, PreparedPlay};
+pub(in crate::runtime) use stubs::Fill;
+
+use crate::media::{self, PlayRequest, PreparedPlay, TrackKind};
 use crate::runtime::state::Runtime;
 use crate::runtime::window::{PlaylistEof, playlist_eof};
 use jellysink_core::jellyfin::auth::Api;
@@ -95,22 +97,17 @@ impl Runtime {
     }
 
     async fn advance_in_mpv(&mut self) {
-        self.transitioning = true;
-        let advanced = match self.mpv.as_mut() {
-            Some(mpv) => {
-                let advanced = mpv.playlist_next().await;
-                if advanced.is_ok() {
-                    let _ = mpv.unpause().await;
-                }
-                advanced
-            }
-            None => Ok(()),
+        let Some(mpv) = self.mpv.as_mut() else {
+            return;
         };
-        if let Err(e) = advanced {
+        self.transitioning = true;
+        if let Err(e) = mpv.playlist_next().await {
             // Nothing will emit file-loaded now, and a stuck flag makes
             // end_file_action ignore every later end-file.
             self.transitioning = false;
             tracing::error!("playlist-next failed: {e:#}");
+        } else if let Err(e) = mpv.set_pause(false).await {
+            tracing::warn!("could not unpause mpv: {e:#}");
         }
     }
 
@@ -152,10 +149,10 @@ impl Runtime {
         let Some(mpv) = self.mpv.as_mut() else {
             return Ok(None);
         };
-        // mpv reports -1 for both while idle; clamp rather than treat as a failure.
-        let pos = mpv.playlist_pos().await?.max(0) as usize;
-        let count = mpv.playlist_count().await?.max(0) as usize;
-        Ok(Some((pos, count)))
+        Ok(Some((
+            mpv.playlist_pos().await?,
+            mpv.playlist_count().await?,
+        )))
     }
 
     /// The one place a [`PreparedPlay`] is produced, so also the one place the
@@ -172,9 +169,9 @@ impl Runtime {
         }
 
         let (prepared, item) = fetch_prepared(&self.api, item_id, req).await?;
-        if let Some(ref v) = item {
+        if item.is_some() {
             self.titles
-                .insert(item_id.to_string(), media::display_title(v));
+                .insert(item_id.to_string(), prepared.title.clone());
         }
         // The server's answer, not the overridden one: a later fallback must
         // mean "what the server said", not an earlier play's preference.
@@ -187,18 +184,21 @@ impl Runtime {
         mut prepared: PreparedPlay,
         req: &PlayRequest,
     ) -> PreparedPlay {
-        prepared.subtitle_stream_index = media::resolve_subtitle_index(
-            req.subtitle_stream_index,
-            self.subtitle.remembered.as_ref(),
-            &prepared.maps.subtitles,
-            prepared.subtitle_stream_index,
-        );
-        prepared.audio_stream_index = media::resolve_audio_index(
-            req.audio_stream_index,
-            self.audio.remembered.as_ref(),
-            &prepared.maps.audios,
-            prepared.audio_stream_index,
-        );
+        for kind in [TrackKind::Audio, TrackKind::Subtitle] {
+            let requested = match kind {
+                TrackKind::Audio => req.audio_stream_index,
+                TrackKind::Subtitle => req.subtitle_stream_index,
+            };
+            let server_default = *prepared.stream_index_mut(kind);
+            let resolved = media::resolve_track_index(
+                kind,
+                requested,
+                self.track_state(kind).remembered.as_ref(),
+                prepared.maps.candidates(kind),
+                server_default,
+            );
+            *prepared.stream_index_mut(kind) = resolved;
+        }
         prepared
     }
 }

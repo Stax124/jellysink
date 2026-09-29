@@ -11,7 +11,7 @@ loop.
 | Layer          | Lives in                    | Lifetime                                                                        |
 | -------------- | --------------------------- | ------------------------------------------------------------------------------- |
 | `cmd_run`      | `cli/run.rs`                | The process. Owns the lock, tray, signals.                                       |
-| `runtime::run` | `runtime/session.rs`        | The process. Owns the reconnect loop, the mpv-event channel and the report sink. |
+| `runtime::run` | `runtime/session.rs`        | The process. Owns the reconnect loop and the report sink.                        |
 | `run_session`  | `runtime/session.rs`        | One WebSocket connection over the shared `Runtime`.                              |
 | `Runtime`      | `runtime/state.rs`          | The whole daemon session. Owns the queue, mpv and the track memories.            |
 
@@ -30,7 +30,7 @@ everything cooperatively scheduled.
 | Task              | Produces                             | Spawned by                       | Lifetime                            |
 | ----------------- | ------------------------------------ | -------------------------------- | ----------------------------------- |
 | Report sink       | nothing; consumes `report_tx`        | `run`                            | The daemon session.                 |
-| mpv forwarder     | `mpv_rx` (`(generation, MpvEvent)`)  | `Runtime` (`spawn_and_load`)     | One mpv process; respawned with it. |
+| mpv IPC loop      | `MpvEvent`s and command replies      | `MpvSession::spawn`              | One mpv process; its `MpvSession`.  |
 | WebSocket reader  | `ws_rx` (`WsIncoming`)               | `run_session`                    | One WebSocket connection.           |
 | Update check      | nothing; badges the tray             | `cmd_run` (`spawn_update_check`) | Detached; ends after one check.     |
 | Tray update apply | nothing; consumes `apply`            | `cmd_run`                        | Detached; the process.              |
@@ -42,12 +42,13 @@ written by `Runtime`, read by `instance::listen_stop` for `jellysink status` and
 by MPRIS) and `ext_tx`/`ext_rx` (unbounded `CastEvent`, written by MPRIS, read
 by `run_session`).
 
-Only the WebSocket reader is session-scoped. The report sink and the mpv channel
-are created once in `run`, before the reconnect loop, precisely so a reconnect
-does not have to re-plumb them.
+Only the WebSocket reader is session-scoped. The report sink is created once in
+`run`, before the reconnect loop, precisely so a reconnect does not have to
+re-plumb it. mpv's events belong to its `MpvSession` rather than to either: they
+follow the mpv process, not the WebSocket.
 
-**Every task spawned inside `runtime` is wrapped in an `AbortOnDrop`**
-(`runtime/task.rs`) — there is no collecting struct, each call site owns its own
+**Every task spawned inside `runtime` and `mpv` is wrapped in an `AbortOnDrop`**
+(`runtime/task.rs`) — there is no collecting struct, each owner holds its own
 handle. Without it a reconnect spawns a fresh WebSocket reader and leaves the
 previous one running; against a half-open TCP connection that never returns, so
 it leaks for the life of the process. The four `cmd_run` and `mpris` tasks are
@@ -62,7 +63,7 @@ deliberately detached instead: they are process-scoped, and the process ends by
 | `keepalive.tick()` | Send `{"MessageType":"KeepAlive"}`; a send failure ends the session.                                                                               |
 | `progress.tick()`  | `tick_progress` — sample mpv and report, once a second.                                                                                            |
 | `ws_rx.recv()`     | Dispatch the parsed `WsIncoming`; see below.                                                                                                      |
-| `mpv_rx.recv()`    | `on_mpv_event`, but only for the current generation.                                                                                              |
+| `next_mpv_event`   | `on_mpv_event`. Pends forever while no mpv runs; a closed event channel reads as `Exited`, whose handler drops the session.                        |
 | `ext_rx.recv()`    | An MPRIS `CastEvent` to `Runtime::handle`. Disabled by `ext_closed` once the senders are gone — MPRIS is optional, so a `None` here is not fatal.  |
 
 (The outer `run` loop has a second, two-arm `select!`: `shutdown.fired()` or the
@@ -96,8 +97,8 @@ so a few failures at startup pin it at `BACKOFF_MAX` for the rest of the process
 and a session that ran for hours waits a full minute to come back.
 
 **Nothing in this loop touches `rt` between sessions.** Playback rides out the
-gap, and mpv events raised while the socket is down stay queued on `mpv_rx` for
-the next `run_session`. Once reconnected, `Runtime::reannounce` resamples mpv
+gap, and mpv events raised while the socket is down stay queued on the
+`MpvSession` for the next `run_session`. Once reconnected, `Runtime::reannounce` resamples mpv
 and sends a fresh Start, since a server that dropped the session needs one to
 show a now-playing again.
 
@@ -116,9 +117,9 @@ The daemon does not exit on an expired token; it logs once and retries every
 ## Keepalive
 
 A 30 s interval by default. Jellyfin may send `ForceKeepAlive` carrying a
-timeout in seconds; the reader converts it to `(seconds / 2).max(1)` and the
-arm rebuilds the interval on the spot. A malformed or absent `Data` defaults to
-60 s. Failing to *send* a keepalive ends the session, which is what puts it back
+timeout in seconds, which the parser floors at 1 (a malformed or absent `Data`
+is 60); the arm halves it, `(seconds / 2).max(1)`, and rebuilds the interval on
+the spot. Failing to *send* a keepalive ends the session, which is what puts it back
 through the backoff path.
 
 `progress` and `keepalive` use opposite missed-tick policies: `progress` skips
@@ -134,22 +135,16 @@ incoming one microseconds apart, and Jellyfin applies them in arrival order.
 Because the task is created once in `run` rather than per session, the ordering
 guarantee holds across a reconnect too.
 
-`Runtime::snapshot` builds the payload; `now_playing_queue` is an `Arc` shared
-from `PlaylistWindow` rather than rebuilt per report, because a progress report
-goes out once a second and carries the whole queue.
+`Runtime::snapshot` builds the payload.
 
-## mpv generations
+## Stale mpv events
 
-The mpv-event channel is created once in `run`, but mpv itself is spawned and
-killed repeatedly — once per `Stop` / next `PlayNow`, not once per WebSocket
-session. Aborting the previous forwarder task (`Runtime::mpv_events`) stops it
-leaking but is **not** enough on its own: events it already put on the shared
-channel are still queued behind the abort.
-
-So every event is tagged with `mpv_gen`, bumped by `spawn_and_load` and by
-`stop_playback`, and the main loop drops anything that does not match the
-current generation. Without it a stale `end-file` from the mpv that was just
-replaced advances the queue past the episode now playing.
+mpv is spawned and killed repeatedly — once per `Stop` / next `PlayNow`, not
+once per WebSocket session. Its event channel lives on the `MpvSession`, so
+dropping the session drops whatever it still had queued: a stale `end-file` from
+the mpv that was just replaced cannot reach the loop and advance the queue past
+the episode now playing. A channel shared across mpv processes would need every
+event tagged with the process it came from to get the same guarantee.
 
 ## Signals
 
@@ -179,21 +174,24 @@ the session future — which returns only once `stop_playback` has finished. The
 **awaits the session future** before returning, so mpv is torn down and the
 final report sent before the process replaces itself.
 
-## Playback-lifecycle flags
+## The `transitioning` flag
 
-Two booleans on `Runtime` gate every mpv `end-file`, and both have the same
-failure mode when left set.
+One boolean on `Runtime` gates every mpv `end-file` (and every `sid`/`aid`
+change, see `specs/tracks.md`) while we are the ones replacing the file.
 
-| Flag            | Set by                                                                       | Cleared by                                                                 |
-| --------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `transitioning` | `start_current` (reuse), `spawn_and_load`, `advance_in_mpv`, `play_previous`  | `on_file_loaded`, `stop_playback`, and every failed step that set it.       |
-| `stopping`      | `stop_playback`                                                              | `start_current`, end of `stop_playback`.                                    |
+| Set by                                                                      | Cleared by                                                             |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `start_current` (reuse), `load_current`, `advance_in_mpv`, `play_previous`  | `on_file_loaded`, `stop_playback`, and every failed step that set it.   |
+
+Nothing else needs gating during a stop: `stop_playback` runs to completion
+inside one `select!` arm and drops the `MpvSession`, and its queued events, with
+it.
 
 `end_file_action` (`runtime/window.rs`):
 
 | Condition                        | Action                              |
 | -------------------------------- | ----------------------------------- |
-| `transitioning` or `stopping`    | `Ignore` — we caused this end-file. |
+| `transitioning`                  | `Ignore` — we caused this end-file. |
 | Reason `eof` or `redirect`       | `Advance`                           |
 | Reason `quit`, `stop` or `error` | `Stop`                              |
 | Reason `other`                   | `Ignore`                            |
@@ -241,11 +239,11 @@ daemon shutdown, or mpv exiting on its own (`MpvEvent::Exited`) tears mpv down.
 1. `shutdown` latches.
 2. `run_session`'s first `select!` arm to see it returns `Ok(())`; the outer
    loop treats that as "done" and breaks instead of reconnecting.
-3. `run` calls `rt.stop_playback(true)`: reports Stopped, `quit_and_wait`s mpv,
-   clears the queue and the per-mpv-session track state (not the remembered
-   tracks — see `specs/tracks.md`).
-4. `quit_and_wait` escalates — IPC `quit`, 3 s, `SIGTERM`, 2 s, `SIGKILL` — then
-   removes the IPC socket.
+3. `run` calls `rt.stop_playback(true)`: reports Stopped, `quit`s mpv, clears
+   the queue and the per-mpv-session track state (not the remembered tracks —
+   see `specs/tracks.md`).
+4. `MpvSession::quit` escalates — IPC `quit`, 3 s, `SIGTERM`, 2 s, `SIGKILL` —
+   and dropping the session removes the IPC socket.
 5. `instance::listen_stop` breaks its loop and unlinks `stop.sock`, so the path
    is gone as soon as nothing answers on it. `cmd_run` unlinks again after its
    `select!`, because nothing awaits that task.
@@ -299,6 +297,9 @@ Two ways of closing the window instead are rejected:
   `jellysink status` and `stop` may need re-running. An ack on `stop`/`restart`
   would not help: the daemon being restarted is by definition the old image, so
   the very update that shipped the ack would not have it.
+- **`stop.sock` answers one connection at a time.** A client that sends nothing
+  is dropped after `COMMAND_READ_TIMEOUT` (200 ms), which is under the client's
+  `STATUS_REPLY_TIMEOUT`, so the connection queued behind it is still answered.
 - **`stop` returns before the daemon is gone.** It is answered by acting, and the
   process tears mpv down before exiting, so `instance.lock` stays held for up to
   that 5 s escalation — a `run` started straight after can still be refused.

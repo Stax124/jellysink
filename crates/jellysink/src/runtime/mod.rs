@@ -2,8 +2,7 @@ mod playback;
 mod queue;
 mod session;
 mod state;
-mod status;
-mod task;
+pub(crate) mod task;
 mod window;
 
 pub(crate) use session::run;

@@ -3,6 +3,7 @@
 use super::streams::{
     MediaSource, PlaybackInfo, StreamMaps, has_foreign_subtitle_host, map_streams,
 };
+use super::track::TrackKind;
 use color_eyre::eyre::{WrapErr, eyre};
 use jellysink_core::jellyfin::url::{direct_stream_url, redact_api_key};
 use serde::Deserialize;
@@ -11,6 +12,7 @@ use std::fmt;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PreparedPlay {
+    pub(crate) item_id: String,
     pub(crate) url: String,
     pub(crate) media_source_id: String,
     pub(crate) play_session_id: String,
@@ -19,15 +21,24 @@ pub(crate) struct PreparedPlay {
     pub(crate) audio_stream_index: Option<i64>,
     pub(crate) subtitle_stream_index: Option<i64>,
     pub(crate) uses_auth_header: bool,
-    pub(crate) external_sub_urls: Vec<(i64, String)>,
     pub(crate) run_time_ticks: Option<i64>,
     pub(crate) title: String,
+}
+
+impl PreparedPlay {
+    pub(crate) fn stream_index_mut(&mut self, kind: TrackKind) -> &mut Option<i64> {
+        match kind {
+            TrackKind::Audio => &mut self.audio_stream_index,
+            TrackKind::Subtitle => &mut self.subtitle_stream_index,
+        }
+    }
 }
 
 impl fmt::Debug for PreparedPlay {
     /// Hand-written so `url` cannot carry the access token into a log line.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PreparedPlay")
+            .field("item_id", &self.item_id)
             .field("url", &redact_api_key(&self.url))
             .field("media_source_id", &self.media_source_id)
             .field("play_session_id", &self.play_session_id)
@@ -36,7 +47,6 @@ impl fmt::Debug for PreparedPlay {
             .field("audio_stream_index", &self.audio_stream_index)
             .field("subtitle_stream_index", &self.subtitle_stream_index)
             .field("uses_auth_header", &self.uses_auth_header)
-            .field("external_sub_urls", &self.external_sub_urls)
             .field("run_time_ticks", &self.run_time_ticks)
             .field("title", &self.title)
             .finish()
@@ -115,17 +125,10 @@ pub(crate) fn prepare_play(
     let play_subtitle_stream_index = req.subtitle_stream_index;
     let subtitle_stream_index = req.subtitle_stream_index.or(default_subtitle_stream_index);
 
-    let mut external_sub_urls: Vec<(i64, String)> = maps
-        .subtitle_url
-        .iter()
-        .map(|(k, v)| (*k, v.clone()))
-        .collect();
-    external_sub_urls.sort_by_key(|(k, _)| *k);
-
     tracing::debug!(
         item = %item_id,
         embedded_subs = maps.subtitle_track_id_by_stream_index.len(),
-        external_subs = external_sub_urls.len(),
+        external_subs = maps.subtitle_url.len(),
         selectable_subs = maps.subtitles.len(),
         play_subtitle_stream_index = ?play_subtitle_stream_index,
         default_subtitle_stream_index,
@@ -134,6 +137,7 @@ pub(crate) fn prepare_play(
     );
 
     Ok(PreparedPlay {
+        item_id: item_id.to_string(),
         url,
         media_source_id,
         play_session_id,
@@ -142,7 +146,6 @@ pub(crate) fn prepare_play(
         audio_stream_index,
         subtitle_stream_index,
         uses_auth_header,
-        external_sub_urls,
         run_time_ticks: source.run_time_ticks.filter(|ticks| *ticks > 0),
         // Overwritten from `/Items/{id}` when that optional fetch succeeds.
         title: "Jellyfin".to_string(),
@@ -150,33 +153,30 @@ pub(crate) fn prepare_play(
 }
 
 /// Highest-value source, unless the caller named one: DirectPlay outweighs any
-/// bitrate difference, and among equals the fattest stream wins.
+/// bitrate difference, among equals the fattest stream wins, and a tie goes to the first.
 pub(crate) fn select_media_source<'a>(
     sources: &'a [MediaSource],
     preferred: Option<&str>,
 ) -> Option<&'a MediaSource> {
-    let mut selected: Option<&MediaSource> = None;
-    let mut weight_selected: f64 = f64::NEG_INFINITY;
-    let mut preferred_selected: Option<&MediaSource> = None;
-
-    for source in sources {
-        if let (Some(pref), Some(id)) = (preferred, source.id.as_deref())
-            && id == pref
-        {
-            preferred_selected = Some(source);
-        }
-        let weight = (if source.supports_direct_play {
+    let weight = |source: &MediaSource| {
+        let direct_play = if source.supports_direct_play {
             50_000.0
         } else {
             0.0
-        }) + source.bitrate.unwrap_or(0.0) / 1000.0;
-        if selected.is_none() || weight > weight_selected {
-            weight_selected = weight;
-            selected = Some(source);
-        }
-    }
-
-    preferred_selected.or(selected)
+        };
+        direct_play + source.bitrate.unwrap_or(0.0) / 1000.0
+    };
+    preferred
+        .and_then(|preferred| {
+            sources
+                .iter()
+                .find(|source| source.id.as_deref() == Some(preferred))
+        })
+        .or_else(|| {
+            sources
+                .iter()
+                .min_by(|a, b| weight(b).total_cmp(&weight(a)))
+        })
 }
 
 #[cfg(test)]

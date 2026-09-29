@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 use tempfile::TempDir;
 
 #[test]
@@ -8,7 +9,6 @@ fn mpv_args_roundtrip_and_reload() {
     MpvArgs::save(&paths, "--hwdec=no --vo=gpu").unwrap();
     let loaded = MpvArgs::load(&paths).unwrap();
     assert_eq!(loaded.0, vec!["--hwdec=no", "--vo=gpu"]);
-    assert_eq!(MpvArgs::get(&paths).unwrap(), "--hwdec=no --vo=gpu");
 
     // A running daemon re-reads the file; edits must be visible.
     MpvArgs::save(&paths, "--fullscreen").unwrap();

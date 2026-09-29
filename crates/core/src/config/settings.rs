@@ -1,9 +1,7 @@
-use super::Paths;
-use super::atomic_write;
+use super::{MpvArgs, Paths, atomic_write, read_optional};
 use crate::usage_err;
 use color_eyre::eyre::WrapErr;
 use serde::{Deserialize, Serialize};
-use std::fs;
 
 /// Every user-facing configuration key
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +46,33 @@ impl Field {
                 ))
             })
     }
+
+    pub fn read(self, paths: &Paths) -> color_eyre::Result<String> {
+        let config = Config::load(paths)?;
+        Ok(match self {
+            Field::MpvPath => config.mpv_path,
+            Field::MpvArgs => MpvArgs::load(paths)?.0.join(" "),
+            Field::Autoplay => config.autoplay.to_string(),
+            Field::PrependPrevious => config.prepend_previous.to_string(),
+            Field::CoverCacheMb => config.cover_cache_mb.to_string(),
+        })
+    }
+
+    pub fn write(self, paths: &Paths, value: &str) -> color_eyre::Result<()> {
+        let mut config = Config::load(paths)?;
+        match self {
+            Field::MpvPath => config.mpv_path = value.to_string(),
+            Field::MpvArgs => return MpvArgs::save(paths, value),
+            Field::Autoplay => config.autoplay = parse_bool(value)?,
+            Field::PrependPrevious => config.prepend_previous = parse_bool(value)?,
+            Field::CoverCacheMb => {
+                config.cover_cache_mb = value.trim().parse().map_err(|_| {
+                    usage_err(format!("invalid cover_cache_mb {value:?}; use a whole number of megabytes, or 0 to turn the cache off"))
+                })?;
+            }
+        }
+        config.save(paths)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -74,14 +99,10 @@ impl Config {
     /// Reads config.toml, or the defaults when there is none.
     pub fn load(paths: &Paths) -> color_eyre::Result<Self> {
         let path = paths.config_file();
-        if !path.exists() {
+        let Some(text) = read_optional(&path)? else {
             return Ok(Self::default());
-        }
-        let text =
-            fs::read_to_string(&path).wrap_err_with(|| format!("reading {}", path.display()))?;
-        let cfg: Self =
-            toml::from_str(&text).wrap_err_with(|| format!("parsing {}", path.display()))?;
-        Ok(cfg)
+        };
+        toml::from_str(&text).wrap_err_with(|| format!("parsing {}", path.display()))
     }
 
     pub fn load_or_create(paths: &Paths) -> color_eyre::Result<Self> {
@@ -92,44 +113,13 @@ impl Config {
         Ok(cfg)
     }
 
-    pub fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
+    pub(crate) fn save(&self, paths: &Paths) -> color_eyre::Result<()> {
         paths.ensure()?;
-        let text = toml::to_string_pretty(self).wrap_err("serializing config.toml")?;
-        atomic_write(&paths.config_file(), text.as_bytes(), 0o644)?;
-        Ok(())
-    }
-
-    /// `None` for [`Field::MpvArgs`], which is not in config.toml — the caller
-    /// reads it from `mpv_args.conf` instead.
-    pub fn get(&self, field: Field) -> Option<String> {
-        match field {
-            Field::MpvArgs => None,
-            Field::MpvPath => Some(self.mpv_path.clone()),
-            Field::Autoplay => Some(self.autoplay.to_string()),
-            Field::PrependPrevious => Some(self.prepend_previous.to_string()),
-            Field::CoverCacheMb => Some(self.cover_cache_mb.to_string()),
-        }
+        atomic_write(&paths.config_file(), self.to_toml()?.as_bytes(), 0o644)
     }
 
     pub fn to_toml(&self) -> color_eyre::Result<String> {
         toml::to_string_pretty(self).wrap_err("serializing config.toml")
-    }
-
-    /// Returns `false` for [`Field::MpvArgs`], which the caller writes to its
-    /// own file.
-    pub fn set(&mut self, field: Field, value: &str) -> color_eyre::Result<bool> {
-        match field {
-            Field::MpvArgs => return Ok(false),
-            Field::MpvPath => self.mpv_path = value.to_string(),
-            Field::Autoplay => self.autoplay = parse_bool(value)?,
-            Field::PrependPrevious => self.prepend_previous = parse_bool(value)?,
-            Field::CoverCacheMb => {
-                self.cover_cache_mb = value.trim().parse().map_err(|_| {
-                    usage_err(format!("invalid cover_cache_mb {value:?}; use a whole number of megabytes, or 0 to turn the cache off"))
-                })?;
-            }
-        }
-        Ok(true)
     }
 }
 

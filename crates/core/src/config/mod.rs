@@ -15,7 +15,7 @@ pub use settings::{Config, Field};
 
 use color_eyre::eyre::WrapErr;
 use std::fs;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,6 +37,15 @@ pub fn atomic_write(path: &Path, data: &[u8], mode: u32) -> color_eyre::Result<(
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// `None` when the file does not exist.
+fn read_optional(path: &Path) -> color_eyre::Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).wrap_err_with(|| format!("reading {}", path.display())),
+    }
 }
 
 fn write_tmp(tmp: &Path, data: &[u8], mode: u32) -> color_eyre::Result<()> {

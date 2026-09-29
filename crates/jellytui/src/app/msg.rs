@@ -4,7 +4,8 @@ use super::*;
 
 pub(super) enum Msg {
     Home(HomePane, Vec<Item>),
-    Level(usize, Vec<Item>),
+    /// Lands only on the level at that depth that asked for that source.
+    Level(usize, Source, Vec<Item>),
     Search(u64, Vec<Item>),
     /// `None` when the daemon did not answer, which the footer reports as
     /// "not connected" — the only failure this socket really has.
@@ -25,26 +26,29 @@ pub(super) enum Msg {
         key: CoverKey,
         protocol: Option<Box<Protocol>>,
     },
-    /// The request failed rather than answered. It carries the error because
-    /// the tile stays blank either way, which is no evidence of a failure.
-    CoverFailed {
-        key: CoverKey,
-        error: String,
-    },
+    CoverFailed(CoverKey),
     /// Carries no item id: it triggers a refetch rather than writing into a
     /// row, so there is nothing an id could keep it from landing on.
     Watched,
-    UpdateAvailable(String),
+    UpdateChecked(UpdateCheck),
     Error(String),
+}
+
+impl From<color_eyre::Report> for Msg {
+    fn from(e: color_eyre::Report) -> Self {
+        Self::Error(format!("{e:#}"))
+    }
 }
 
 impl App {
     pub(super) fn on_msg(&mut self, msg: Msg) {
         match msg {
             Msg::Home(pane, items) => self.shelf_mut(pane).fill(items),
-            Msg::Level(depth, items) => {
-                if let Some(level) = self.stack.get_mut(depth) {
-                    level.fill(items);
+            Msg::Level(depth, source, items) => {
+                if let Some(level) = self.stack.get_mut(depth)
+                    && level.source == source
+                {
+                    level.rows.fill(items);
                 }
             }
             // A slower earlier request must not overwrite a newer result.
@@ -81,12 +85,9 @@ impl App {
             Msg::Cover { key, protocol } => {
                 self.covers.store(key, protocol.map(|boxed| *boxed));
             }
-            Msg::CoverFailed { key, error } => {
-                tracing::debug!(%error, "cover request failed");
-                self.covers.give_up(&key);
-            }
+            Msg::CoverFailed(key) => self.covers.give_up(&key),
             Msg::Watched => self.reload_screen_and_home(),
-            Msg::UpdateAvailable(version) => self.update_offer = Some(version),
+            Msg::UpdateChecked(update) => self.update = update,
             Msg::Error(message) => {
                 tracing::warn!(%message, "request failed");
                 self.message = message;
@@ -94,35 +95,44 @@ impl App {
         }
     }
 
-    /// Every load goes through here, so no request can block key handling.
-    /// `label` names it in the log pane and in the timing.
+    /// Runs `task` off the loop, so no request can block key handling, and
+    /// delivers what it returns.
+    pub(super) fn spawn_msg(&self, task: impl Future<Output = Option<Msg>> + Send + 'static) {
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            if let Some(msg) = task.await {
+                // The receiver is gone only once the loop has ended.
+                let _ = tx.send(msg);
+            }
+        });
+    }
+
+    /// A listing request; `label` names it in the log pane and in the timing.
     pub(super) fn spawn<F>(
         &self,
         label: &'static str,
         request: F,
         wrap: impl FnOnce(Vec<Item>) -> Msg + Send + 'static,
     ) where
-        F: std::future::Future<Output = Result<serde_json::Value>> + Send + 'static,
+        F: Future<Output = Result<serde_json::Value>> + Send + 'static,
     {
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
+        self.spawn_msg(async move {
             let started = std::time::Instant::now();
-            let msg = match request.await {
-                Ok(body) => match ItemList::deserialize(&body) {
-                    Ok(list) => {
-                        tracing::info!(
-                            label,
-                            rows = list.items.len(),
-                            elapsed_ms = started.elapsed().as_millis(),
-                            "loaded"
-                        );
-                        wrap(list.items)
-                    }
-                    Err(e) => Msg::Error(format!("decoding items: {e}")),
-                },
-                Err(e) => Msg::Error(format!("{e:#}")),
-            };
-            let _ = tx.send(msg);
+            let list = request
+                .await
+                .and_then(|body| ItemList::deserialize(&body).wrap_err("decoding items"));
+            Some(match list {
+                Ok(list) => {
+                    tracing::info!(
+                        label,
+                        rows = list.items.len(),
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "loaded"
+                    );
+                    wrap(list.items)
+                }
+                Err(e) => e.into(),
+            })
         });
     }
 }

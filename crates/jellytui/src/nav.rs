@@ -2,18 +2,55 @@
 
 use jellysink_core::jellyfin::model::Item;
 
-/// One screen's worth of rows plus the cursor in them. Levels stack, so going
-/// back restores the position rather than re-fetching.
+/// Items and the cursor in them, which every screen moves through alike.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Rows {
+    pub(super) items: Vec<Item>,
+    pub(super) selected: usize,
+    /// First visible row when drawn as a grid; a list scrolls inside `ListState`.
+    pub(super) offset: usize,
+    pub(super) loading: bool,
+}
+
+impl Rows {
+    pub(super) fn loading() -> Self {
+        Self {
+            loading: true,
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn fill(&mut self, items: Vec<Item>) {
+        self.selected = self.selected.min(items.len().saturating_sub(1));
+        self.offset = 0;
+        self.items = items;
+        self.loading = false;
+    }
+
+    pub(super) fn selected_item(&self) -> Option<&Item> {
+        self.items.get(self.selected)
+    }
+
+    pub(super) fn move_by(&mut self, delta: isize) {
+        let last = self.items.len().saturating_sub(1);
+        self.selected = self.selected.saturating_add_signed(delta).min(last);
+    }
+
+    pub(super) fn move_to_end(&mut self, end: End) {
+        self.selected = match end {
+            End::Top => 0,
+            End::Bottom => self.items.len().saturating_sub(1),
+        };
+    }
+}
+
+/// One step of the browse stack. Levels stack, so going back restores the
+/// position rather than re-fetching.
 #[derive(Debug, Clone)]
 pub(super) struct Level {
     pub(super) title: String,
     pub(super) source: Source,
-    pub(super) items: Vec<Item>,
-    pub(super) selected: usize,
-    /// First visible row when this level is drawn as a grid. A list keeps its
-    /// own scroll inside `ListState`, which is why only the grid needs it.
-    pub(super) offset: usize,
-    pub(super) loading: bool,
+    pub(super) rows: Rows,
 }
 
 /// What produced a level's rows, which is also how it is reloaded.
@@ -33,34 +70,8 @@ impl Level {
         Self {
             title: title.into(),
             source,
-            items: Vec::new(),
-            selected: 0,
-            offset: 0,
-            loading: true,
+            rows: Rows::loading(),
         }
-    }
-
-    pub(super) fn fill(&mut self, items: Vec<Item>) {
-        self.selected = self.selected.min(items.len().saturating_sub(1));
-        self.offset = 0;
-        self.items = items;
-        self.loading = false;
-    }
-
-    pub(super) fn move_by(&mut self, delta: isize) {
-        if self.items.is_empty() {
-            self.selected = 0;
-            return;
-        }
-        let last = self.items.len() - 1;
-        self.selected = self.selected.saturating_add_signed(delta).min(last);
-    }
-
-    pub(super) fn move_to_end(&mut self, end: End) {
-        self.selected = match end {
-            End::Top => 0,
-            End::Bottom => self.items.len().saturating_sub(1),
-        };
     }
 }
 
@@ -70,9 +81,8 @@ pub(super) enum End {
     Bottom,
 }
 
-/// Whether a level's rows carry artwork worth a grid. Decided by kind, so a
-/// folder full of movies gets the grid whichever route reached it, and kinds
-/// that share a screen must answer alike.
+/// Whether a level's rows carry artwork worth a grid. Only the first row is
+/// asked, so kinds that share a screen must answer alike.
 pub(super) fn is_grid(items: &[Item]) -> bool {
     items.first().is_some_and(|item| {
         matches!(

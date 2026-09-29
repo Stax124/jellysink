@@ -1,5 +1,5 @@
-use crate::cli::update::apply_update_from_daemon;
-use crate::daemon::instance::{bind_stop_socket, listen_stop};
+use crate::cli::update::{BIN_NAME, apply_update_from_daemon};
+use crate::daemon::instance::{bind_stop_socket, listen_stop, remove_stop_socket};
 use crate::daemon::signal::Signal;
 use crate::daemon::{mpris, tray};
 use color_eyre::eyre::WrapErr;
@@ -7,19 +7,18 @@ use jellysink_core::VERSION;
 use jellysink_core::config::{Config, Credentials, Paths, device_name};
 use jellysink_core::instance::InstanceLock;
 use jellysink_core::update::{check, exec_updated, restart_exe_path};
-use jellysink_core::usage_err;
 
 pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     tracing::info!("jellysink {VERSION}");
 
     let config = Config::load_or_create(&paths)?;
-    let creds = Credentials::load(&paths)?
-        .ok_or_else(|| usage_err("not logged in; run `jellysink login` first"))?;
+    let creds = Credentials::load_required(&paths)?;
 
     let exe = restart_exe_path(&std::env::current_exe().wrap_err("resolving current executable")?);
 
     let _lock = InstanceLock::acquire(&paths)?;
-    let stop_listener = bind_stop_socket(&paths)?;
+    let stop_socket = paths.stop_socket();
+    let stop_listener = bind_stop_socket(&stop_socket)?;
 
     let shutdown = Signal::new();
     let restart = Signal::new();
@@ -28,19 +27,13 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     );
     // Ahead of the tray and mpris, so `status` is answered from the first await
     // rather than after however long those take to come up.
-    tokio::spawn({
-        let (paths, shutdown, restart, status_rx) = (
-            paths.clone(),
-            shutdown.clone(),
-            restart.clone(),
-            status_rx.clone(),
-        );
-        async move {
-            if let Err(e) = listen_stop(stop_listener, paths, shutdown, restart, status_rx).await {
-                tracing::error!("stop socket listener: {e:#}");
-            }
-        }
-    });
+    tokio::spawn(listen_stop(
+        stop_listener,
+        stop_socket.clone(),
+        shutdown.clone(),
+        restart.clone(),
+        status_rx.clone(),
+    ));
 
     tracing::info!(
         server = %creds.server,
@@ -53,19 +46,12 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let tray = tray::start(shutdown.clone()).await;
     spawn_update_check(tray.as_ref().map(|t| t.handle.clone()));
     if let Some(apply) = tray.as_ref().map(|t| t.apply.clone()) {
-        let update_paths = paths.clone();
-        let apply_exe = exe.clone();
-        let apply_restart = restart.clone();
+        let (paths, exe, restart) = (paths.clone(), exe.clone(), restart.clone());
         tokio::spawn(async move {
             loop {
                 apply.fired().await;
                 apply.take();
-                apply_update_from_daemon(
-                    update_paths.clone(),
-                    apply_exe.clone(),
-                    apply_restart.clone(),
-                )
-                .await;
+                apply_update_from_daemon(&paths, &exe, &restart).await;
             }
         });
     }
@@ -89,7 +75,6 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     }
 
     let session_shutdown = shutdown.clone();
-    let exit_paths = paths.clone();
     let session_fut =
         crate::runtime::run(config, creds, paths, session_shutdown, status_tx, ext_rx);
     tokio::pin!(session_fut);
@@ -115,11 +100,7 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     shutdown.fire();
     // The guaranteed unlink: nothing awaits the listener task, so the process can
     // exit before it observes `shutdown` and removes its own path.
-    if let Err(e) = std::fs::remove_file(exit_paths.stop_socket())
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!("leaving {} behind: {e}", exit_paths.stop_socket().display());
-    }
+    remove_stop_socket(&stop_socket);
     outcome?;
     if do_restart {
         tracing::info!(path = %exe.display(), "replacing process with updated binary");
@@ -132,7 +113,7 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
 
 fn spawn_update_check(handle: Option<ksni::Handle<tray::CastTray>>) {
     tokio::spawn(async move {
-        match check(env!("CARGO_BIN_NAME")).await {
+        match check(BIN_NAME).await {
             Ok(Some(version)) => {
                 tracing::info!(%version, "update available");
                 if let Some(handle) = handle {

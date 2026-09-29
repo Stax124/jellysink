@@ -7,16 +7,17 @@ mod logs;
 pub(super) mod playing;
 pub(super) mod rail;
 
-use crate::app::{App, Screen};
+use crate::app::{App, Daemon, Screen, UpdateCheck};
 use body::{render_browse, render_home, render_search};
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::ticks::format_hms;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{LineGauge, Paragraph};
+use ratatui::widgets::{Block, BorderType, LineGauge, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
+use std::borrow::Cow;
 
 pub(super) const ACCENT: Color = Color::Cyan;
 pub(super) const DIM: Color = Color::DarkGray;
@@ -24,20 +25,20 @@ pub(super) const DIM: Color = Color::DarkGray;
 pub(super) const WARN: Color = Color::Yellow;
 const OK: Color = Color::Green;
 const BAD: Color = Color::Red;
+/// The cursor's row in a list.
+const SELECTED: Style = Style::new()
+    .fg(ACCENT)
+    .add_modifier(Modifier::REVERSED.union(Modifier::BOLD));
 
-/// Enters the alternate screen and makes sure a panic cannot leave the user
-/// in it — color_eyre's hook prints over a raw-mode terminal otherwise.
+/// `try_init` also installs a panic hook that restores the terminal first.
 pub(super) fn enter() -> Result<DefaultTerminal> {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        leave();
-        previous(info);
-    }));
-    Ok(ratatui::try_init()?)
+    ratatui::try_init().wrap_err("entering the terminal's alternate screen")
 }
 
-pub(super) fn leave() {
-    ratatui::restore();
+fn panel<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(title)
 }
 
 /// The four horizontal bands of the screen. `App` needs the body to work out
@@ -119,7 +120,7 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
     let room = area
         .width
         .saturating_sub(width_of(&tabs) + width_of(&offer) + width_of(&status));
-    let wanted = u16::try_from(app.message.chars().count()).unwrap_or(u16::MAX);
+    let wanted = width_of(&Line::from(app.message.as_str()));
     let message = Line::from(Span::styled(
         to_width(&app.message, room.min(wanted)),
         Style::default().fg(WARN),
@@ -139,22 +140,20 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
 
 /// Names the key, because the hint rows are full and cannot.
 fn update_offer(app: &App) -> Line<'static> {
-    match &app.update_offer {
-        Some(version) => Line::from(Span::styled(
+    match &app.update {
+        UpdateCheck::Available(version) => Line::from(Span::styled(
             format!(" ↑{version} u "),
             Style::default().fg(WARN).add_modifier(Modifier::BOLD),
         )),
-        None => Line::default(),
+        UpdateCheck::Pending | UpdateCheck::Failed | UpdateCheck::Current => Line::default(),
     }
 }
 
-/// Whether the daemon answered its status socket. Before the first poll the
-/// answer is unknown, and saying "absent" then would be a lie for a second.
 fn daemon_status(app: &App) -> Line<'static> {
-    let colour = match (app.player_polled, app.player.is_some()) {
-        (false, _) => DIM,
-        (true, true) => OK,
-        (true, false) => BAD,
+    let colour = match app.daemon {
+        Daemon::Unknown => DIM,
+        Daemon::Absent => BAD,
+        Daemon::Connected(_) => OK,
     };
     Line::from(vec![
         // The leading space is the gutter that keeps a full-width message off
@@ -168,13 +167,11 @@ fn render_now_playing(app: &App, frame: &mut Frame, area: Rect) {
     let [status, track] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
     let Some(now_playing) = app.now_playing() else {
-        let message = match (app.player_polled, app.player.is_some()) {
-            (false, _) => " checking for jellysink…",
-            (true, true) => " nothing playing",
-            (true, false) => " jellysink not connected",
-        };
         frame.render_widget(
-            Paragraph::new(Span::styled(message, Style::default().fg(DIM))),
+            Paragraph::new(Span::styled(
+                format!(" {}", idle_text(&app.daemon)),
+                Style::default().fg(DIM),
+            )),
             status,
         );
         return;
@@ -242,38 +239,44 @@ fn render_now_playing(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(elapsed), elapsed_area);
 }
 
+/// What stands in for the playing item when there is none.
+fn idle_text(daemon: &Daemon) -> &'static str {
+    match daemon {
+        Daemon::Unknown => "checking for jellysink…",
+        Daemon::Absent => "jellysink not connected",
+        Daemon::Connected(_) => "nothing playing",
+    }
+}
+
 fn width_of(line: &Line) -> u16 {
     u16::try_from(line.width()).unwrap_or(u16::MAX)
 }
 
 fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
     // `q` is a character in the search box, so the quit key differs there.
-    let keys = match app.screen {
+    let keys: Cow<str> = match app.screen {
         // A shelf is one row, so up and down move between the two of them.
-        Screen::Home => "←/→ move · ↑/↓ shelf · Enter play · t watched · r reload · q quit",
-        Screen::Playing => "↑/↓ episode · Enter play · Esc back · t watched · r reload · q quit",
-        Screen::Search => "type to search · ↑/↓ move · Enter play · Esc leave search · ^C quit",
-        Screen::Logs => {
-            let following = if app.log_window(area.height).1 {
+        Screen::Home => "←/→ move · ↑/↓ shelf · Enter play · t watched · r reload · q quit".into(),
+        Screen::Playing => {
+            "↑/↓ episode · Enter play · Esc back · t watched · r reload · q quit".into()
+        }
+        Screen::Search => {
+            "type to search · ↑/↓ move · Enter play · Esc leave search · ^C quit".into()
+        }
+        Screen::Logs => format!(
+            "↑/↓ scroll · g/G top/bottom · c clear · L/Esc back · q quit · {}",
+            if app.logs_following() {
                 "following"
             } else {
                 "paused"
-            };
-            return frame.render_widget(
-                Paragraph::new(Span::styled(
-                    format!(
-                        "↑/↓ scroll · g/G top/bottom · c clear · L/Esc back · q quit · {following}"
-                    ),
-                    Style::default().fg(DIM),
-                )),
-                area,
-            );
-        }
+            }
+        )
+        .into(),
         // In a grid every arrow moves, so back and open need naming.
         _ if app.grid_metrics().is_some() => {
-            "↑/↓/←/→ move · Enter open · Esc back · t watched · r reload · q quit"
+            "↑/↓/←/→ move · Enter open · Esc back · t watched · r reload · q quit".into()
         }
-        _ => "↑/↓ move · Enter play · Esc back · t watched · r reload · q quit",
+        _ => "↑/↓ move · Enter play · Esc back · t watched · r reload · q quit".into(),
     };
     frame.render_widget(
         Paragraph::new(Span::styled(keys, Style::default().fg(DIM))),
@@ -281,16 +284,27 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
     );
 }
 
-/// Exactly `width` columns of text: elided if it overruns, padded if it falls
-/// short, for the places that draw into a box of a fixed width.
+/// Exactly `width` columns of text, measured in display width: elided if it
+/// overruns, padded if it falls short.
 pub(super) fn to_width(text: &str, width: u16) -> String {
     let width = usize::from(width);
-    let mut fitted: String = text.chars().take(width).collect();
-    if fitted.chars().count() < text.chars().count() {
-        fitted.pop();
+    let columns = |text: &str| Span::raw(text).width();
+    let mut fitted = String::new();
+    if columns(text) <= width {
+        fitted.push_str(text);
+    } else if width > 0 {
+        let mut used = 0;
+        for grapheme in Span::raw(text).styled_graphemes(Style::default()) {
+            // One column is kept back for the ellipsis.
+            used += columns(grapheme.symbol);
+            if used >= width {
+                break;
+            }
+            fitted.push_str(grapheme.symbol);
+        }
         fitted.push('…');
     }
-    let short = width.saturating_sub(Line::from(fitted.as_str()).width());
+    let short = width.saturating_sub(columns(&fitted));
     fitted.push_str(&" ".repeat(short));
     fitted
 }

@@ -8,7 +8,9 @@ pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
         return Err(usage_err("server URL is empty"));
     }
 
-    if !trimmed.contains("://") {
+    let with_scheme = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
         let first = trimmed.split('/').next().unwrap_or_default();
         if matches!(
             first.to_ascii_lowercase().as_str(),
@@ -18,15 +20,10 @@ pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
                 "scheme is missing '//' — expected e.g. 'http://host:8096'",
             ));
         }
-    }
-
-    let with_scheme = if trimmed.contains("://") {
-        trimmed.to_string()
-    } else {
         format!("http://{trimmed}")
     };
 
-    let url = reqwest::Url::parse(&with_scheme)
+    let mut url = reqwest::Url::parse(&with_scheme)
         .wrap_err_with(|| format!("invalid server URL {input:?}"))?;
 
     if !matches!(url.scheme(), "http" | "https") {
@@ -36,28 +33,12 @@ pub fn normalize_server_url(input: &str) -> color_eyre::Result<String> {
         )));
     }
 
-    let host = url
-        .host_str()
-        .ok_or_else(|| usage_err("server URL has no host"))?;
-    let host = if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]")
-    } else {
-        host.to_string()
-    };
-
-    let port_part = match url.port() {
-        Some(p) => format!(":{p}"),
-        None => String::new(),
-    };
-
-    let path = url.path().trim_end_matches('/');
-    let path = if path.is_empty() || path == "/" {
-        String::new()
-    } else {
-        path.to_string()
-    };
-
-    Ok(format!("{}://{}{}{}", url.scheme(), host, port_part, path))
+    url.set_username("")
+        .and_then(|()| url.set_password(None))
+        .map_err(|()| usage_err("server URL has no host"))?;
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.as_str().trim_end_matches('/').to_string())
 }
 
 pub fn device_name() -> String {

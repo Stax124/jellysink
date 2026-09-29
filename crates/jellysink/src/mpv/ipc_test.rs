@@ -16,26 +16,25 @@ fn parse_reply_and_event() {
         r,
         IpcMessage::Reply {
             request_id: 1,
-            error: "success".into(),
-            data: json!(12.5),
+            result: Ok(json!(12.5)),
         }
     );
     let e = parse_ipc_line(r#"{"event":"end-file","reason":"eof"}"#).unwrap();
     assert_eq!(
         e,
-        IpcMessage::Event {
-            name: "end-file".into(),
-            reason: Some("eof".into()),
-        }
+        IpcMessage::Event(Some(MpvEvent::EndFile {
+            reason: crate::mpv::EndFileReason::Eof
+        }))
     );
 }
 
 #[test]
-fn a_property_change_parses_to_the_property_name() {
+fn a_failed_command_carries_mpvs_error_string() {
     assert_eq!(
-        parse_ipc_line(r#"{"event":"property-change","id":1,"name":"sid","data":3}"#).unwrap(),
-        IpcMessage::PropertyChange {
-            property: "sid".into()
+        parse_ipc_line(r#"{"error":"property unavailable","data":null,"request_id":4}"#).unwrap(),
+        IpcMessage::Reply {
+            request_id: 4,
+            result: Err("property unavailable".into()),
         }
     );
 }

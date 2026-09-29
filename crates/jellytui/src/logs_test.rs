@@ -1,29 +1,12 @@
 use super::*;
 
-/// Scoped to this call rather than `install`'s global subscriber, so each test
-/// has a buffer of its own.
-fn capture(f: impl FnOnce()) -> LogBuffer {
-    let buffer = LogBuffer::new();
-    let subscriber = tracing_subscriber::registry().with(Capture {
-        buffer: buffer.clone(),
-        started: Instant::now(),
-    });
-    tracing::subscriber::with_default(subscriber, f);
-    buffer
-}
-
-fn lines(buffer: &LogBuffer) -> Vec<LogLine> {
-    let (_, len) = buffer.extent();
-    buffer.window(0, len)
-}
-
 #[test]
 fn records_level_target_and_fields() {
     let buffer = capture(|| {
         tracing::info!(item = "The Bear", elapsed_ms = 12, "played");
     });
 
-    let lines = lines(&buffer);
+    let lines = buffer.lines();
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].level, Level::INFO);
     assert_eq!(lines[0].target, "jellytui::logs::tests");

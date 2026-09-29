@@ -62,6 +62,11 @@ impl LogBuffer {
         });
     }
 
+    #[cfg(test)]
+    pub(crate) fn lines(&self) -> Vec<LogLine> {
+        self.window(0, self.extent().1)
+    }
+
     pub(crate) fn clear(&self) {
         let mut ring = self.lock();
         ring.first_seq += u64::try_from(ring.lines.len()).unwrap_or(u64::MAX);
@@ -87,7 +92,7 @@ impl LogBuffer {
 }
 
 /// A `Layer` on the registry rather than a bespoke `Subscriber`: the registry
-/// stores span data, so `#[instrument]` keeps working. Costs 557 KB (+10.6%).
+/// stores span data, so `#[instrument]` keeps working.
 struct Capture {
     buffer: LogBuffer,
     started: Instant,
@@ -137,16 +142,25 @@ impl Visit for Message {
 pub(crate) fn install() -> LogBuffer {
     let buffer = LogBuffer::new();
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
+        .with(jellysink_core::logging::log_filter())
         .with(Capture {
             buffer: buffer.clone(),
             started: Instant::now(),
         })
         .init();
+    buffer
+}
+
+/// What `f` logs, scoped to the call rather than to `install`'s global
+/// subscriber, so each test has a buffer of its own.
+#[cfg(test)]
+pub(crate) fn capture(f: impl FnOnce()) -> LogBuffer {
+    let buffer = LogBuffer::new();
+    let subscriber = tracing_subscriber::registry().with(Capture {
+        buffer: buffer.clone(),
+        started: Instant::now(),
+    });
+    tracing::subscriber::with_default(subscriber, f);
     buffer
 }
 

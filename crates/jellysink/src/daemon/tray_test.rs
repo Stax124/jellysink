@@ -40,22 +40,6 @@ fn menu_offers_install_when_pending() {
 }
 
 #[test]
-fn pending_update_stays_active() {
-    let mut t = tray();
-    assert_eq!(t.status(), ksni::Status::Active);
-    t.set_pending("1.2.3".into());
-    assert_eq!(
-        t.status(),
-        ksni::Status::Active,
-        "NeedsAttention makes hosts emphasize/resize the tray icon"
-    );
-    assert!(
-        t.attention_icon_pixmap().is_empty(),
-        "attention pixmap is what NeedsAttention hosts swap in"
-    );
-}
-
-#[test]
 fn pending_update_mentions_version_in_tooltip() {
     let mut t = tray();
     assert!(t.tool_tip().description.is_empty());

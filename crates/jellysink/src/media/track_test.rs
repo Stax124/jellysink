@@ -140,3 +140,78 @@ fn the_lowest_index_wins_between_two_indistinguishable_tracks() {
     let candidates = vec![track(5, "eng", "Dialogue"), track(4, "eng", "Dialogue")];
     assert_eq!(best_match(&wanted, &candidates).map(|c| c.index), Some(4));
 }
+
+fn resolve(
+    requested: Option<i64>,
+    preference: Option<&TrackPreference>,
+    candidates: &[TrackId],
+    server_default: Option<i64>,
+) -> Option<i64> {
+    resolve_track_index(
+        TrackKind::Subtitle,
+        requested,
+        preference,
+        candidates,
+        server_default,
+    )
+}
+
+#[test]
+fn a_remembered_track_beats_the_server_default_when_the_next_episode_renumbers_it() {
+    let wanted = TrackPreference::Stream(track(3, "eng", "Dialogue"));
+    // The server insists on Signs and Songs, now at the index Dialogue had.
+    let next = signs_and_dialogue(3, 2);
+    assert_eq!(resolve(None, Some(&wanted), &next, Some(3)), Some(2));
+}
+
+/// A commentary track and the feature audio share a language, so the track
+/// name is the only thing telling them apart.
+#[test]
+fn a_commentary_track_is_not_confused_with_the_feature_audio() {
+    let wanted = TrackPreference::Stream(track(1, "eng", "Commentary"));
+    let candidates = vec![
+        track(3, "eng", "Surround 5.1"),
+        track(4, "eng", "Commentary"),
+    ];
+    assert_eq!(resolve(None, Some(&wanted), &candidates, Some(3)), Some(4));
+}
+
+#[test]
+fn a_language_the_next_episode_does_not_have_falls_back_to_the_server_default() {
+    let wanted = TrackPreference::Stream(track(2, "ces", "Dialogue"));
+    let candidates = vec![track(1, "jpn", "Signs"), track(2, "spa", "Completos")];
+    assert_eq!(resolve(None, Some(&wanted), &candidates, Some(1)), Some(1));
+}
+
+#[test]
+fn an_explicit_index_from_the_remote_beats_the_remembered_track() {
+    let wanted = TrackPreference::Stream(track(3, "eng", "Dialogue"));
+    let candidates = signs_and_dialogue(2, 3);
+    assert_eq!(
+        resolve(Some(2), Some(&wanted), &candidates, Some(3)),
+        Some(2),
+        "the remote just said what it wants for this item"
+    );
+}
+
+#[test]
+fn off_is_remembered_and_forces_minus_one_over_a_server_default() {
+    let candidates = signs_and_dialogue(2, 3);
+    assert_eq!(
+        resolve(None, Some(&TrackPreference::Off), &candidates, Some(2)),
+        Some(-1)
+    );
+    assert_eq!(
+        resolve(None, Some(&TrackPreference::Off), &[], None),
+        Some(-1),
+        "the next episode has no streams of this kind at all"
+    );
+}
+
+#[test]
+fn no_preference_leaves_the_server_default_untouched() {
+    let candidates = signs_and_dialogue(2, 3);
+    assert_eq!(resolve(None, None, &candidates, Some(2)), Some(2));
+    assert_eq!(resolve(None, None, &candidates, None), None);
+    assert_eq!(resolve(None, None, &candidates, Some(-1)), Some(-1));
+}

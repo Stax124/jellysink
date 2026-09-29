@@ -71,7 +71,8 @@ does any HTTP.
 ### 3. Series expansion (`runtime/queue/expand.rs`)
 
 `maybe_expand_series` fetches the **whole series** in one request and splits it
-at the current item with `split_episode_ids`, which returns `(previous, remaining)`:
+at the current item with `split_episode_ids`, which returns `(previous, remaining)`,
+or `None` when the current item is not listed:
 
 ```
 GET /Shows/{seriesId}/Episodes?userId=…&Limit=500
@@ -83,13 +84,15 @@ current one. `AdjacentTo` is `FilterForAdjacency`, which narrows the listing to
 the item's season and so gives nothing from earlier seasons. Omitting
 `StartItemId` is the only way to see backwards.
 
-**The two directions have separate gates**, and merging them is the mistake to
-avoid — a shared gate means the prepend never runs in the common case:
+Only an `Episode` with a `SeriesId` expands at all. Past that, **the two
+directions have separate gates** (`expansion_directions`), and merging them is
+the mistake to avoid — a shared gate means the prepend never runs in the common
+case:
 
-| Direction      | Gate                                                | Why                                                                |
-| -------------- | --------------------------------------------------- | ------------------------------------------------------------------ |
-| Forward append | `series_expand_skip_reason` — skips when `has_next` | Jellyfin already sent 6..20; appending again would duplicate 7..20. |
-| Prepend        | `prepend_skip_reason` — **ignores** `has_next`      | Jellyfin sending 6..20 is exactly when we also want 1..5.           |
+| Direction      | Gate                                         | Why                                                                |
+| -------------- | -------------------------------------------- | ------------------------------------------------------------------ |
+| Forward append | `autoplay` and not `has_next`                | Jellyfin already sent 6..20; appending again would duplicate 7..20. |
+| Prepend        | `prepend_previous` — **ignores** `has_next`  | Jellyfin sending 6..20 is exactly when we also want 1..5.           |
 
 They also differ on `autoplay`: it governs continuing *forward*, not what the
 playlist selector can reach.
@@ -123,9 +126,9 @@ No per-item HTTP. Each direction is one M3U written next to the IPC socket:
 
 - Forward: `queue.items[origin + head + 1 + tail ..]`, `loadlist append`.
 - Prepend: `take_pending_prepend`, `loadlist insert-at 0`.
-- PlayNext: the spliced ids, `loadlist insert-at expected_pos + 1`
-  (`insert_next_into_mpv`), run immediately — unlike the prepend there is no
-  later `loadfile … replace` to wait out.
+- PlayNext: the spliced ids, `loadlist insert-at expected_pos + 1`, run
+  immediately — unlike the prepend there is no later `loadfile … replace` to
+  wait out.
 
 Each entry is a display title plus a DirectPlay stub whose `MediaSourceId` is
 the item id. That is enough for a normal episode; a stacked version is resolved
@@ -136,7 +139,12 @@ selector and the user's `watch_later` files.
 
 `ApiKey=` appears on a row URL only when mpv is *not* carrying the
 `Authorization` header (`Runtime::mpv_auth_header_set`, set by `apply_auth`).
-The header is a global mpv property, so it covers rows loaded later too.
+The header is a global mpv property, so it covers rows loaded later too — and
+that is also why it is used only when the queue has no next item. mpv sends it
+to every host, subtitle hosts included, and a row mpv autoplays never passes
+through `apply_auth`'s foreign-subtitle-host check; with a next item queued, the
+token rides the stream and row URLs instead. The cost is `ApiKey=` in those rows,
+and so in `watch_later`.
 
 ## Handing entries to mpv
 
@@ -175,8 +183,8 @@ file. That is what makes prepending viable at all.
 the load needs the prepared URL), but `loadfile … replace` wipes the playlist,
 so the prepend cannot run before the current file is loaded. Hence the split:
 
-- `prepend_previous_episodes` → `PlaylistWindow::prepend` — queue bookkeeping
-  only, during expansion.
+- `prepend_missing` → `PlaylistWindow::prepend` — queue bookkeeping only,
+  during expansion.
 - `fill_previous_into_mpv` — the mpv insertion, after the load, draining
   `PlaylistWindow::take_pending_prepend`.
 
@@ -210,9 +218,11 @@ on top of that skips to N+2.
 
 `adopt_playlist_pos` runs on `FileLoaded` and maps mpv's `playlist-pos` back to
 a queue index via `queue_index_at`. If it differs from the current item, the
-runtime sends Stopped, adopts the new index, re-prepares if needed, and sends
+runtime prepares the new item, sends Stopped, adopts the new index, and sends
 Start. **This is why the playlist selector works for free** — no dedicated jump
-handling exists.
+handling exists. Preparing comes first and a failure stops playback: nothing
+could describe what mpv is now playing, and keeping the old item would apply its
+stream maps to the new file.
 
 `CastEvent::Previous` uses `playlist-prev` when `playlist-pos > 0` and only
 falls back to `queue.previous()` plus a restart at position 0. With prepending
@@ -223,9 +233,7 @@ rather than dead-ending at the queue start.
 
 `NowPlayingQueue` (`report.rs`) sends the **entire** `queue.items` with
 `PlaylistItemId: playlistItem{i}`, so with prepending the now-playing view
-shows 1..20 rather than 6..20. The payload is an `Arc` shared from
-`PlaylistWindow`, not rebuilt per report — a progress report goes out once a
-second and carries the whole queue.
+shows 1..20 rather than 6..20.
 
 ## Configuration
 
@@ -237,8 +245,12 @@ second and carries the whole queue.
 ## Known limits
 
 - **Long series.** `episodes_all` caps at 500. Past that the current item is not
-  in the listing, `split_episode_ids` returns empty on both sides, and expansion
-  fails closed. Paging is not implemented.
+  in the listing, `split_episode_ids` returns `None`, and expansion fails
+  closed. Paging is not implemented.
+- **The header can still reach a foreign subtitle host.** The has-next check
+  runs once, at load: rows prepended ahead of a last episode, and rows a later
+  PlayNext/PlayLast adds, can be autoplayed under a header set for an item with
+  no next.
 - **Stub `MediaSourceId`.** Playlist rows use the item id; multi-version items
   are corrected when that row actually starts.
 - **Specials.** An item absent from the listing (specials, library churn,
@@ -253,6 +265,8 @@ Checked live against mpv 0.41.0 and the Jellyfin server source:
 - It works with plain HTTP URLs and without `--load-unsafe-playlists`, which
   jellysink does not pass.
 - `loadfile … replace` reduces a 3-entry playlist to 1.
+- `http-header-fields` set before a `loadlist` is sent when mpv advances into
+  one of its entries, and to a `sub-add` host.
 - `StartItemId` is `SkipWhile` (forward-only); `AdjacentTo` is
   `FilterForAdjacency` (season-scoped).
 

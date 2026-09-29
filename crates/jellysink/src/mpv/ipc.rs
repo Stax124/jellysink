@@ -1,22 +1,18 @@
 //! The JSON-per-line protocol on mpv's IPC socket: what a message looks like
 //! on the way out, and how an answer coerces on the way back.
 
+use super::event::MpvEvent;
 use color_eyre::eyre::{WrapErr, eyre};
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum IpcMessage {
+    /// `Err` carries mpv's own `error` string.
     Reply {
         request_id: i64,
-        error: String,
-        data: Value,
+        result: Result<Value, String>,
     },
-    Event {
-        name: String,
-        reason: Option<String>,
-    },
-    /// The new value is dropped — see [`super::event::MpvEvent::SubtitleTrackChanged`].
-    PropertyChange { property: String },
+    Event(Option<MpvEvent>),
 }
 
 pub(crate) fn encode_command(request_id: i64, args: &[Value]) -> String {
@@ -30,36 +26,17 @@ pub(crate) fn encode_command(request_id: i64, args: &[Value]) -> String {
 pub(crate) fn parse_ipc_line(line: &str) -> color_eyre::Result<IpcMessage> {
     let v: Value = serde_json::from_str(line.trim()).wrap_err("mpv IPC JSON")?;
     if let Some(name) = v.get("event").and_then(Value::as_str) {
-        if name == "property-change" {
-            return Ok(IpcMessage::PropertyChange {
-                property: v
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            });
-        }
-        let reason = v.get("reason").and_then(Value::as_str).map(str::to_string);
-        return Ok(IpcMessage::Event {
-            name: name.to_string(),
-            reason,
-        });
+        return Ok(IpcMessage::Event(MpvEvent::parse(name, &v)));
     }
     let request_id = v
         .get("request_id")
         .and_then(Value::as_i64)
         .ok_or_else(|| eyre!("IPC reply missing request_id"))?;
-    let error = v
-        .get("error")
-        .and_then(Value::as_str)
-        .unwrap_or("success")
-        .to_string();
-    let data = v.get("data").cloned().unwrap_or(Value::Null);
-    Ok(IpcMessage::Reply {
-        request_id,
-        error,
-        data,
-    })
+    let result = match v.get("error").and_then(Value::as_str).unwrap_or("success") {
+        "success" => Ok(v.get("data").cloned().unwrap_or(Value::Null)),
+        error => Err(error.to_string()),
+    };
+    Ok(IpcMessage::Reply { request_id, result })
 }
 
 /// Coerce an mpv property answer, or say what we actually got. No plausible

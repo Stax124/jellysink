@@ -1,26 +1,45 @@
 use super::*;
+use crate::cli::BIN_NAME;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheck {
+    Pending,
+    Failed,
+    Current,
+    Available(String),
+}
 
 impl App {
     pub(super) fn check_for_update(&self) {
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            match jellysink_core::update::check(env!("CARGO_BIN_NAME")).await {
+        self.spawn_msg(async move {
+            let update = match jellysink_core::update::check(BIN_NAME).await {
                 Ok(Some(version)) => {
                     tracing::info!(%version, "update available");
-                    let _ = tx.send(Msg::UpdateAvailable(version));
+                    UpdateCheck::Available(version)
                 }
-                Ok(None) => tracing::debug!("already up to date"),
-                Err(e) => tracing::warn!("update check failed: {e:#}"),
-            }
+                Ok(None) => {
+                    tracing::debug!("already up to date");
+                    UpdateCheck::Current
+                }
+                Err(e) => {
+                    tracing::warn!("update check failed: {e:#}");
+                    UpdateCheck::Failed
+                }
+            };
+            Some(Msg::UpdateChecked(update))
         });
     }
 
     pub(super) fn start_update(&mut self) {
-        if self.update_offer.is_some() {
-            self.quit = Some(Exit::Update);
-        } else {
-            self.message = format!("jellytui {VERSION} is up to date");
-        }
+        self.message = match &self.update {
+            UpdateCheck::Available(_) => {
+                self.quit = Some(Exit::Update);
+                return;
+            }
+            UpdateCheck::Current => format!("jellytui {VERSION} is up to date"),
+            UpdateCheck::Pending => "still checking for an update".to_string(),
+            UpdateCheck::Failed => "the update check failed — see L".to_string(),
+        };
     }
 }
 

@@ -1,20 +1,7 @@
 use super::*;
 
 #[test]
-fn ensure_makes_the_config_dir_private() {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = Paths::from_override(Some(dir.path().join("jellysink"))).unwrap();
-    paths.ensure().unwrap();
-    let mode = fs::metadata(&paths.config_dir)
-        .unwrap()
-        .permissions()
-        .mode()
-        & 0o777;
-    assert_eq!(mode, 0o700, "mpv.sock lives here and leaks the token");
-}
-
-#[test]
-fn ensure_tightens_a_directory_left_world_readable_by_an_older_version() {
+fn ensure_makes_a_world_readable_config_dir_private() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::from_override(Some(dir.path().join("jellysink"))).unwrap();
     fs::create_dir_all(&paths.config_dir).unwrap();
@@ -25,7 +12,7 @@ fn ensure_tightens_a_directory_left_world_readable_by_an_older_version() {
         .permissions()
         .mode()
         & 0o777;
-    assert_eq!(mode, 0o700);
+    assert_eq!(mode, 0o700, "mpv.sock lives here and leaks the token");
 }
 
 #[test]
