@@ -33,3 +33,7 @@ ffmpeg -v error -y \
 
 # The external subtitle `sub_add` loads; a third sid on top of the two above.
 printf '1\n00:00:00,000 --> 00:00:03,000\nexternal subtitle\n\n' >external.srt
+
+# The series poster `testserver/start.sh` puts beside the fake library.
+ffmpeg -v error -y -f lavfi -i "testsrc=size=200x300:rate=1" -frames:v 1 -q:v 10 \
+    ../../../../testserver/poster.jpg

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<tvshow>
+  <title>That Time I Got Reincarnated as a Slime</title>
+  <year>2018</year>
+  <premiered>2018-10-02</premiered>
+  <mpaa>TV-14</mpaa>
+  <status>Ended</status>
+  <plot>Satoru Mikami dies at the hands of a robber and awakens in a fantasy realm as a slime monster.</plot>
+  <genre>Action</genre>
+  <genre>Adventure</genre>
+  <genre>Anime</genre>
+  <genre>Comedy</genre>
+  <genre>Fantasy</genre>
+  <uniqueid type="anilist">101280</uniqueid>
+  <uniqueid type="tmdb">82684</uniqueid>
+  <uniqueid type="tvdb" default="true">352408</uniqueid>
+  <uniqueid type="imdb">tt9054364</uniqueid>
+</tvshow>

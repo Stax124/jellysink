@@ -2,7 +2,7 @@ use super::tests::playing_status;
 use super::*;
 
 const NO_BUS: &str = "no D-Bus session bus reachable: set DBUS_SESSION_BUS_ADDRESS, \
-or run the suite under `dbus-run-session -- cargo test`";
+or run the suite under `dbus-run-session -- cargo nextest run`";
 
 /// A private, per-process well-known name: claiming the real `BUS_NAME` bumps a
 /// running jellysink off MPRIS, and this test bypasses `InstanceLock`.
