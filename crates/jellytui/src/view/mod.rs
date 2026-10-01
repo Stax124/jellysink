@@ -6,6 +6,7 @@ pub(super) mod grid;
 mod logs;
 pub(super) mod playing;
 pub(super) mod rail;
+pub(super) mod synopsis;
 
 use crate::app::{App, Daemon, Screen, UpdateCheck};
 use body::{render_browse, render_home, render_search};

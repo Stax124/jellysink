@@ -3,8 +3,8 @@
 
 use super::{ACCENT, DIM, SELECTED, panel};
 use crate::app::{App, HomePane};
-use crate::nav::Rows;
-use crate::view::{grid, rail};
+use crate::nav::{self, Mode, Rows};
+use crate::view::{grid, rail, synopsis};
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -50,6 +50,13 @@ pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
         trail
     };
     if let Some(metrics) = app.grid_metrics() {
+        let (area, band) = match nav::mode(&level.rows.items) {
+            Mode::Episodes => {
+                let [grid, band] = synopsis::split(area);
+                (grid, Some(band))
+            }
+            Mode::Grid | Mode::List => (area, None),
+        };
         grid::render(
             frame,
             area,
@@ -61,6 +68,9 @@ pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
             },
             &app.covers,
         );
+        if let (Some(band), Some(item)) = (band, level.rows.selected_item()) {
+            synopsis::render(frame, band, item);
+        }
         return;
     }
     let area = rail::beside(frame, area, level.rows.selected_item(), &app.covers);
@@ -108,11 +118,8 @@ pub(super) fn row(item: &Item) -> ListItem<'static> {
         Span::raw(if item.played() { "✓ " } else { "  " }),
         Span::raw(item.label()),
     ];
-    if let Some(fraction) = item.watched_fraction().filter(|_| !item.played()) {
-        spans.push(Span::styled(
-            format!("  {}%", (fraction * 100.0).round() as u32),
-            Style::default().fg(ACCENT),
-        ));
+    if let Some(percent) = watched_percent(item) {
+        spans.push(Span::styled(percent, Style::default().fg(ACCENT)));
     }
     if let Some(sublabel) = item.sublabel() {
         spans.push(Span::styled(
@@ -121,4 +128,10 @@ pub(super) fn row(item: &Item) -> ListItem<'static> {
         ));
     }
     ListItem::new(Line::from(spans))
+}
+
+/// A finished item is ticked rather than given a percentage.
+fn watched_percent(item: &Item) -> Option<String> {
+    let fraction = item.watched_fraction().filter(|_| !item.played())?;
+    Some(format!("  {}%", (fraction * 100.0).round() as u32))
 }

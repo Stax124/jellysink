@@ -81,15 +81,24 @@ pub(super) enum End {
     Bottom,
 }
 
-/// Whether a level's rows carry artwork worth a grid. Only the first row is
-/// asked, so kinds that share a screen must answer alike.
-pub(super) fn is_grid(items: &[Item]) -> bool {
-    items.first().is_some_and(|item| {
-        matches!(
-            item.kind(),
-            "Series" | "Season" | "Movie" | "BoxSet" | "CollectionFolder" | "UserView"
-        )
-    })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    List,
+    Grid,
+    /// A grid over the selected episode's synopsis.
+    Episodes,
+}
+
+/// Which view a level's rows get. Only the first row is asked, so kinds that
+/// share a screen must answer alike.
+pub(super) fn mode(items: &[Item]) -> Mode {
+    match items.first().map(Item::kind) {
+        Some("Series" | "Season" | "Movie" | "BoxSet" | "CollectionFolder" | "UserView") => {
+            Mode::Grid
+        }
+        Some("Episode") => Mode::Episodes,
+        _ => Mode::List,
+    }
 }
 
 /// The level Enter on `item` should push, if it is not something to play.

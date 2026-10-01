@@ -163,15 +163,23 @@ fn a_wide_title_is_cut_by_the_columns_it_takes_not_by_its_characters() {
     assert_eq!(to_width("スライム", 8), "スライム");
 }
 
+/// Episodes get a grid; this kind still gets the list and the rail.
+fn video() -> Item {
+    Item {
+        kind: Some("Video".into()),
+        ..episode()
+    }
+}
+
 #[test]
 fn the_rail_describes_the_row_under_the_cursor() {
     let mut app = app();
-    let mut level = Level::loading("Season 2", Source::Libraries);
-    let mut second = episode();
+    let mut level = Level::loading("Clips", Source::Libraries);
+    let mut second = video();
     second.id = "e2".into();
     second.name = Some("Rimuru's Rout".into());
     second.overview = Some("The federation musters at the western gate.".into());
-    let mut first = episode();
+    let mut first = video();
     first.overview = Some("Nothing about this episode is on screen.".into());
     level.rows.fill(vec![first, second]);
     level.rows.selected = 1;
@@ -183,6 +191,41 @@ fn the_rail_describes_the_row_under_the_cursor() {
     assert!(screen.contains("Rimuru's Rout"), "{screen}");
     assert!(screen.contains("federation musters"), "{screen}");
     assert!(!screen.contains("Nothing about this"), "{screen}");
+}
+
+#[test]
+fn an_episode_level_is_a_grid_and_the_band_shows_only_the_selected_synopsis() {
+    let episodes = (0..8)
+        .map(|index| Item {
+            id: format!("e{index}"),
+            name: Some(format!("Episode {index}")),
+            overview: Some(format!("Synopsis number {index}.")),
+            ..episode()
+        })
+        .collect();
+    let mut app = app();
+    let mut level = Level::loading("Season 2", Source::Libraries);
+    level.rows.fill(episodes);
+    level.rows.selected = 5;
+    app.stack.push(level);
+    app.screen = Screen::Browse;
+
+    // Big enough that a grid sized from the whole body would fill it.
+    app.viewport = Size::new(250, 40);
+    let screen = crate::test_support::drawn(250, 40, |frame| render(&app, frame));
+    assert!(!screen.contains("Details"), "a grid has no rail\n{screen}");
+    assert!(screen.contains("Synopsis number 5."), "{screen}");
+    assert!(!screen.contains("Synopsis number 4."), "{screen}");
+    let row_of = |band: bool| {
+        screen
+            .lines()
+            .position(|line| line.contains("Episode 5") && line.contains('╭') == band)
+    };
+    let caption = row_of(false).expect("the band covers the selected tile's caption");
+    assert!(
+        caption < row_of(true).expect("the band is titled"),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -219,20 +262,19 @@ fn watched(mut item: Item, played: bool, position_ticks: i64) -> Item {
     item.user_data = Some(jellysink_core::jellyfin::model::UserData {
         played,
         playback_position_ticks: position_ticks,
-        played_percentage: None,
-        unplayed_item_count: None,
+        ..Default::default()
     });
     item
 }
 
 #[test]
 fn a_watched_row_is_ticked_and_a_partly_watched_one_shows_its_percentage() {
-    // Episode levels are lists, which have the width for a percentage.
+    // A list has the width for a percentage.
     let mut app = app();
-    let mut level = Level::loading("Season 2", Source::Libraries);
+    let mut level = Level::loading("Clips", Source::Libraries);
     level.rows.fill(vec![
-        watched(episode(), true, 0),
-        watched(episode(), false, 9_167_070_000),
+        watched(video(), true, 0),
+        watched(video(), false, 9_167_070_000),
     ]);
     app.stack.push(level);
     app.screen = Screen::Browse;

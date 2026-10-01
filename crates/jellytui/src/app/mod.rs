@@ -14,7 +14,7 @@ pub(crate) use update::UpdateCheck;
 use crate::cover::{self, CoverDisk, CoverKey, Covers};
 use crate::keys::{self, Intent};
 use crate::logs::{LogBuffer, LogLine};
-use crate::nav::{self, End, Level, Rows, Source};
+use crate::nav::{self, End, Level, Mode, Rows, Source};
 use crate::view::{grid, playing, rail};
 
 use crate::view;

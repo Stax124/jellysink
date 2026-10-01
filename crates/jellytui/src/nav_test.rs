@@ -51,11 +51,12 @@ fn a_reload_that_returns_fewer_rows_pulls_the_cursor_back_into_range() {
 }
 
 #[test]
-fn a_level_of_libraries_is_a_grid_and_a_level_of_episodes_is_not() {
-    assert!(is_grid(&[item("CollectionFolder", "lib", None)]));
-    assert!(is_grid(&[item("UserView", "collections", None)]));
-    assert!(!is_grid(&[item("Episode", "e1", Some("s1"))]));
-    assert!(!is_grid(&[]), "nothing to size the tiles from");
+fn a_level_of_libraries_is_a_grid_and_a_level_of_episodes_is_a_grid_over_its_synopsis() {
+    assert_eq!(mode(&[item("CollectionFolder", "lib", None)]), Mode::Grid);
+    assert_eq!(mode(&[item("UserView", "collections", None)]), Mode::Grid);
+    assert_eq!(mode(&[item("Episode", "e1", Some("s1"))]), Mode::Episodes);
+    assert_eq!(mode(&[item("Video", "v1", None)]), Mode::List);
+    assert_eq!(mode(&[]), Mode::List, "nothing to size the tiles from");
 }
 
 #[test]

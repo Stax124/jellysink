@@ -221,9 +221,9 @@ own wording, is the honest confirmation that the command arrived.
 ## Two view modes
 
 A level is a grid of covers or a list with a detail rail, chosen by **item kind,
-not by `Source`** (`nav::is_grid`): `Series`, `Season`, `Movie`, `BoxSet` and a
-library carry artwork and get the grid, everything else stays a list. By kind, a
-folder full of movies gets the grid whichever route reached it, and it is one
+not by `Source`** (`nav::mode`): `Series`, `Season`, `Movie`, `BoxSet`, a library
+and an `Episode` carry artwork and get the grid, everything else stays a list. By
+kind, a folder full of movies gets the grid whichever route reached it, and it is one
 function to test rather than a table kept in step with the browse stack. Only
 the first row is asked, so kinds that share a screen have to answer alike —
 `CollectionFolder` and `UserView` both come back from `/UserViews`, and a
@@ -266,8 +266,7 @@ episodes · 46 left · TV-14`), because a series' own `RunTimeTicks` is the
 nominal length of one episode and reads as a claim about the whole show. The
 year is `ProductionYear`; `Status` and `EndDate` describe season one and are
 worse — Jellyfin reports Slime as `Ended` while its fourth season is dated 2026.
-Genres appear only when the response carried them, which is why the episode
-listings show none.
+Genres appear only when the response carried them.
 
 That is why `ITEM_FIELDS` asks for `RecursiveItemCount` and `seasons()` passes
 it too: a series or a season has `PlaybackPositionTicks` of 0, so its progress
@@ -307,6 +306,18 @@ which is the only place the leftover can go — a wide screen caps the tile by w
 grow into the spare height however it is divided, and centring a block against
 rows that were never going to be drawn is what puts a gap above the only row
 there is.
+
+**Episodes.** A tile has one caption row, and an episode's synopsis is worth
+reading without opening it, so an episode level is the grid over a band holding
+the selected episode's title, a meta line and its synopsis. The meta line drops
+the series and the year, which the block's title already carries, for the
+runtime, the rating, a `♥` and the day it was last watched.
+
+The band is a fixed `synopsis::HEIGHT`, and a synopsis longer than it is
+clipped. `App::grid_metrics` sizes the grid from what `synopsis::split` leaves
+above the band, so the tiles and the cover requests come from the same shorter
+area. A band that grew to each synopsis was rejected: the grid would resize
+under it, and every cursor move would ask for every cover at a new size.
 
 ## Where the artwork comes from
 

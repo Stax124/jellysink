@@ -128,13 +128,17 @@ fn meta(item: &Item) -> String {
         _ => vec![
             item.series_name.clone(),
             year,
-            item.run_time_ticks
-                .filter(|ticks| *ticks > 0)
-                .map(|ticks| format!("{} min", (ticks_to_seconds(ticks) / 60.0).round() as i64)),
+            runtime(item),
             item.official_rating.clone(),
         ],
     };
     parts.into_iter().flatten().collect::<Vec<_>>().join(" · ")
+}
+
+pub(super) fn runtime(item: &Item) -> Option<String> {
+    item.run_time_ticks
+        .filter(|ticks| *ticks > 0)
+        .map(|ticks| format!("{} min", (ticks_to_seconds(ticks) / 60.0).round() as i64))
 }
 
 fn counted(count: i64, noun: &str) -> String {

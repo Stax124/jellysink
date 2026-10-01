@@ -228,9 +228,14 @@ async fn a_message_is_retired_by_the_next_keypress() {
 fn arrows_in_a_list_do_not_double_as_back_and_open() {
     // Esc and Enter are the only way in and out; a list has no second axis for
     // left and right to move along.
+    let row = |id: &str| item(serde_json::json!({"Id": id, "Name": id, "Type": "Video"}));
     let mut app = app();
-    app.stack.push(Level::loading("Movies", Source::Libraries));
-    app.stack.last_mut().unwrap().rows.fill(vec![episode("e1")]);
+    app.stack.push(Level::loading("Clips", Source::Libraries));
+    app.stack
+        .last_mut()
+        .unwrap()
+        .rows
+        .fill(vec![row("a"), row("b")]);
     app.screen = Screen::Browse;
 
     app.apply(Intent::Left);

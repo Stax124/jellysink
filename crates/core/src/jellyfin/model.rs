@@ -46,6 +46,10 @@ pub struct UserData {
     pub playback_position_ticks: i64,
     pub played_percentage: Option<f64>,
     pub unplayed_item_count: Option<i64>,
+    pub is_favorite: bool,
+    /// ISO 8601, as the server sent it. `PlayCount` is not modelled: an episode
+    /// watched once through reports a dozen.
+    pub last_played_date: Option<String>,
 }
 
 impl Item {

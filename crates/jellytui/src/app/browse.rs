@@ -100,15 +100,12 @@ impl App {
             Screen::Home => self.shelf_metrics(self.home_pane),
             Screen::Browse => {
                 let items = &self.stack.last()?.rows.items;
-                if !nav::is_grid(items) {
-                    return None;
-                }
-                grid::metrics_for(
-                    self.body_area(),
-                    items,
-                    self.covers.font_size(),
-                    grid::TARGET_ROWS,
-                )
+                let area = match nav::mode(items) {
+                    Mode::Grid => self.body_area(),
+                    Mode::Episodes => view::synopsis::split(self.body_area())[0],
+                    Mode::List => return None,
+                };
+                grid::metrics_for(area, items, self.covers.font_size(), grid::TARGET_ROWS)
             }
             Screen::Search | Screen::Playing | Screen::Logs => None,
         }
