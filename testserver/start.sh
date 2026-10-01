@@ -3,7 +3,7 @@
 # Specials plus four seasons, 106 episodes, every file a hardlink to the 3 s
 # fixture and every title from an NFO, so the scan never goes online.
 #
-#   testserver/start.sh     # then `cargo test`
+#   testserver/start.sh     # then `cargo nextest run`
 #   testserver/stop.sh
 #
 # CONTAINER=podman swaps the runtime; JELLYSINK_TEST_PORT (default 8096) moves
