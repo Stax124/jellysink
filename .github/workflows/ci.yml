@@ -74,10 +74,15 @@ jobs:
           mpv --version | head -1
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+      - name: Start the Jellyfin test server
+        run: testserver/start.sh
       # `dbus-run-session` gives the MPRIS smoke test a private session bus
       # that is torn down with the step; runners have no user session bus.
       - name: test
         run: dbus-run-session -- cargo test --locked
+      - name: Jellyfin logs
+        if: failure()
+        run: docker logs jellysink-test-jellyfin
 
   # The musl release build itself: on pull requests and pushes a failing binary
   # build is visible before tagging, and the release workflow calls this same job
