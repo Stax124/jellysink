@@ -30,3 +30,13 @@ fn a_timestamp_that_is_not_a_date_is_left_out_rather_than_misread() {
     assert_eq!(calendar_day("2026-13-05T00:00:00Z"), None);
     assert_eq!(calendar_day("yesterday"), None);
 }
+
+#[test]
+fn a_series_band_does_not_pass_off_one_episodes_length_as_the_shows() {
+    let series = item(json!({
+        "Id": "s1", "Name": "That Time I Got Reincarnated as a Slime", "Type": "Series",
+        "IsFolder": true, "RunTimeTicks": 14_220_800_000i64, "CommunityRating": 8.0,
+        "UserData": { "UnplayedItemCount": 46, "IsFavorite": true, "Played": false }
+    }));
+    assert_eq!(meta(&series), "★ 8.0 · ♥");
+}

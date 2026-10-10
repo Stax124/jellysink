@@ -4,6 +4,7 @@
 pub(super) mod body;
 pub(super) mod grid;
 mod logs;
+mod overview;
 pub(super) mod playing;
 pub(super) mod rail;
 pub(super) mod synopsis;

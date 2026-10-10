@@ -51,7 +51,7 @@ pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
     };
     if let Some(metrics) = app.grid_metrics() {
         let (area, band) = match nav::mode(&level.rows.items) {
-            Mode::Episodes => {
+            Mode::Synopsis => {
                 let [grid, band] = synopsis::split(area);
                 (grid, Some(band))
             }

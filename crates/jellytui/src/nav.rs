@@ -84,19 +84,18 @@ pub(super) enum End {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Mode {
     List,
+    /// Tiles alone: a library has no synopsis to show.
     Grid,
-    /// A grid over the selected episode's synopsis.
-    Episodes,
+    /// A grid over the selected item's synopsis.
+    Synopsis,
 }
 
 /// Which view a level's rows get. Only the first row is asked, so kinds that
 /// share a screen must answer alike.
 pub(super) fn mode(items: &[Item]) -> Mode {
     match items.first().map(Item::kind) {
-        Some("Series" | "Season" | "Movie" | "BoxSet" | "CollectionFolder" | "UserView") => {
-            Mode::Grid
-        }
-        Some("Episode") => Mode::Episodes,
+        Some("CollectionFolder" | "UserView") => Mode::Grid,
+        Some("Series" | "Season" | "Movie" | "BoxSet" | "Episode") => Mode::Synopsis,
         _ => Mode::List,
     }
 }

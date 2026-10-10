@@ -102,7 +102,7 @@ impl App {
                 let items = &self.stack.last()?.rows.items;
                 let area = match nav::mode(items) {
                     Mode::Grid => self.body_area(),
-                    Mode::Episodes => view::synopsis::split(self.body_area())[0],
+                    Mode::Synopsis => view::synopsis::split(self.body_area())[0],
                     Mode::List => return None,
                 };
                 grid::metrics_for(area, items, self.covers.font_size(), grid::TARGET_ROWS)

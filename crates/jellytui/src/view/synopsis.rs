@@ -1,7 +1,7 @@
-//! The band under an episode grid: the selected episode's meta line and
-//! synopsis, which a tile's one caption row has no room for.
+//! The band under a grid: the selected item's meta line and synopsis, which a
+//! tile's one caption row has no room for.
 
-use super::{DIM, panel, rail};
+use super::{DIM, overview, panel, rail};
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -27,7 +27,11 @@ pub(super) fn render(frame: &mut Frame, area: Rect, item: &Item) {
         Style::default().add_modifier(Modifier::BOLD),
     );
     let mut lines = vec![Line::styled(meta(item), Style::default().fg(DIM))];
-    lines.extend(item.overview.as_deref().map(Line::raw));
+    lines.extend(
+        item.overview
+            .iter()
+            .flat_map(|text| overview::lines(text, Style::default())),
+    );
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel(title))
@@ -36,12 +40,12 @@ pub(super) fn render(frame: &mut Frame, area: Rect, item: &Item) {
     );
 }
 
-/// Series and year are the same on every episode of a season, so they are left
-/// to the title bar.
+/// No series or year: the title bar carries an episode's, a movie's label its own.
+/// A folder's `RunTimeTicks` is one episode's nominal length.
 fn meta(item: &Item) -> String {
     let user_data = item.user_data.as_ref();
     [
-        rail::runtime(item),
+        rail::runtime(item).filter(|_| !item.is_container()),
         item.community_rating.map(|rating| format!("★ {rating:.1}")),
         user_data
             .is_some_and(|user_data| user_data.is_favorite)

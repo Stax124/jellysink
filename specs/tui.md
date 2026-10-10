@@ -307,17 +307,32 @@ grow into the spare height however it is divided, and centring a block against
 rows that were never going to be drawn is what puts a gap above the only row
 there is.
 
-**Episodes.** A tile has one caption row, and an episode's synopsis is worth
-reading without opening it, so an episode level is the grid over a band holding
-the selected episode's title, a meta line and its synopsis. The meta line drops
-the series and the year, which the block's title already carries, for the
-runtime, the rating, a `♥` and the day it was last watched.
+**The synopsis band.** A tile has one caption row, and a synopsis is worth
+reading without opening the item, so every grid but the Libraries screen sits
+over a band holding the selected item's title, a meta line and its synopsis
+(`Mode::Synopsis`). A library has no synopsis, so it keeps the bare grid. A movie
+library grouped into collections lists `Movie` and `BoxSet` on one screen, which
+is why every kind with an overview answers alike. The meta line drops the series
+and the year — the block's title carries an episode's, and a movie's label its
+own — for the runtime, the rating, a `♥` and the day it was last watched. A
+series, a season or a collection drops the runtime too, for the reason
+`rail::meta` counts children instead.
 
 The band is a fixed `synopsis::HEIGHT`, and a synopsis longer than it is
 clipped. `App::grid_metrics` sizes the grid from what `synopsis::split` leaves
 above the band, so the tiles and the cover requests come from the same shorter
 area. A band that grew to each synopsis was rejected: the grid would resize
 under it, and every cursor move would ask for every cover at a new size.
+
+**Overviews** are what the web client renders as markdown with basic HTML
+allowed, and some metadata providers write the HTML: `<br>`, `<i>`, links,
+entities. `view::overview` turns that into styled lines for the band, the rail
+and `3 Playing` alike. `<br>` and `<p>` break, `<i>`/`<em>` and `<b>`/`<strong>`
+style, any other tag keeps only its text, and a `<` that opens no tag stays.
+Whitespace follows markdown, so a single newline is a space and a blank line a
+paragraph; markdown's own syntax is shown as written. `tui-markdown` was
+rejected because it prints inline HTML literally, and `html2text` because
+html5ever is a whole parser for the handful of tags providers use.
 
 ## Where the artwork comes from
 

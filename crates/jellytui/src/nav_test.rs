@@ -51,10 +51,14 @@ fn a_reload_that_returns_fewer_rows_pulls_the_cursor_back_into_range() {
 }
 
 #[test]
-fn a_level_of_libraries_is_a_grid_and_a_level_of_episodes_is_a_grid_over_its_synopsis() {
+fn a_level_of_libraries_is_a_bare_grid_and_every_other_grid_sits_over_a_synopsis() {
     assert_eq!(mode(&[item("CollectionFolder", "lib", None)]), Mode::Grid);
     assert_eq!(mode(&[item("UserView", "collections", None)]), Mode::Grid);
-    assert_eq!(mode(&[item("Episode", "e1", Some("s1"))]), Mode::Episodes);
+    assert_eq!(mode(&[item("Episode", "e1", Some("s1"))]), Mode::Synopsis);
+    assert_eq!(mode(&[item("Series", "s1", None)]), Mode::Synopsis);
+    // A movie library grouped into collections lists both kinds on one screen.
+    assert_eq!(mode(&[item("Movie", "m1", None)]), Mode::Synopsis);
+    assert_eq!(mode(&[item("BoxSet", "b1", None)]), Mode::Synopsis);
     assert_eq!(mode(&[item("Video", "v1", None)]), Mode::List);
     assert_eq!(mode(&[]), Mode::List, "nothing to size the tiles from");
 }

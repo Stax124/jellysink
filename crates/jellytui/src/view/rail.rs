@@ -1,6 +1,6 @@
 //! The detail rail: cover and metadata for whichever row holds the cursor.
 
-use super::{ACCENT, DIM, panel};
+use super::{ACCENT, DIM, overview, panel};
 use crate::cover::{self, Covers};
 use jellysink_core::jellyfin::model::Item;
 use jellysink_core::ticks::ticks_to_seconds;
@@ -99,12 +99,11 @@ pub(super) fn lines(item: &Item, with_genres: bool) -> Vec<Line<'static>> {
         )));
     }
     lines.push(Line::default());
-    if let Some(overview) = &item.overview {
-        lines.push(Line::from(Span::styled(
-            overview.clone(),
-            Style::default().fg(DIM),
-        )));
-    }
+    lines.extend(
+        item.overview
+            .iter()
+            .flat_map(|text| overview::lines(text, Style::default().fg(DIM))),
+    );
     lines
 }
 
