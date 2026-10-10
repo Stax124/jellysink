@@ -42,18 +42,24 @@ fn minimum_cover_width(aspect: f32) -> u16 {
     if aspect > 1.0 { 24 } else { 16 }
 }
 
+/// The tallest a cover may be with its label still inside `area`: `render`
+/// skips a taller tile, so no cover may exceed it, budget or not.
+fn one_row_budget(area: Rect) -> u16 {
+    area.height.saturating_sub(LABEL_HEIGHT).max(1)
+}
+
 /// The tallest a cover may be if `target_rows` of them are to fit, or `None`
-/// when they cannot at the minimum width. One row is capped by the area instead.
+/// when more than one row cannot fit at the minimum width.
 fn cover_height_budget(
     area: Rect,
     aspect: f32,
     font_size: FontSize,
     target_rows: u16,
 ) -> Option<u16> {
-    let budget = (area.height / target_rows.max(1)).saturating_sub(LABEL_HEIGHT);
-    if target_rows == 1 {
-        return Some(budget.max(1));
+    if target_rows <= 1 {
+        return Some(one_row_budget(area));
     }
+    let budget = (area.height / target_rows).saturating_sub(LABEL_HEIGHT);
     let floor = cover::rows_for(minimum_cover_width(aspect), aspect, font_size);
     (budget >= floor).then_some(budget)
 }
@@ -63,7 +69,7 @@ fn cover_height_budget(
 fn preferred_cover_width(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> u16 {
     let minimum = minimum_cover_width(aspect);
     let Some(budget) = cover_height_budget(area, aspect, font_size, shape.target_rows) else {
-        return minimum;
+        return minimum.min(cover::columns_for(one_row_budget(area), aspect, font_size));
     };
     let spread = u16::try_from(shape.item_count)
         .unwrap_or(MIN_COLUMNS)
@@ -103,7 +109,7 @@ fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> Metric
     // Evening the columns out can hand a cover more of them than it asked for,
     // and a poster obeying its aspect would grow out of the height budget.
     let max_rows = cover_height_budget(area, aspect, font_size, shape.target_rows)
-        .unwrap_or_else(|| cover::rows_for(evened, aspect, font_size));
+        .unwrap_or(one_row_budget(area));
     let cover = cover::fit(
         Rect::new(0, 0, evened, max_rows),
         aspect,

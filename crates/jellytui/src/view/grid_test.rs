@@ -204,31 +204,46 @@ fn a_wide_area_keeps_a_row_of_stills_rather_than_a_couple_of_huge_ones() {
 }
 
 #[test]
-fn a_shelf_fits_a_row_of_tiles_into_half_a_body_however_short_it_is() {
-    // `render` skips a tile taller than its area, so without the one-row cap
-    // a shelf on a small terminal draws nothing at all.
-    for height in [8, 10, 16, 23] {
-        for aspect in [2.0 / 3.0, 16.0 / 9.0] {
-            let area = Rect::new(0, 0, 88, height);
-            let shelf = metrics(area, aspect, FONT_SIZE, full(SHELF_ROWS));
-            assert_eq!(shelf.rows, 1, "{shelf:?} in {area:?}");
-            assert!(
-                shelf.cover.height + LABEL_HEIGHT <= height,
-                "{shelf:?} overruns {area:?}"
-            );
-            assert!(shelf.columns > 1, "{shelf:?} in {area:?}");
+fn every_tile_a_grid_reports_fits_however_short_the_area_is() {
+    // `render` skips a tile taller than its area, so a cover sized past the
+    // height leaves a grid on a small terminal blank with a live cursor.
+    for target_rows in [SHELF_ROWS, TARGET_ROWS] {
+        for width in [80, 88, 94] {
+            for height in 8..=30 {
+                for aspect in [2.0 / 3.0, 16.0 / 9.0] {
+                    let area = Rect::new(0, 0, width, height);
+                    let grid = metrics(area, aspect, FONT_SIZE, full(target_rows));
+                    let rows = u16::try_from(grid.rows).unwrap();
+                    assert!(
+                        grid.tile_height() * rows <= height,
+                        "{grid:?} overruns {area:?}"
+                    );
+                    assert!(
+                        (grid.cover.width + GAP) * columns(&grid) - GAP <= width,
+                        "{grid:?} overruns {area:?}"
+                    );
+                    assert!(grid.columns > 1, "{grid:?} in {area:?}");
+                }
+            }
         }
     }
 }
 
 #[test]
-fn a_shelf_spends_the_width_the_cover_cannot_use_on_more_tiles() {
+fn a_grid_too_short_for_the_floor_spends_the_width_on_more_tiles() {
     let area = Rect::new(0, 0, 88, 10);
-    let shelf = metrics(area, 2.0 / 3.0, FONT_SIZE, full(SHELF_ROWS));
-    assert!(
-        shelf.cover.width < minimum_cover_width(2.0 / 3.0),
-        "{shelf:?}"
-    );
+    for target_rows in [SHELF_ROWS, TARGET_ROWS] {
+        let grid = metrics(area, 2.0 / 3.0, FONT_SIZE, full(target_rows));
+        assert!(
+            grid.cover.width < minimum_cover_width(2.0 / 3.0),
+            "{grid:?}"
+        );
+        let used = grid.cover.width * columns(&grid) + GAP * (columns(&grid) - 1);
+        assert!(
+            area.width - used < grid.cover.width + GAP,
+            "{grid:?} leaves room for another tile"
+        );
+    }
 }
 
 #[test]

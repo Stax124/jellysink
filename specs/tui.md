@@ -280,7 +280,8 @@ monitor spends its extra height on bigger covers rather than a fifth row of
 thumbnails. Three bounds keep that honest:
 
 - never narrower than `minimum_cover_width` — 16 cells for a 2:3 poster, 24 for
-  a 16:9 still — below which the artwork is not worth drawing;
+  a 16:9 still — below which the artwork is not worth drawing, unless the area
+  is too short for one row of tiles that wide;
 - never so wide that a row holds fewer than `MIN_COLUMNS` — which stops a still
   taking a third of a wide screen on its own — unless the level has fewer items
   than that, in which case they spread over their own count, since there is
@@ -289,14 +290,16 @@ thumbnails. Three bounds keep that honest:
   minimum width, since capping a cover that was never going to fit two rows only
   shrinks the one row that does fit.
 
-The last is why the budget is an `Option`, and why a shelf asked for one row
-never takes it: `render` skips a tile taller than its area, so an uncapped shelf
-draws nothing rather than something small. A shelf drops the width floor for the
-same reason it keeps the cap — height binds it, so widening a tile would only
-fit fewer of the same covers. The cover is then `cover::fit` against both the
-evened-out width and that budget, because evening the columns out across the
-area hands each one a few more than it asked for and a poster obeying its aspect
-would grow out of the height with them.
+The last is why the budget is an `Option`, but no budget is not no cap: `render`
+skips a tile taller than its area, so an uncapped cover on a short terminal
+leaves the grid blank under a live cursor. Every cover is held to
+`one_row_budget`, and a shelf asked for one row takes it as its budget. A shelf
+drops the width floor for the same reason it keeps the cap — height binds it, so
+widening a tile would only fit fewer of the same covers — and a grid too short
+for one row at the floor drops it the same way. The cover is then `cover::fit`
+against both the evened-out width and that budget, because evening the columns
+out across the area hands each one a few more than it asked for and a poster
+obeying its aspect would grow out of the height with them.
 
 `Metrics::rows` is what the grid **draws**, not what it could hold: the height
 budget always divides by `TARGET_ROWS`, so a level too short to fill the grid

@@ -93,3 +93,4 @@ Two ways to break one, both of which mean editing the spec in the same commit:
 ### Checks
 
 - A subagent should be launched after feature is implemented to verify that it adheres to CLAUDE.md conventions and guidelines
+- `.claude/skills/drive-jellytui` should be ran to allow the model to verify any changes or fixes it made and ensure that nothing else was broken along the way. Such action should only be taken after cargo tests ran successfully.
