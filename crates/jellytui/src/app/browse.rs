@@ -167,6 +167,13 @@ impl App {
         }
     }
 
+    pub(crate) fn enter_verb(&self) -> &'static str {
+        match self.selected_item().and_then(nav::descend) {
+            Some(_) => "open",
+            None => "play",
+        }
+    }
+
     pub(super) fn toggle_watched(&mut self) {
         let Some((item_id, played)) = self
             .selected_item()

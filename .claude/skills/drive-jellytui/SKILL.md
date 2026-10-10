@@ -12,7 +12,7 @@ description: Run jellytui against the user's real Jellyfin and use it like a use
 - **Enter on anything that is not a container plays it.** mpv opens on the user's desktop, and PlayCount and LastPlayedDate change on their server. `keys` refuses Enter. `enter` refuses when the screen shows a runtime (`N min`) or an `Enter play` hint. Use `enter --force` only with the user's consent.
 - Never press `t` (writes watched state) or `u` (self-update: replaces installed binaries and restarts the daemon). `keys` refuses both.
 - If something starts playing anyway, quit mpv: `echo '{"command":["quit"]}' | socat - ~/.config/jellysink/mpv.sock` (or Python `socket`). Then tell the user.
-- To reach a series from Search, go through `2` Libraries. Enter on a search result is refused, because the screen always shows `Enter play` there.
+- The hint row names what Enter does to the selected item (`Enter open` or `Enter play`), on every screen including Search, and that is what `enter` checks.
 
 ## Commands
 

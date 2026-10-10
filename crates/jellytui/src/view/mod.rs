@@ -262,9 +262,11 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
         Screen::Playing => {
             "↑/↓ episode · Enter play · Esc back · t watched · r reload · q quit".into()
         }
-        Screen::Search => {
-            "type to search · ↑/↓ move · Enter play · Esc leave search · ^C quit".into()
-        }
+        Screen::Search => format!(
+            "type to search · ↑/↓ move · Enter {} · Esc leave search · ^C quit",
+            app.enter_verb()
+        )
+        .into(),
         Screen::Logs => format!(
             "↑/↓ scroll · g/G top/bottom · c clear · L/Esc back · q quit · {}",
             if app.logs_following() {
@@ -274,11 +276,17 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
             }
         )
         .into(),
-        // In a grid every arrow moves, so back and open need naming.
-        _ if app.grid_metrics().is_some() => {
-            "↑/↓/←/→ move · Enter open · Esc back · t watched · r reload · q quit".into()
-        }
-        _ => "↑/↓ move · Enter play · Esc back · t watched · r reload · q quit".into(),
+        // In a grid every arrow moves, so Esc and Enter need naming.
+        _ if app.grid_metrics().is_some() => format!(
+            "↑/↓/←/→ move · Enter {} · Esc back · t watched · r reload · q quit",
+            app.enter_verb()
+        )
+        .into(),
+        _ => format!(
+            "↑/↓ move · Enter {} · Esc back · t watched · r reload · q quit",
+            app.enter_verb()
+        )
+        .into(),
     };
     frame.render_widget(
         Paragraph::new(Span::styled(keys, Style::default().fg(DIM))),

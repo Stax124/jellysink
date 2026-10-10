@@ -249,6 +249,27 @@ fn the_libraries_screen_is_a_wall_of_tiles_rather_than_a_list_and_a_rail() {
 }
 
 #[test]
+fn the_hint_names_what_enter_does_to_the_selected_item_not_the_screen_shape() {
+    // A grid saying "Enter open" over a movie is how playback got started by
+    // accident.
+    let row = |id: &str, kind: &str| item(serde_json::json!({"Id": id, "Name": id, "Type": kind}));
+    let mut app = app();
+    let mut level = Level::loading("Mixed", Source::Libraries);
+    level
+        .rows
+        .fill(vec![row("m1", "Movie"), row("b1", "BoxSet")]);
+    app.stack.push(level);
+    app.screen = Screen::Browse;
+    assert!(hints_at(&mut app, 90).contains("Enter play"));
+    app.stack[0].rows.selected = 1;
+    assert!(hints_at(&mut app, 90).contains("Enter open"));
+
+    app.screen = Screen::Search;
+    app.results.fill(vec![row("s1", "Series")]);
+    assert!(hints_at(&mut app, 90).contains("Enter open"));
+}
+
+#[test]
 fn an_empty_library_says_so_rather_than_drawing_a_blank_box() {
     let mut app = app();
     let mut level = Level::loading("Movies", Source::Libraries);
