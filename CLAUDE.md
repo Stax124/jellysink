@@ -1,4 +1,4 @@
-# AGENTS.md
+# CLAUDE.md
 
 Guidance for AI coding agents working in this repository.
 
@@ -23,11 +23,11 @@ A workspace of three crates.
 - `crates/core` is the library (`jellysink-core`): everything both binaries touch.
 - `crates/jellysink` and `crates/jellytui` are plain **bin** crates over it — neither has a `lib.rs`, so everything inside them stays `pub(crate)` and `dead_code` covers all of it. `default-members` is unset, so a bare `cargo build` or `cargo nextest run` covers all three; the `-p` in the run commands is only because the workspace has two binaries.
 
-`core` is the only crate with a `pub` surface, and it is kept to what a binary actually names: anything neither binary uses is `pub(crate)` there too, or `dead_code` stops working in core
+`core` is the only crate with a `pub` surface, and it is kept to what a binary actually names: anything neither binary uses is `pub(crate)` there too, or `dead_code` stops working in core.
 
 ## Architecture
 
-Design notes for the trickier subsystems live in `specs/`:
+Design notes for the trickier subsystems live in `specs/`
 
 ## Conventions
 
@@ -89,3 +89,7 @@ Two ways to break one, both of which mean editing the spec in the same commit:
 
 - The change **contradicts** a documented invariant. Every spawned task being wrapped in an `AbortOnDrop` (`runtime/task.rs`) is one such invariant — a detached `tokio::spawn` either violates it or needs the spec amended to record the deliberate exception and why.
 - The change makes an **inventory** stale. `specs/session.md` carries a task/channel table and a `select!`-arm table; adding a channel, task or arm leaves them silently wrong without contradicting anything. Update the row.
+
+### Checks
+
+- A subagent should be launched after feature is implemented to verify that it adheres to CLAUDE.md conventions and guidelines
