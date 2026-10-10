@@ -9,8 +9,8 @@ use std::net::Shutdown;
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::time::Duration;
 
-/// Under jellytui's 1 Hz poll, so a status can never overlap its successor;
-/// it is answered off a `watch` receiver and never legitimately waits.
+/// Under jellytui's 1 Hz poll, which never has two in flight; it is answered
+/// off a `watch` receiver and never legitimately waits.
 const STATUS_REPLY_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]

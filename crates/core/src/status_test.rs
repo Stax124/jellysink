@@ -21,10 +21,21 @@ fn status_serializes_the_field_names_its_readers_expect() {
             queue_len: 5,
             art_url: "http://x/Items/1/Images/Primary".into(),
         }),
+        loading: false,
+        plays_started: 0,
     };
 
     let json = serde_json::to_value(&status).unwrap();
-    assert_eq!(field_names(&json), ["now_playing", "server", "username"]);
+    assert_eq!(
+        field_names(&json),
+        [
+            "loading",
+            "now_playing",
+            "plays_started",
+            "server",
+            "username"
+        ]
+    );
     assert_eq!(
         field_names(&json["now_playing"]),
         [
@@ -42,6 +53,17 @@ fn status_serializes_the_field_names_its_readers_expect() {
             "volume",
         ]
     );
+}
+
+/// jellytui can be newer than the daemon process it polls.
+#[test]
+fn a_status_from_a_daemon_without_play_tracking_parses_as_idle() {
+    let status: PlayerStatus = serde_json::from_value(serde_json::json!({
+        "server": "http://x", "username": "admin", "now_playing": null
+    }))
+    .unwrap();
+    assert!(!status.loading);
+    assert_eq!(status.plays_started, 0);
 }
 
 /// Alphabetical: `serde_json`'s map is sorted, and field order is not part of

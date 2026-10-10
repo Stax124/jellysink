@@ -52,6 +52,7 @@ pub(super) struct Runtime {
     /// playlist entries to its watch_later files.
     pub(super) mpv_auth_header_set: bool,
     pub(super) pending_start_ticks: Option<i64>,
+    pub(super) plays_started: u64,
 
     pub(super) prepared: HashMap<String, PreparedPlay>,
     /// Item id → display title, for the playlist fill; `PlaybackInfo` is
@@ -92,6 +93,7 @@ impl Runtime {
             transitioning: false,
             mpv_auth_header_set: false,
             pending_start_ticks: None,
+            plays_started: 0,
             prepared: HashMap::new(),
             titles: HashMap::new(),
             username,
@@ -242,16 +244,16 @@ impl Runtime {
         if let Err(e) = self.configure_streams().await {
             tracing::warn!("configure streams: {e:#}");
         }
-        let Some(ticks) = self.pending_start_ticks.take() else {
-            return;
-        };
-        let seconds = jellysink_core::ticks::ticks_to_seconds(ticks);
-        tracing::info!(position_s = seconds, "resuming");
-        if let Some(mpv) = self.mpv.as_mut()
-            && let Err(e) = mpv.seek_absolute(seconds).await
-        {
-            tracing::warn!("resume seek: {e:#}");
+        if let Some(ticks) = self.pending_start_ticks.take() {
+            let seconds = jellysink_core::ticks::ticks_to_seconds(ticks);
+            tracing::info!(position_s = seconds, "resuming");
+            if let Some(mpv) = self.mpv.as_mut()
+                && let Err(e) = mpv.seek_absolute(seconds).await
+            {
+                tracing::warn!("resume seek: {e:#}");
+            }
         }
+        self.publish_status();
     }
 
     async fn on_end_file(&mut self, reason: EndFileReason) {

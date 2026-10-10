@@ -20,6 +20,8 @@ pub(super) fn playing_status(paused: bool, has_next: bool, has_previous: bool) -
             queue_len: 5,
             art_url: "http://x/Items/item-1/Images/Primary".into(),
         }),
+        loading: false,
+        plays_started: 0,
     }
 }
 

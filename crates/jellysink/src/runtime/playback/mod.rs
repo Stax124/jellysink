@@ -29,8 +29,10 @@ impl Runtime {
         if reuse {
             self.sample_position().await;
             self.send_stopped();
-            self.transitioning = true;
         }
+        self.transitioning = true;
+        self.plays_started += 1;
+        self.publish_status();
 
         let (prepared, item) = match self.prepare_item(&item_id, req).await {
             Ok(pair) => pair,
@@ -38,6 +40,9 @@ impl Runtime {
                 tracing::error!("{e:#}");
                 if reuse {
                     self.stop_playback(false).await;
+                } else {
+                    self.transitioning = false;
+                    self.publish_status();
                 }
                 return Ok(());
             }

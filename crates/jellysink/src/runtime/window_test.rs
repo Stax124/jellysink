@@ -287,6 +287,16 @@ fn end_file_is_ignored_while_replacing_the_current_file() {
     );
 }
 
+/// Regression: an mpv that could not open the file we were loading emits no
+/// `file-loaded`, so ignoring its error left the daemon loading forever.
+#[test]
+fn a_file_that_fails_to_load_stops_even_while_replacing() {
+    assert_eq!(
+        end_file_action(true, EndFileReason::Error),
+        EndFileAction::Stop
+    );
+}
+
 #[test]
 fn end_file_quit_or_error_stops() {
     assert_eq!(

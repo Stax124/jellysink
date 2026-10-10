@@ -81,6 +81,18 @@ fn the_footer_separates_not_yet_asked_from_asked_and_absent() {
 }
 
 #[test]
+fn a_play_cast_from_elsewhere_shows_as_starting_while_the_daemon_loads_it() {
+    let mut app = app();
+    app.daemon = Daemon::Connected(PlayerStatus {
+        loading: true,
+        ..PlayerStatus::idle("s".into(), "u".into())
+    });
+    let screen = drawn(&mut app);
+    assert!(screen.contains("starting playback"), "{screen}");
+    assert!(!screen.contains("nothing playing"), "{screen}");
+}
+
+#[test]
 fn the_search_screen_advertises_the_quit_key_that_actually_works_there() {
     let mut app = app();
     app.screen = Screen::Search;

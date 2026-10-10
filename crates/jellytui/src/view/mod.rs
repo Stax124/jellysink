@@ -9,7 +9,7 @@ pub(super) mod playing;
 pub(super) mod rail;
 pub(super) mod synopsis;
 
-use crate::app::{App, Daemon, Screen, UpdateCheck};
+use crate::app::{App, Daemon, STARTING_POLL, Screen, UpdateCheck};
 use body::{render_browse, render_home, render_search};
 use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::ticks::format_hms;
@@ -168,21 +168,45 @@ fn daemon_status(app: &App) -> Line<'static> {
 fn render_now_playing(app: &App, frame: &mut Frame, area: Rect) {
     let [status, track] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+    let starting = |title: Span<'static>| {
+        Paragraph::new(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(spinner(), Style::default().fg(ACCENT)),
+            Span::styled("  starting ", Style::default().fg(DIM)),
+            title,
+        ]))
+    };
+    if let Some(title) = app.starting() {
+        let title = Span::styled(
+            title.to_string(),
+            Style::default().add_modifier(Modifier::BOLD),
+        );
+        frame.render_widget(starting(title), status);
+        return;
+    }
     let Some(now_playing) = app.now_playing() else {
-        frame.render_widget(
+        let stand_in = if app.loading() {
+            starting(Span::styled("playback…", Style::default().fg(DIM)))
+        } else {
             Paragraph::new(Span::styled(
                 format!(" {}", idle_text(&app.daemon)),
                 Style::default().fg(DIM),
-            )),
-            status,
-        );
+            ))
+        };
+        frame.render_widget(stand_in, status);
         return;
     };
 
     let state = Line::from(vec![
         Span::raw(" "),
         Span::styled(
-            if now_playing.is_paused { "⏸" } else { "▶" },
+            if app.loading() {
+                spinner()
+            } else if now_playing.is_paused {
+                "⏸"
+            } else {
+                "▶"
+            },
             Style::default().fg(ACCENT),
         ),
         Span::raw("  "),
@@ -239,6 +263,16 @@ fn render_now_playing(app: &App, frame: &mut Frame, area: Rect) {
         bar_area,
     );
     frame.render_widget(Paragraph::new(elapsed), elapsed_area);
+}
+
+/// One frame per `STARTING_POLL`, the redraws a start gets; stepped by the clock
+/// so a keypress redrawing in between does not spin it faster.
+fn spinner() -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    FRAMES[(millis / STARTING_POLL.as_millis()) as usize % FRAMES.len()]
 }
 
 /// What stands in for the playing item when there is none.

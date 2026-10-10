@@ -663,6 +663,33 @@ async fn keep_open_holds_the_last_item_and_says_nothing() {
     assert_eq!(mpv.session.playlist_pos().await.unwrap(), 0);
 }
 
+/// `end_file_action` ignores the old file's end while we replace it, but not an
+/// `error`, which has to be the new file failing.
+#[tokio::test]
+async fn replacing_the_playing_file_ends_it_with_stop() {
+    require_mpv!();
+    let mut mpv = TestMpv::start().await;
+    mpv.start_current("A").await;
+
+    mpv.session
+        .loadfile(&fixture("sample.mkv"), Some("B"))
+        .await
+        .unwrap();
+
+    let event = mpv
+        .wait_for_event(|event| matches!(event, MpvEvent::EndFile { .. }))
+        .await;
+    assert!(
+        matches!(
+            event,
+            MpvEvent::EndFile {
+                reason: EndFileReason::Stop
+            }
+        ),
+        "expected stop, got {event:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_missing_file_ends_with_error_rather_than_killing_the_session() {
     require_mpv!();

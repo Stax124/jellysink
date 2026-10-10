@@ -430,3 +430,165 @@ async fn the_playing_item_is_looked_up_once_per_episode_not_once_per_poll() {
     let logs = crate::logs::capture(|| app.on_player(Some(playing_episode("e2"))));
     assert_eq!(lookups(&logs), 1, "the next episode was not looked up");
 }
+
+fn idle() -> PlayerStatus {
+    PlayerStatus::idle("s".into(), "u".into())
+}
+
+fn loading(status: PlayerStatus) -> PlayerStatus {
+    PlayerStatus {
+        loading: true,
+        ..status
+    }
+}
+
+fn after_plays(plays_started: u64, status: PlayerStatus) -> PlayerStatus {
+    PlayerStatus {
+        plays_started,
+        ..status
+    }
+}
+
+/// `play` sends nothing until the daemon has answered and its session is known.
+fn connected_app() -> App {
+    let mut app = app();
+    app.on_player(Some(idle()));
+    app.on_msg(Msg::SessionId("session".into()));
+    app
+}
+
+fn footer(app: &mut App) -> String {
+    let screen = crate::test_support::drawn(90, 24, |frame| view::render(app, frame));
+    let rows: Vec<&str> = screen.lines().collect();
+    rows[rows.len() - 3..rows.len() - 1].join("\n")
+}
+
+#[tokio::test]
+async fn a_play_shows_as_starting_until_the_daemon_has_loaded_it() {
+    let mut app = connected_app();
+    app.play(&episode("e1"));
+    assert!(footer(&mut app).contains("starting S01E01  e1"));
+
+    // The command has not reached the daemon yet.
+    app.on_player(Some(idle()));
+    assert!(footer(&mut app).contains("starting S01E01  e1"));
+
+    app.on_player(Some(after_plays(1, loading(idle()))));
+    assert!(footer(&mut app).contains("starting S01E01  e1"));
+
+    // Published, but mpv has not loaded the file.
+    app.on_player(Some(after_plays(1, loading(playing_episode("e1")))));
+    let shown = footer(&mut app);
+    assert!(shown.contains("Paradise, Once More"), "{shown}");
+    assert!(!shown.contains('▶'), "{shown}");
+
+    app.on_player(Some(after_plays(1, playing_episode("e1"))));
+    let shown = footer(&mut app);
+    assert!(shown.contains("▶  Paradise, Once More"), "{shown}");
+    assert!(
+        app.message.is_empty(),
+        "a play that worked was announced: {:?}",
+        app.message
+    );
+}
+
+#[tokio::test]
+async fn a_play_the_daemon_gave_up_on_between_two_polls_is_reported() {
+    let mut app = connected_app();
+    app.play(&episode("e1"));
+    // `loading` went up and down unseen; only the count says it happened.
+    app.on_player(Some(after_plays(1, idle())));
+    assert!(
+        app.message.contains("could not play S01E01  e1"),
+        "got {:?}",
+        app.message
+    );
+    assert!(!footer(&mut app).contains("starting"));
+}
+
+#[tokio::test]
+async fn replaying_the_item_already_playing_waits_for_the_daemon_to_start_it_again() {
+    let mut app = connected_app();
+    app.on_player(Some(playing_episode("e1")));
+    app.play(&episode("e1"));
+    // Still the earlier play of e1: the daemon has not picked the new one up.
+    app.on_player(Some(playing_episode("e1")));
+    app.on_player(Some(after_plays(1, idle())));
+    assert!(
+        app.message.contains("could not play"),
+        "the earlier play was taken for this one: {:?}",
+        app.message
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_play_the_daemon_never_picks_up_times_out() {
+    let mut app = connected_app();
+    app.play(&episode("e1"));
+    tokio::time::advance(START_TIMEOUT).await;
+    app.on_player(Some(idle()));
+    assert!(
+        app.message.contains("did not start S01E01  e1"),
+        "got {:?}",
+        app.message
+    );
+    assert!(!footer(&mut app).contains("starting"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_slow_load_the_daemon_has_picked_up_is_not_timed_out() {
+    let mut app = connected_app();
+    app.play(&episode("e1"));
+    app.on_player(Some(after_plays(1, loading(idle()))));
+    tokio::time::advance(START_TIMEOUT).await;
+    app.on_player(Some(after_plays(1, loading(idle()))));
+    assert!(app.message.is_empty(), "got {:?}", app.message);
+    assert!(footer(&mut app).contains("starting S01E01  e1"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn against_a_daemon_that_sends_no_count_a_play_ends_when_its_item_appears() {
+    let mut app = connected_app();
+    app.play(&episode("e1"));
+    app.on_player(Some(playing_episode("e1")));
+    tokio::time::advance(START_TIMEOUT).await;
+    app.on_player(Some(playing_episode("e1")));
+    assert!(
+        app.message.is_empty(),
+        "a play that worked was timed out: {:?}",
+        app.message
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_ends_only_the_play_it_answers() {
+    let mut app = connected_app();
+    app.play(&episode("e1"));
+    app.play(&episode("e2"));
+    app.on_msg(Msg::PlayFailed {
+        item_id: "e1".into(),
+        message: "POST /Sessions/session/Playing: 403".into(),
+    });
+    assert_eq!(app.message, "POST /Sessions/session/Playing: 403");
+    assert!(footer(&mut app).contains("starting S01E01  e2"));
+
+    app.on_msg(Msg::PlayFailed {
+        item_id: "e2".into(),
+        message: "POST /Sessions/session/Playing: 403".into(),
+    });
+    assert!(!footer(&mut app).contains("starting"));
+}
+
+#[tokio::test]
+async fn the_status_is_polled_faster_only_while_a_play_is_starting() {
+    let mut app = connected_app();
+    assert!(app.poll_due.is_none());
+    app.play(&episode("e1"));
+    assert!(app.poll_due.is_some());
+    app.on_player(Some(after_plays(1, playing_episode("e1"))));
+    assert!(app.poll_due.is_none());
+
+    // A cast from a phone: nothing was sent from here, but the daemon is loading.
+    app.on_player(Some(loading(idle())));
+    assert!(app.poll_due.is_some());
+}

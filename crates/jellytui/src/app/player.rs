@@ -1,5 +1,5 @@
-//! Driving the daemon: the once-a-second status poll and the remote-control
-//! commands a keypress turns into.
+//! Driving the daemon: the status poll and the remote-control commands a
+//! keypress turns into.
 
 use super::*;
 
@@ -11,9 +11,24 @@ pub(crate) enum Daemon {
     Connected(PlayerStatus),
 }
 
+/// A play sent from here that no poll has yet shown the daemon finish.
+pub(super) struct PendingPlay {
+    item_id: String,
+    title: String,
+    /// Any higher count in a later status means the daemon has started a play since.
+    plays_started_at_enter: u64,
+    /// What was playing at Enter: the item replacing it also settles a play,
+    /// which is the only sign an older daemon, sending no count, can give.
+    replacing_item_id: Option<String>,
+    sent_at: tokio::time::Instant,
+}
+
 impl App {
     /// The status socket rather than `GET /Sessions`; see `specs/tui.md`.
-    pub(super) fn poll_player(&self) {
+    pub(super) fn poll_player(&mut self) {
+        if std::mem::replace(&mut self.poll_in_flight, true) {
+            return;
+        }
         let paths = self.paths.clone();
         self.spawn_msg(async move {
             let started = std::time::Instant::now();
@@ -46,6 +61,7 @@ impl App {
     }
 
     pub(super) fn on_player(&mut self, player: Option<PlayerStatus>) {
+        self.poll_in_flight = false;
         let first_poll = matches!(self.daemon, Daemon::Unknown);
         // The transition, not the poll: at 1 Hz the poll itself would fill the
         // buffer in half an hour.
@@ -65,6 +81,9 @@ impl App {
             Some(status) => Daemon::Connected(status),
             None => Daemon::Absent,
         };
+        self.settle_pending_play();
+        self.poll_due = (self.pending_play.is_some() || self.loading())
+            .then(|| tokio::time::Instant::now() + STARTING_POLL);
         // Firing before arming is what makes the deferral one poll rather than
         // none, so the read cannot outrun the daemon's report.
         if std::mem::take(&mut self.reload_due) {
@@ -80,6 +99,59 @@ impl App {
         if self.playing_requested.as_ref() != Some(&item_id) {
             self.load_playing(item_id);
         }
+    }
+
+    fn settle_pending_play(&mut self) {
+        let Daemon::Connected(status) = &self.daemon else {
+            // The footer already says the daemon is gone.
+            self.pending_play = None;
+            return;
+        };
+        let (loading, plays_started) = (status.loading, status.plays_started);
+        let playing = status
+            .now_playing
+            .as_ref()
+            .map(|now_playing| now_playing.item_id.clone());
+        let Some(pending) = self.pending_play.as_ref() else {
+            return;
+        };
+        let picked_up = plays_started > pending.plays_started_at_enter;
+        let is_playing = playing.as_ref() == Some(&pending.item_id);
+        let elapsed = pending.sent_at.elapsed();
+        let elapsed_ms = elapsed.as_millis();
+        if !loading && is_playing && (picked_up || pending.replacing_item_id != playing) {
+            tracing::info!(item_id = %pending.item_id, elapsed_ms, "play started");
+        } else if !loading && picked_up {
+            tracing::warn!(item_id = %pending.item_id, elapsed_ms, "the daemon could not play it");
+            self.message = format!("jellysink could not play {}", pending.title);
+        } else if !picked_up && elapsed >= START_TIMEOUT {
+            tracing::warn!(item_id = %pending.item_id, elapsed_ms, "the daemon never started it");
+            self.message = format!("jellysink did not start {}", pending.title);
+        } else {
+            return;
+        }
+        self.pending_play = None;
+    }
+
+    pub(super) fn on_play_failed(&mut self, item_id: &str, message: String) {
+        if self
+            .pending_play
+            .as_ref()
+            .is_some_and(|pending| pending.item_id == item_id)
+        {
+            self.pending_play = None;
+        }
+        self.on_msg(Msg::Error(message));
+    }
+
+    /// The title of a play sent from here that the daemon is not playing yet.
+    pub(crate) fn starting(&self) -> Option<&str> {
+        let pending = self.pending_play.as_ref()?;
+        (!self.is_current(&pending.item_id)).then_some(pending.title.as_str())
+    }
+
+    pub(crate) fn loading(&self) -> bool {
+        matches!(&self.daemon, Daemon::Connected(status) if status.loading)
     }
 
     /// Home is reloaded whatever the screen: a watched item leaves Continue
@@ -122,11 +194,29 @@ impl App {
         let api = self.api.clone();
         let (item_id, start_ticks) = (item.id.clone(), item.resume_ticks());
         tracing::info!(%item_id, title = item.name.as_deref().unwrap_or(""), start_ticks, "play");
+        self.pending_play = match &self.daemon {
+            Daemon::Connected(status) => Some(PendingPlay {
+                item_id: item_id.clone(),
+                title: item.label(),
+                plays_started_at_enter: status.plays_started,
+                replacing_item_id: status
+                    .now_playing
+                    .as_ref()
+                    .map(|now_playing| now_playing.item_id.clone()),
+                sent_at: tokio::time::Instant::now(),
+            }),
+            // No count to measure the daemon's answer against.
+            Daemon::Unknown | Daemon::Absent => None,
+        };
+        self.poll_due = Some(tokio::time::Instant::now() + STARTING_POLL);
         self.spawn_msg(async move {
             api.play_now(&session_id, &item_id, start_ticks)
                 .await
                 .err()
-                .map(Msg::from)
+                .map(|e| Msg::PlayFailed {
+                    item_id,
+                    message: format!("{e:#}"),
+                })
         });
     }
 

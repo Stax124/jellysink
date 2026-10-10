@@ -9,6 +9,7 @@ mod update;
 
 use msg::Msg;
 pub(crate) use player::Daemon;
+use player::PendingPlay;
 pub(crate) use update::UpdateCheck;
 
 use crate::cover::{self, CoverDisk, CoverKey, Covers};
@@ -41,6 +42,10 @@ const PAGE_JUMP: isize = 10;
 /// Long enough that typing a word is one request, short enough to feel live.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// Chained from each reply while a play is starting, so polls cannot stack.
+pub(crate) const STARTING_POLL: Duration = Duration::from_millis(250);
+/// A play still unfinished after this is reported rather than shown forever.
+const START_TIMEOUT: Duration = Duration::from_secs(30);
 /// The shortest gap between two batches of cover requests. A rate limit rather
 /// than a settling delay: a still cursor fetches at once, only a held key waits.
 const COVER_THROTTLE: Duration = Duration::from_millis(120);
@@ -95,6 +100,11 @@ pub(crate) struct App {
     pub(crate) query: String,
     pub(crate) results: Rows,
     pub(crate) daemon: Daemon,
+    pending_play: Option<PendingPlay>,
+    poll_due: Option<tokio::time::Instant>,
+    /// `stop.sock` answers one connection at a time, and a reply can outlast
+    /// `STARTING_POLL`.
+    poll_in_flight: bool,
     /// The playing item, keyed by the id it describes.
     pub(crate) playing_item: Option<(String, Item)>,
     /// The id last looked up, so a lookup that failed is not sent again every poll.
@@ -149,6 +159,9 @@ impl App {
             query: String::new(),
             results: Rows::default(),
             daemon: Daemon::Unknown,
+            pending_play: None,
+            poll_due: None,
+            poll_in_flight: false,
             playing_item: None,
             playing_requested: None,
             playing_episodes: Rows::default(),
@@ -195,7 +208,8 @@ impl App {
             if let Err(e) = terminal.draw(|frame| view::render(&self, frame)) {
                 break Err(e).wrap_err("drawing the terminal");
             }
-            let (search_deadline, cover_deadline) = (self.search_due, self.cover_due);
+            let (search_deadline, cover_deadline, poll_deadline) =
+                (self.search_due, self.cover_due, self.poll_due);
             tokio::select! {
                 event = input.recv() => match event {
                     Some(event) => self.on_event(event),
@@ -203,6 +217,10 @@ impl App {
                 },
                 Some(msg) = self.rx.recv() => self.on_msg(msg),
                 _ = poll.tick() => self.poll_player(),
+                _ = sleep_until(poll_deadline) => {
+                    self.poll_due = None;
+                    self.poll_player();
+                }
                 _ = sleep_until(search_deadline) => {
                     self.search_due = None;
                     self.run_search();

@@ -3,6 +3,7 @@
 
 use super::run;
 use crate::daemon::signal::Signal;
+use jellysink_core::cast::CastEvent;
 use jellysink_core::config::{Config, Credentials, Field, Paths};
 use jellysink_core::jellyfin::auth::{Api, login};
 use jellysink_core::jellyfin::browse::ItemQuery;
@@ -84,64 +85,133 @@ async fn the_server_accepts_the_websocket_url() {
         .expect("connecting the websocket");
 }
 
+/// `run` against the test server, and the session jellytui would address.
+struct LiveDaemon {
+    status_rx: watch::Receiver<PlayerStatus>,
+    /// The MPRIS channel: a cast here skips the server, which refuses unknown ids.
+    ext_tx: mpsc::UnboundedSender<CastEvent>,
+    shutdown: Signal,
+    daemon: tokio::task::JoinHandle<color_eyre::Result<()>>,
+    jellytui: Api,
+    session_id: String,
+    _dir: tempfile::TempDir,
+}
+
+impl LiveDaemon {
+    async fn start() -> Self {
+        let creds = test_credentials().await;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
+        Field::MpvArgs
+            .write(&paths, "--no-config --vo=null --ao=null --really-quiet")
+            .unwrap();
+        let shutdown = Signal::new();
+        let (status_tx, status_rx) = watch::channel(PlayerStatus::idle(
+            creds.server.clone(),
+            creds.username.clone(),
+        ));
+        let (ext_tx, ext_rx) = mpsc::unbounded_channel();
+        let daemon = tokio::spawn(run(
+            Config::default(),
+            creds.clone(),
+            paths,
+            shutdown.clone(),
+            status_tx,
+            ext_rx,
+        ));
+
+        // jellytui shares the daemon's cred.json, and so its device id.
+        let jellytui = Api::from_credentials(&creds).unwrap();
+        let deadline = Instant::now() + SETTLE;
+        while !remote_controllable(&jellytui).await {
+            assert!(
+                Instant::now() < deadline,
+                "the daemon's session never became remote-controllable within {SETTLE:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let session_id = jellytui
+            .session_for_device()
+            .await
+            .unwrap()
+            .expect("the daemon's session")
+            .id;
+        Self {
+            status_rx,
+            ext_tx,
+            shutdown,
+            daemon,
+            jellytui,
+            session_id,
+            _dir: dir,
+        }
+    }
+
+    async fn play(&self, item_id: &str) {
+        self.jellytui
+            .play_now(&self.session_id, item_id, 0)
+            .await
+            .unwrap();
+    }
+
+    async fn wait_for(
+        &mut self,
+        what: &str,
+        done: impl FnMut(&PlayerStatus) -> bool,
+    ) -> PlayerStatus {
+        tokio::time::timeout(SETTLE, self.status_rx.wait_for(done))
+            .await
+            .unwrap_or_else(|_| panic!("{what} within {SETTLE:?}"))
+            .unwrap()
+            .clone()
+    }
+
+    async fn stop(self) {
+        self.shutdown.fire();
+        self.daemon.await.unwrap().unwrap();
+    }
+}
+
 /// The whole cast path: capabilities, the WebSocket, the Play command arriving
 /// over it, PlaybackInfo, and mpv fetching the stream with our auth.
 #[tokio::test]
 async fn a_play_command_from_jellytui_plays_in_mpv() {
-    let creds = test_credentials().await;
-    let dir = tempfile::tempdir().unwrap();
-    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
-    Field::MpvArgs
-        .write(&paths, "--no-config --vo=null --ao=null --really-quiet")
-        .unwrap();
-    let shutdown = Signal::new();
-    let (status_tx, mut status_rx) = watch::channel(PlayerStatus::idle(
-        creds.server.clone(),
-        creds.username.clone(),
-    ));
-    let (_ext_tx, ext_rx) = mpsc::unbounded_channel();
-    let daemon = tokio::spawn(run(
-        Config::default(),
-        creds.clone(),
-        paths,
-        shutdown.clone(),
-        status_tx,
-        ext_rx,
-    ));
+    let mut live = LiveDaemon::start().await;
+    let episode = first_episode(&live.jellytui).await;
+    live.play(&episode.id).await;
 
-    // jellytui shares the daemon's cred.json, and so its device id.
-    let jellytui = Api::from_credentials(&creds).unwrap();
-    let episode = first_episode(&jellytui).await;
-    let deadline = Instant::now() + SETTLE;
-    while !remote_controllable(&jellytui).await {
-        assert!(
-            Instant::now() < deadline,
-            "the daemon's session never became remote-controllable within {SETTLE:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let session = jellytui
-        .session_for_device()
-        .await
-        .unwrap()
-        .expect("the daemon's session");
-    jellytui
-        .play_now(&session.id, &episode.id, 0)
-        .await
-        .unwrap();
-
-    tokio::time::timeout(
-        SETTLE,
-        status_rx.wait_for(|status| {
-            status.now_playing.as_ref().is_some_and(|now_playing| {
+    live.wait_for("mpv reporting S01E01 playing and loaded", |status| {
+        status.plays_started == 1
+            && !status.loading
+            && status.now_playing.as_ref().is_some_and(|now_playing| {
                 now_playing.item_id == episode.id && now_playing.position_ticks > 0
             })
-        }),
-    )
-    .await
-    .expect("mpv never reported playing S01E01")
-    .unwrap();
+    })
+    .await;
+    live.stop().await;
+}
 
-    shutdown.fire();
-    daemon.await.unwrap().unwrap();
+/// jellytui shows a play as starting until `loading` drops, so a failure has to
+/// drop it as surely as mpv loading the file does.
+#[tokio::test]
+async fn a_play_the_daemon_cannot_prepare_ends_its_loading() {
+    let mut live = LiveDaemon::start().await;
+    live.ext_tx
+        .send(CastEvent::PlayNow {
+            item_ids: vec!["00000000000000000000000000000000".into()],
+            start_index: 0,
+            start_ticks: None,
+            audio_stream_index: None,
+            subtitle_stream_index: None,
+            media_source_id: None,
+        })
+        .unwrap();
+
+    let status = live
+        .wait_for("the failed play settling", |status| {
+            status.plays_started == 1 && !status.loading
+        })
+        .await;
+    assert!(status.now_playing.is_none(), "{status:?}");
+    live.stop().await;
 }

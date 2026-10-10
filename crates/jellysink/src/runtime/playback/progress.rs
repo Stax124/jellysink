@@ -79,7 +79,7 @@ impl Runtime {
         }
     }
 
-    pub(super) fn publish_status(&self) {
+    pub(in crate::runtime) fn publish_status(&self) {
         let now_playing = self.current.as_ref().map(|prepared| NowPlaying {
             item_id: prepared.item_id.clone(),
             title: prepared.title.clone(),
@@ -98,6 +98,8 @@ impl Runtime {
             server: self.api.server.clone(),
             username: self.username.clone(),
             now_playing,
+            loading: self.transitioning,
+            plays_started: self.plays_started,
         });
     }
 }

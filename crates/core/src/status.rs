@@ -5,6 +5,13 @@ pub struct PlayerStatus {
     pub server: String,
     pub username: String,
     pub now_playing: Option<NowPlaying>,
+    /// A play is under way and mpv has not loaded its file yet.
+    #[serde(default)]
+    pub loading: bool,
+    /// Bumped as each play starts, so a client can tell a status from before
+    /// its command from one after, even when `loading` rose and fell unseen.
+    #[serde(default)]
+    pub plays_started: u64,
 }
 
 impl PlayerStatus {
@@ -13,6 +20,8 @@ impl PlayerStatus {
             server,
             username,
             now_playing: None,
+            loading: false,
+            plays_started: 0,
         }
     }
 }

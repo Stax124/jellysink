@@ -181,7 +181,12 @@ change, see `specs/tracks.md`) while we are the ones replacing the file.
 
 | Set by                                                                      | Cleared by                                                             |
 | --------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `start_current` (reuse), `load_current`, `advance_in_mpv`, `play_previous`  | `on_file_loaded`, `stop_playback`, and every failed step that set it.   |
+| `start_current`, `advance_in_mpv`, `play_previous`                          | `on_file_loaded`, `stop_playback`, and every failed step that set it.   |
+
+It is also what `PlayerStatus::loading` reports, which is why `start_current`
+sets it before preparing the item, while no mpv may be running yet to gate, and
+bumps `plays_started` beside it: jellytui shows a play as starting until it
+clears (`specs/tui.md`).
 
 Nothing else needs gating during a stop: `stop_playback` runs to completion
 inside one `select!` arm and drops the `MpvSession`, and its queued events, with
@@ -189,12 +194,17 @@ it.
 
 `end_file_action` (`runtime/window.rs`):
 
-| Condition                        | Action                              |
-| -------------------------------- | ----------------------------------- |
-| `transitioning`                  | `Ignore` — we caused this end-file. |
-| Reason `eof` or `redirect`       | `Advance`                           |
-| Reason `quit`, `stop` or `error` | `Stop`                              |
-| Reason `other`                   | `Ignore`                            |
+| Condition                           | Action                              |
+| ----------------------------------- | ----------------------------------- |
+| `transitioning`, reason not `error` | `Ignore` — we caused this end-file. |
+| Reason `eof` or `redirect`          | `Advance`                           |
+| Reason `quit`, `stop` or `error`    | `Stop`                              |
+| Reason `other`                      | `Ignore`                            |
+
+An `error` is never ours: replacing a file ends the old one with `stop`, so an
+`error` while transitioning is the file we asked for failing to open. That is a
+stop whether or not mpv would go on to a queued stub, and with nothing queued no
+`file-loaded` would ever clear the flag.
 
 **Every step that sets `transitioning` must clear it if it fails.** Nothing
 emits `file-loaded` after a failed `playlist-next` or `playlist-prev`, so the

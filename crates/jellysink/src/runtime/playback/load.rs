@@ -17,7 +17,6 @@ impl Runtime {
             None => spawn_mpv(&self.config, &self.paths).await?,
         };
         let mpv = self.mpv.insert(mpv);
-        self.transitioning = true;
         // Items mpv autoplays skip this foreign-host check and the header follows
         // mpv into them, so with a next item queued the token rides the URL.
         let auth = apply_auth(&self.api, mpv, prepared, self.window.has_next()).await?;

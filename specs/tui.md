@@ -148,6 +148,49 @@ Two things follow:
   which also means the footer works for playback started from a phone or the web
   app.
 
+## A play starting
+
+Enter to mpv having the file is two to three seconds, most of it mpv's spawn,
+and the footer spends them on a spinner. It has two sources because neither
+covers the wait alone:
+
+- **`PlayerStatus::loading`** is the daemon's `transitioning` flag
+  (`specs/session.md`), up from the moment it takes a play until mpv's
+  `file-loaded`. It covers mpv opening the file after the item is published,
+  and plays cast from a phone or the web app, which this frontend never sent.
+- **`PendingPlay`** is set on Enter, because the daemon cannot report a command
+  it has not received and the poll can be a second behind it. It shows the
+  title the user pressed until the daemon is playing that item.
+
+**A poll is a snapshot, not a history**, so `loading` alone cannot settle the
+pending play: a load that fails in a few milliseconds rises and falls between
+two polls, and a replay of the item already playing looks exactly like the play
+it replaces. `PlayerStatus::plays_started` is what settles it — `start_current`
+bumps it, `PendingPlay` holds the value from Enter, and any higher one means the
+daemon has started a play since. Each poll then decides:
+
+- the item playing with `loading` clear is done, and is not announced;
+- a play picked up whose `loading` cleared without the item is
+  `jellysink could not play …` in the header;
+- one never picked up within `START_TIMEOUT` is `jellysink did not start …`. A
+  slow load the daemon has picked up is never timed out: it is still the
+  daemon's to finish;
+- a daemon that stops answering drops it silently, since the footer already
+  says so.
+
+The count names no play: a Jellyfin `PlayNow` has no field to carry an id of
+ours, and the count at Enter is the last poll's. So any play the daemon starts
+between that poll and the command landing — another client's, or its own
+autoplay — is taken for this one. An older daemon sends neither field (`serde(default)` reads
+them as idle), so there a play is done once its item appears in place of
+whatever was playing, and a replay is only ever reported by the timeout.
+
+While either is up, the next poll is chained `STARTING_POLL` behind each reply
+instead of waiting for the 1 Hz tick: the spinner ends promptly and gets its
+redraws. `poll_in_flight` keeps that and the tick to one request at a time —
+`stop.sock` answers one connection at a time, and its reply timeout is longer
+than `STARTING_POLL`.
+
 ## Reloading on a playback change
 
 Browse rows are fetched once, when the level is opened, so an episode watched
@@ -215,8 +258,8 @@ The dot (`view::daemon_status`) answers the one question the whole frontend
 rests on: did the status socket reply. Green for a daemon that answered, red for
 one that did not, and **grey until the first poll returns** — showing red for
 that first second would be a lie about a daemon that is fine. A successful play
-is not announced at all: the footer reporting it a poll later, in the daemon's
-own wording, is the honest confirmation that the command arrived.
+is not announced: the footer turning from a spinner into the daemon's own title
+is the confirmation, and only a failed one reaches the header (*A play starting*).
 
 ## Two view modes
 
@@ -548,7 +591,7 @@ command that would carry them.
 Levels are split so the default `info` is already worth reading: `info` is what
 the user did that had an effect (a play, a command sent, a search, a level
 opened) plus every request's elapsed time and row count; `debug` adds a line per
-keypress; `trace` adds the once-a-second poll and the per-cover fetch/decode
+keypress; `trace` adds the status poll and the per-cover fetch/decode
 timings. The 1 Hz poll is deliberately not at `info` — at that rate it would push
 everything else out of a 2000-line buffer inside half an hour. What is logged at
 `info` is the *transition*, connected to not and back.
