@@ -21,7 +21,7 @@ pub(super) fn playing_status(paused: bool, has_next: bool, has_previous: bool) -
             art_url: "http://x/Items/item-1/Images/Primary".into(),
         }),
         loading: false,
-        plays_started: 0,
+        server_connected: true,
     }
 }
 
@@ -29,7 +29,13 @@ fn idle_status() -> PlayerStatus {
     PlayerStatus::idle("http://x".into(), "admin".into())
 }
 
-fn player(status: PlayerStatus) -> (PlayerIface, mpsc::UnboundedReceiver<CastEvent>) {
+fn sent(rx: &mut mpsc::UnboundedReceiver<CastCommand>) -> CastEvent {
+    let command = rx.try_recv().unwrap();
+    assert_eq!(command.origin, Origin::Mpris);
+    command.event
+}
+
+fn player(status: PlayerStatus) -> (PlayerIface, mpsc::UnboundedReceiver<CastCommand>) {
     let (_status_tx, status_rx) = watch::channel(status);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let shared = Arc::new(Shared {
@@ -155,24 +161,24 @@ fn volume_and_position_convert_units() {
 fn play_pause_stop_next_previous_forward_the_matching_cast_event() {
     let (iface, mut rx) = player(playing_status(false, true, true));
     iface.play();
-    assert_eq!(rx.try_recv().unwrap(), CastEvent::Unpause);
+    assert_eq!(sent(&mut rx), CastEvent::Unpause);
     iface.pause();
-    assert_eq!(rx.try_recv().unwrap(), CastEvent::Pause);
+    assert_eq!(sent(&mut rx), CastEvent::Pause);
     iface.play_pause();
-    assert_eq!(rx.try_recv().unwrap(), CastEvent::PlayPause);
+    assert_eq!(sent(&mut rx), CastEvent::PlayPause);
     iface.stop();
-    assert_eq!(rx.try_recv().unwrap(), CastEvent::Stop);
+    assert_eq!(sent(&mut rx), CastEvent::Stop);
     iface.next();
-    assert_eq!(rx.try_recv().unwrap(), CastEvent::Next);
+    assert_eq!(sent(&mut rx), CastEvent::Next);
     iface.previous();
-    assert_eq!(rx.try_recv().unwrap(), CastEvent::Previous);
+    assert_eq!(sent(&mut rx), CastEvent::Previous);
 }
 
 #[test]
 fn set_volume_converts_the_0_to_1_range_to_a_percentage() {
     let (iface, mut rx) = player(playing_status(false, true, true));
     iface.set_volume(0.55);
-    assert_eq!(rx.try_recv().unwrap(), CastEvent::SetVolume { volume: 55 });
+    assert_eq!(sent(&mut rx), CastEvent::SetVolume { volume: 55 });
 }
 
 #[test]
@@ -181,7 +187,7 @@ fn seek_adds_a_relative_microsecond_offset_to_the_absolute_position() {
     // position_ticks = 1_200_000_000 (120s); seek back 10s = -10_000_000us.
     iface.seek(-10_000_000);
     assert_eq!(
-        rx.try_recv().unwrap(),
+        sent(&mut rx),
         CastEvent::Seek {
             ticks: 1_100_000_000
         }
@@ -192,7 +198,7 @@ fn seek_adds_a_relative_microsecond_offset_to_the_absolute_position() {
 fn seek_never_goes_negative() {
     let (iface, mut rx) = player(playing_status(false, true, true));
     iface.seek(-1_000_000_000_000);
-    assert_eq!(rx.try_recv().unwrap(), CastEvent::Seek { ticks: 0 });
+    assert_eq!(sent(&mut rx), CastEvent::Seek { ticks: 0 });
 }
 
 #[test]
@@ -206,10 +212,7 @@ fn set_position_is_a_no_op_for_a_track_id_that_is_not_the_current_one() {
 fn set_position_seeks_when_the_track_id_matches_the_current_item() {
     let (iface, mut rx) = player(playing_status(false, true, true));
     iface.set_position(track_id("item-1"), 5_000_000);
-    assert_eq!(
-        rx.try_recv().unwrap(),
-        CastEvent::Seek { ticks: 50_000_000 }
-    );
+    assert_eq!(sent(&mut rx), CastEvent::Seek { ticks: 50_000_000 });
 }
 
 #[test]

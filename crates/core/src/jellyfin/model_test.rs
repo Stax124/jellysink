@@ -127,18 +127,6 @@ fn a_library_folder_is_a_container_and_a_series_descends_rather_than_plays() {
 }
 
 #[test]
-fn a_session_decodes_from_a_response_carrying_far_more_than_the_id() {
-    let session = Session::deserialize(json!({
-        "Id": "077175b0dc",
-        "NowPlayingItem": resume_episode(),
-        "NowPlayingQueueFullItems": [resume_episode(), resume_episode()],
-        "PlayState": {"PositionTicks": 9167070000i64, "IsPaused": true}
-    }))
-    .unwrap();
-    assert_eq!(session.id, "077175b0dc");
-}
-
-#[test]
 fn a_listing_envelope_decodes_to_its_rows() {
     let list = ItemList::deserialize(json!({
         "Items": [resume_episode()], "TotalRecordCount": 1, "StartIndex": 0

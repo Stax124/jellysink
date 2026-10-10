@@ -1,5 +1,7 @@
 use crate::cli::update::{BIN_NAME, apply_update_from_daemon};
-use crate::daemon::instance::{bind_stop_socket, listen_stop, remove_stop_socket};
+use crate::daemon::control::{
+    Control, EVENT_CAPACITY, bind_control_socket, listen_control, remove_control_socket,
+};
 use crate::daemon::signal::Signal;
 use crate::daemon::{mpris, tray};
 use color_eyre::eyre::WrapErr;
@@ -17,22 +19,28 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let exe = restart_exe_path(&std::env::current_exe().wrap_err("resolving current executable")?);
 
     let _lock = InstanceLock::acquire(&paths)?;
-    let stop_socket = paths.stop_socket();
-    let stop_listener = bind_stop_socket(&stop_socket)?;
+    let control_socket = paths.control_socket();
+    let control_listener = bind_control_socket(&control_socket)?;
 
     let shutdown = Signal::new();
     let restart = Signal::new();
     let (status_tx, status_rx) = tokio::sync::watch::channel(
         jellysink_core::status::PlayerStatus::idle(creds.server.clone(), creds.username.clone()),
     );
-    // Ahead of the tray and mpris, so `status` is answered from the first await
+    let (event_tx, _) = tokio::sync::broadcast::channel(EVENT_CAPACITY);
+    let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
+    // Ahead of the tray and mpris, so a client is answered from the first await
     // rather than after however long those take to come up.
-    tokio::spawn(listen_stop(
-        stop_listener,
-        stop_socket.clone(),
+    tokio::spawn(listen_control(
+        control_listener,
+        control_socket.clone(),
         shutdown.clone(),
-        restart.clone(),
-        status_rx.clone(),
+        Control {
+            status_rx: status_rx.clone(),
+            event_tx: event_tx.clone(),
+            command_tx: command_tx.clone(),
+            restart: restart.clone(),
+        },
     ));
 
     tracing::info!(
@@ -61,10 +69,9 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .wrap_err("SIGINT handler")?;
 
-    let (ext_tx, ext_rx) = tokio::sync::mpsc::unbounded_channel();
     if tokio::time::timeout(
         std::time::Duration::from_secs(3),
-        mpris::start(status_rx.clone(), ext_tx.clone(), shutdown.clone()),
+        mpris::start(status_rx.clone(), command_tx, shutdown.clone()),
     )
     .await
     .is_err()
@@ -75,8 +82,15 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     }
 
     let session_shutdown = shutdown.clone();
-    let session_fut =
-        crate::runtime::run(config, creds, paths, session_shutdown, status_tx, ext_rx);
+    let session_fut = crate::runtime::run(
+        config,
+        creds,
+        paths,
+        session_shutdown,
+        status_tx,
+        event_tx,
+        command_rx,
+    );
     tokio::pin!(session_fut);
 
     let mut do_restart = false;
@@ -100,7 +114,7 @@ pub(crate) async fn cmd_run(paths: Paths) -> color_eyre::Result<()> {
     shutdown.fire();
     // The guaranteed unlink: nothing awaits the listener task, so the process can
     // exit before it observes `shutdown` and removes its own path.
-    remove_stop_socket(&stop_socket);
+    remove_control_socket(&control_socket);
     outcome?;
     if do_restart {
         tracing::info!(path = %exe.display(), "replacing process with updated binary");

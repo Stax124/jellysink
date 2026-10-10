@@ -229,7 +229,7 @@ loading as the user switching subtitles off.
 
 ### `adopt_mpv_track` (`runtime/playback/tracks.rs`)
 
-1. Return early while `transitioning`, or with no current item — a
+1. Return early while a load is up (`Runtime::loading`), or with no current item — a
    file still loading reports the selection of neither the old file nor the
    configured new one.
 2. Read the live property. If it equals the settled value, nothing happened.

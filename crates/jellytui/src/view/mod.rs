@@ -9,7 +9,7 @@ pub(super) mod playing;
 pub(super) mod rail;
 pub(super) mod synopsis;
 
-use crate::app::{App, Daemon, STARTING_POLL, Screen, UpdateCheck};
+use crate::app::{App, Daemon, SPINNER_FRAME, Screen, UpdateCheck};
 use body::{render_browse, render_home, render_search};
 use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::ticks::format_hms;
@@ -265,14 +265,14 @@ fn render_now_playing(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(elapsed), elapsed_area);
 }
 
-/// One frame per `STARTING_POLL`, the redraws a start gets; stepped by the clock
-/// so a keypress redrawing in between does not spin it faster.
+/// One frame per `SPINNER_FRAME`, the redraws the loop gives it; stepped by the
+/// clock so a keypress redrawing in between does not spin it faster.
 fn spinner() -> &'static str {
     const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis());
-    FRAMES[(millis / STARTING_POLL.as_millis()) as usize % FRAMES.len()]
+    FRAMES[(millis / SPINNER_FRAME.as_millis()) as usize % FRAMES.len()]
 }
 
 /// What stands in for the playing item when there is none.

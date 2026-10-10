@@ -1,15 +1,11 @@
-//! The one-shot commands that talk to an already-running daemon over
-//! `stop.sock`.
+//! `jellysink status`: one snapshot from a running daemon's `control.sock`.
 
+use jellysink_core::VERSION;
 use jellysink_core::config::Paths;
-use jellysink_core::instance;
+use jellysink_core::control::Client;
 
-pub(crate) fn cmd_stop(paths: &Paths) -> color_eyre::Result<()> {
-    instance::request_stop(paths)
-}
-
-pub(crate) fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
-    let status = instance::request_status(paths)?;
+pub(crate) async fn cmd_status(paths: &Paths, json: bool) -> color_eyre::Result<()> {
+    let (_, status) = Client::connect(paths, &format!("jellysink {VERSION} status")).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&status)?);
         return Ok(());

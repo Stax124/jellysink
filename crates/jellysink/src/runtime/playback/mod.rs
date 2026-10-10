@@ -9,12 +9,14 @@ use crate::media::PlayRequest;
 use crate::mpv::SelectedTrack;
 use crate::runtime::state::Runtime;
 use color_eyre::eyre::eyre;
+use jellysink_core::control::Origin;
 use serde_json::json;
 
 impl Runtime {
     pub(in crate::runtime) async fn start_current(
         &mut self,
         req: &PlayRequest,
+        origin: Origin,
     ) -> color_eyre::Result<()> {
         let Some(item_id) = self.window.current().map(str::to_string) else {
             self.stop_playback(true).await;
@@ -30,19 +32,15 @@ impl Runtime {
             self.sample_position().await;
             self.send_stopped();
         }
-        self.transitioning = true;
-        self.plays_started += 1;
-        self.publish_status();
+        self.begin_load(Some(item_id.clone()), origin);
 
         let (prepared, item) = match self.prepare_item(&item_id, req).await {
             Ok(pair) => pair,
             Err(e) => {
                 tracing::error!("{e:#}");
+                self.fail_load(&e);
                 if reuse {
                     self.stop_playback(false).await;
-                } else {
-                    self.transitioning = false;
-                    self.publish_status();
                 }
                 return Ok(());
             }
@@ -56,6 +54,7 @@ impl Runtime {
 
         if let Err(e) = self.load_current(&prepared).await {
             tracing::error!("{e:#}");
+            self.fail_load(&e);
             self.stop_playback(false).await;
             return Ok(());
         }
@@ -106,8 +105,10 @@ impl Runtime {
         let prepared = match self.prepare_item(&item_id, &PlayRequest::default()).await {
             Ok((prepared, _)) => prepared,
             Err(e) => {
+                let e = e.wrap_err(format!("preparing {item_id} after a playlist jump"));
+                self.fail_load(&e);
                 self.stop_playback(true).await;
-                return Err(e.wrap_err(format!("preparing {item_id} after a playlist jump")));
+                return Err(e);
             }
         };
         self.send_stopped();
@@ -132,7 +133,7 @@ impl Runtime {
             position_s = jellysink_core::ticks::ticks_to_seconds(self.last_ticks),
             "stopping playback"
         );
-        self.transitioning = false;
+        self.cancel_load(Origin::Daemon);
         // A stale resume offset must never seek a later item.
         self.pending_start_ticks = None;
         self.prepared.clear();

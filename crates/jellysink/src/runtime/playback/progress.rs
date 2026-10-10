@@ -1,5 +1,5 @@
 //! Sampling mpv and reporting where playback has got to, to Jellyfin and to
-//! the status snapshot core publishes over `stop.sock`.
+//! the status `control.sock` pushes to its clients.
 
 use crate::report::{PlayingState, Report};
 use crate::runtime::state::Runtime;
@@ -98,8 +98,8 @@ impl Runtime {
             server: self.api.server.clone(),
             username: self.username.clone(),
             now_playing,
-            loading: self.transitioning,
-            plays_started: self.plays_started,
+            loading: self.loading.is_some(),
+            server_connected: self.server_connected,
         });
     }
 }

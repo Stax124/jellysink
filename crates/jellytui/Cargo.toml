@@ -28,4 +28,4 @@ tracing-subscriber.workspace = true
 tempfile.workspace = true
 # `test-util` freezes the clock, so the throttle tests do not depend on how
 # fast the machine ran the loop. Dev-only: the binary never gets it.
-tokio = { workspace = true, features = ["macros", "test-util"] }
+tokio = { workspace = true, features = ["macros", "test-util", "net"] }

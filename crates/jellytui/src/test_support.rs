@@ -77,7 +77,7 @@ pub(crate) fn playing(item_id: &str, title: &str) -> PlayerStatus {
             art_url: String::new(),
         }),
         loading: false,
-        plays_started: 0,
+        server_connected: true,
     }
 }
 

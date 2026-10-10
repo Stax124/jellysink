@@ -171,7 +171,7 @@ pub(crate) async fn start(shutdown: Signal) -> Option<Tray> {
         Ok(handle) => Some(Tray { handle, apply }),
         Err(e) => {
             tracing::warn!(
-                "system tray unavailable ({e}); use `jellysink stop` or SIGTERM to quit"
+                "system tray unavailable ({e}); use `systemctl --user stop jellysink` or SIGTERM to quit"
             );
             None
         }

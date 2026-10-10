@@ -1,5 +1,6 @@
 pub mod cast;
 pub mod config;
+pub mod control;
 pub mod error;
 pub mod instance;
 pub mod jellyfin;

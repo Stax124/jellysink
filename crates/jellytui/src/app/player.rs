@@ -1,9 +1,15 @@
-//! Driving the daemon: the status poll and the remote-control commands a
-//! keypress turns into.
+//! Driving the daemon: the one `control.sock` connection, the play shown as
+//! starting until its outcome arrives, and what a pushed frame changes.
 
 use super::*;
+use jellysink_core::cast::CastEvent;
+use jellysink_core::control::{Client, Command, DaemonFrame, Event, Origin, ReportKind, Request};
 
-/// What the status socket last said. Until the first poll answers, "no
+const RECONNECT_MIN: Duration = Duration::from_millis(250);
+const RECONNECT_MAX: Duration = Duration::from_secs(2);
+const CLIENT: &str = concat!("jellytui ", env!("CARGO_PKG_VERSION"));
+
+/// What the control socket last said. Until the first connect resolves, "no
 /// daemon" is not yet a fact, so nothing may report one.
 pub(crate) enum Daemon {
     Unknown,
@@ -11,86 +17,136 @@ pub(crate) enum Daemon {
     Connected(PlayerStatus),
 }
 
-/// A play sent from here that no poll has yet shown the daemon finish.
+/// A play sent from here that the daemon has not yet answered with an outcome.
 pub(super) struct PendingPlay {
+    request: u64,
     item_id: String,
     title: String,
-    /// Any higher count in a later status means the daemon has started a play since.
-    plays_started_at_enter: u64,
-    /// What was playing at Enter: the item replacing it also settles a play,
-    /// which is the only sign an older daemon, sending no count, can give.
-    replacing_item_id: Option<String>,
-    sent_at: tokio::time::Instant,
+}
+
+/// The one connection to the daemon, made again with backoff for as long as
+/// the loop runs.
+pub(super) async fn stay_connected(
+    paths: Paths,
+    tx: UnboundedSender<Msg>,
+    mut requests: UnboundedReceiver<Request>,
+) {
+    let mut backoff = RECONNECT_MIN;
+    loop {
+        // Sent before `App` saw the last connection die, and tracked by nobody
+        // since: it must not run on this one.
+        while requests.try_recv().is_ok() {}
+        match Client::connect(&paths, CLIENT).await {
+            Ok((client, status)) => {
+                backoff = RECONNECT_MIN;
+                let connected = Msg::Connected {
+                    client_id: client.id(),
+                    status: Box::new(status),
+                };
+                if tx.send(connected).is_err() || !forward(client, &tx, &mut requests).await {
+                    return;
+                }
+            }
+            Err(e) => tracing::debug!("connecting to jellysink: {e:#}"),
+        }
+        if tx.send(Msg::Disconnected).is_err() {
+            return;
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(RECONNECT_MAX);
+    }
+}
+
+/// `false` once the loop is gone and there is nothing left to connect for.
+async fn forward(
+    mut client: Client,
+    tx: &UnboundedSender<Msg>,
+    requests: &mut UnboundedReceiver<Request>,
+) -> bool {
+    loop {
+        tokio::select! {
+            frame = client.next_frame() => match frame {
+                Ok(Some(frame)) => {
+                    if tx.send(Msg::Control(frame)).is_err() {
+                        return false;
+                    }
+                }
+                Ok(None) => return true,
+                Err(e) => {
+                    tracing::info!("lost jellysink: {e:#}");
+                    return true;
+                }
+            },
+            request = requests.recv() => match request {
+                Some(request) => {
+                    if let Err(e) = client.send(&request).await {
+                        tracing::warn!("sending to jellysink: {e:#}");
+                        return true;
+                    }
+                }
+                None => return false,
+            },
+        }
+    }
 }
 
 impl App {
-    /// The status socket rather than `GET /Sessions`; see `specs/tui.md`.
-    pub(super) fn poll_player(&mut self) {
-        if std::mem::replace(&mut self.poll_in_flight, true) {
-            return;
+    pub(super) fn on_connected(&mut self, client_id: u64, status: PlayerStatus) {
+        // The transition, not every connect: startup's first one is not news.
+        if matches!(self.daemon, Daemon::Absent) {
+            tracing::info!(connected = true, "daemon");
         }
-        let paths = self.paths.clone();
-        self.spawn_msg(async move {
-            let started = std::time::Instant::now();
-            let status = tokio::task::spawn_blocking(move || instance::request_status(&paths))
-                .await
-                .ok()
-                .and_then(Result::ok);
-            tracing::trace!(
-                answered = status.is_some(),
-                elapsed_ms = started.elapsed().as_millis(),
-                "status poll"
-            );
-            Some(Msg::Player(status.map(Box::new)))
-        });
+        self.client_id = Some(client_id);
+        self.on_status(status);
     }
 
-    /// Once per process: see [`Msg::SessionId`].
-    pub(super) fn load_session_id(&self) {
-        let api = self.api.clone();
-        self.spawn_msg(async move {
-            match api.session_for_device().await {
-                Ok(Some(session)) => {
-                    tracing::info!(session_id = %session.id, "found the daemon's session");
-                    Some(Msg::SessionId(session.id))
+    pub(super) fn on_disconnected(&mut self) {
+        if matches!(self.daemon, Daemon::Connected(_)) {
+            tracing::info!(connected = false, "daemon");
+        }
+        self.daemon = Daemon::Absent;
+        self.client_id = None;
+        // The footer already says the daemon is gone.
+        self.pending_play = None;
+        self.follow_playing(None);
+    }
+
+    pub(super) fn on_frame(&mut self, frame: DaemonFrame) {
+        tracing::trace!(?frame, "daemon frame");
+        match frame {
+            DaemonFrame::Status { status } => self.on_status(*status),
+            DaemonFrame::Event(event) => self.on_daemon_event(event),
+            DaemonFrame::Reply {
+                id,
+                error: Some(error),
+            } => {
+                tracing::warn!(id, %error, "jellysink refused a command");
+                if self
+                    .pending_play
+                    .as_ref()
+                    .is_some_and(|pending| pending.request == id)
+                {
+                    self.pending_play = None;
+                    self.message = error;
                 }
-                Ok(None) => None,
-                Err(e) => Some(e.into()),
             }
-        });
+            DaemonFrame::Error { message } => {
+                tracing::warn!(%message, "jellysink could not read a command");
+            }
+            DaemonFrame::Welcome { .. } | DaemonFrame::Reply { error: None, .. } => {}
+        }
     }
 
-    pub(super) fn on_player(&mut self, player: Option<PlayerStatus>) {
-        self.poll_in_flight = false;
-        let first_poll = matches!(self.daemon, Daemon::Unknown);
-        // The transition, not the poll: at 1 Hz the poll itself would fill the
-        // buffer in half an hour.
-        if !first_poll && matches!(self.daemon, Daemon::Connected(_)) != player.is_some() {
-            tracing::info!(connected = player.is_some(), "daemon");
-        }
-        let item_id = player
+    fn on_status(&mut self, status: PlayerStatus) {
+        let item_id = status
+            .now_playing
             .as_ref()
-            .and_then(|status| status.now_playing.as_ref())
             .map(|now_playing| now_playing.item_id.clone());
-        let changed = !first_poll
-            && item_id.as_deref()
-                != self
-                    .now_playing()
-                    .map(|now_playing| now_playing.item_id.as_str());
-        self.daemon = match player {
-            Some(status) => Daemon::Connected(status),
-            None => Daemon::Absent,
-        };
-        self.settle_pending_play();
-        self.poll_due = (self.pending_play.is_some() || self.loading())
-            .then(|| tokio::time::Instant::now() + STARTING_POLL);
-        // Firing before arming is what makes the deferral one poll rather than
-        // none, so the read cannot outrun the daemon's report.
-        if std::mem::take(&mut self.reload_due) {
-            tracing::info!(screen = ?self.screen, "reloading after a playback change");
-            self.reload_screen_and_home();
-        }
-        self.reload_due = changed;
+        self.daemon = Daemon::Connected(status);
+        self.follow_playing(item_id);
+    }
+
+    fn follow_playing(&mut self, item_id: Option<String>) {
         let Some(item_id) = item_id else {
             self.playing_item = None;
             self.playing_requested = None;
@@ -101,47 +157,46 @@ impl App {
         }
     }
 
-    fn settle_pending_play(&mut self) {
-        let Daemon::Connected(status) = &self.daemon else {
-            // The footer already says the daemon is gone.
-            self.pending_play = None;
-            return;
-        };
-        let (loading, plays_started) = (status.loading, status.plays_started);
-        let playing = status
-            .now_playing
-            .as_ref()
-            .map(|now_playing| now_playing.item_id.clone());
-        let Some(pending) = self.pending_play.as_ref() else {
-            return;
-        };
-        let picked_up = plays_started > pending.plays_started_at_enter;
-        let is_playing = playing.as_ref() == Some(&pending.item_id);
-        let elapsed = pending.sent_at.elapsed();
-        let elapsed_ms = elapsed.as_millis();
-        if !loading && is_playing && (picked_up || pending.replacing_item_id != playing) {
-            tracing::info!(item_id = %pending.item_id, elapsed_ms, "play started");
-        } else if !loading && picked_up {
-            tracing::warn!(item_id = %pending.item_id, elapsed_ms, "the daemon could not play it");
-            self.message = format!("jellysink could not play {}", pending.title);
-        } else if !picked_up && elapsed >= START_TIMEOUT {
-            tracing::warn!(item_id = %pending.item_id, elapsed_ms, "the daemon never started it");
-            self.message = format!("jellysink did not start {}", pending.title);
-        } else {
-            return;
+    fn on_daemon_event(&mut self, event: Event) {
+        match event {
+            Event::PlayStarted { origin, .. } if self.answers_pending(origin) => {
+                if let Some(pending) = self.pending_play.take() {
+                    tracing::info!(item_id = %pending.item_id, "play started");
+                }
+            }
+            Event::PlayCancelled { origin, by, .. } if self.answers_pending(origin) => {
+                if let Some(pending) = self.pending_play.take() {
+                    tracing::info!(item_id = %pending.item_id, ?by, "play overtaken");
+                }
+            }
+            Event::PlayFailed { origin, error, .. } if self.answers_pending(origin) => {
+                if let Some(pending) = self.pending_play.take() {
+                    tracing::warn!(item_id = %pending.item_id, %error, "the daemon could not play it");
+                    self.message = format!("jellysink could not play {}", pending.title);
+                }
+            }
+            Event::Reported {
+                report: ReportKind::Stopped,
+                ..
+            } => {
+                tracing::info!(screen = ?self.screen, "reloading after a playback change");
+                self.reload_screen_and_home();
+            }
+            _ => {}
         }
-        self.pending_play = None;
     }
 
-    pub(super) fn on_play_failed(&mut self, item_id: &str, message: String) {
-        if self
-            .pending_play
-            .as_ref()
-            .is_some_and(|pending| pending.item_id == item_id)
-        {
-            self.pending_play = None;
+    fn answers_pending(&self, origin: Origin) -> bool {
+        match (&self.pending_play, self.client_id) {
+            (Some(pending), Some(client)) => {
+                origin
+                    == Origin::Client {
+                        client,
+                        request: pending.request,
+                    }
+            }
+            _ => false,
         }
-        self.on_msg(Msg::Error(message));
     }
 
     /// The title of a play sent from here that the daemon is not playing yet.
@@ -168,55 +223,42 @@ impl App {
             .is_some_and(|now_playing| now_playing.item_id == item_id)
     }
 
-    pub(super) fn session_id(&mut self) -> Option<String> {
-        if let Some(session_id) = &self.session_id {
-            return Some(session_id.clone());
-        }
+    pub(super) fn play(&mut self, item: &Item) {
         // These share the header with the tabs, so they have to stay short
         // enough to survive `view::to_width` on an 80-column terminal.
-        self.message = match self.daemon {
-            Daemon::Unknown => "checking for jellysink — try again",
-            Daemon::Absent => "jellysink not connected",
-            Daemon::Connected(_) => {
-                // Connected, but the one-off lookup has not landed yet.
-                self.load_session_id();
-                "looking up the session — try again"
+        match self.daemon {
+            Daemon::Unknown => {
+                self.message = "checking for jellysink — try again".to_string();
+                return;
             }
+            Daemon::Absent => {
+                self.message = "jellysink not connected".to_string();
+                return;
+            }
+            Daemon::Connected(_) => {}
         }
-        .to_string();
-        None
-    }
-
-    pub(super) fn play(&mut self, item: &Item) {
-        let Some(session_id) = self.session_id() else {
-            return;
-        };
-        let api = self.api.clone();
         let (item_id, start_ticks) = (item.id.clone(), item.resume_ticks());
         tracing::info!(%item_id, title = item.name.as_deref().unwrap_or(""), start_ticks, "play");
-        self.pending_play = match &self.daemon {
-            Daemon::Connected(status) => Some(PendingPlay {
-                item_id: item_id.clone(),
-                title: item.label(),
-                plays_started_at_enter: status.plays_started,
-                replacing_item_id: status
-                    .now_playing
-                    .as_ref()
-                    .map(|now_playing| now_playing.item_id.clone()),
-                sent_at: tokio::time::Instant::now(),
+        self.last_request += 1;
+        let request = Request {
+            id: self.last_request,
+            command: Command::Cast(CastEvent::PlayNow {
+                item_ids: vec![item_id.clone()],
+                start_index: 0,
+                start_ticks: Some(start_ticks),
+                audio_stream_index: None,
+                subtitle_stream_index: None,
+                media_source_id: None,
             }),
-            // No count to measure the daemon's answer against.
-            Daemon::Unknown | Daemon::Absent => None,
         };
-        self.poll_due = Some(tokio::time::Instant::now() + STARTING_POLL);
-        self.spawn_msg(async move {
-            api.play_now(&session_id, &item_id, start_ticks)
-                .await
-                .err()
-                .map(|e| Msg::PlayFailed {
-                    item_id,
-                    message: format!("{e:#}"),
-                })
+        if self.control_tx.send(request).is_err() {
+            tracing::warn!("the jellysink connection task is gone");
+            return;
+        }
+        self.pending_play = Some(PendingPlay {
+            request: self.last_request,
+            item_id,
+            title: item.label(),
         });
     }
 

@@ -52,8 +52,8 @@ impl Paths {
         self.config_dir.join("instance.lock")
     }
 
-    pub fn stop_socket(&self) -> PathBuf {
-        self.config_dir.join("stop.sock")
+    pub fn control_socket(&self) -> PathBuf {
+        self.config_dir.join("control.sock")
     }
 
     pub fn mpv_socket(&self) -> PathBuf {

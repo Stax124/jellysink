@@ -137,14 +137,6 @@ impl Item {
     }
 }
 
-/// One entry of `GET /Sessions`. Only the id: the response also embeds the
-/// whole play queue as full items, which is why nothing else here reads it.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
-#[serde(rename_all = "PascalCase", default)]
-pub struct Session {
-    pub id: String,
-}
-
 /// The `{ "Items": [...] }` envelope every listing endpoint returns.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]

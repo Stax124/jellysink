@@ -2,34 +2,35 @@
 
 `jellytui` browses Jellyfin in the terminal and starts playback in a running
 jellysink. This note covers the decisions the code cannot state for itself: why
-it is a client of the daemon rather than a second copy of it, and why its
-per-second state comes from a Unix socket rather than the obvious HTTP call.
+it is a client of the daemon rather than a second copy of it, and why it talks
+to it over a Unix socket rather than through the server.
 
 ## It is a remote, not a player
 
-The daemon already registers as a controllable Jellyfin session
-(`post_capabilities` at the top of every `run_session`), so the frontend needs
-none of the playback machinery — it sends what the web app sends and the server
-relays it:
+The daemon already does the playing — queue, series autoplay, remembered
+tracks, progress reporting — so the frontend needs none of that machinery. It
+sends one command over the daemon's control socket and watches what the daemon
+pushes back (`specs/session.md`, *The control socket*):
 
 ```
-jellytui ──HTTP──> Jellyfin ──WebSocket──> jellysink ──> mpv
+jellytui ──control.sock──> jellysink ──> mpv
 ```
 
-| jellytui       | HTTP                                                        | arrives as           |
-| -------------- | ----------------------------------------------------------- | -------------------- |
-| Enter on a row | `POST /Sessions/{id}/Playing?PlayCommand=PlayNow&ItemIds=…` | `CastEvent::PlayNow` |
+| jellytui       | frame on `control.sock`                                | arrives as                                  |
+| -------------- | ------------------------------------------------------ | ------------------------------------------- |
+| Enter on a row | `{"id": n, "command": "play_now", "item_ids": […], …}` | `CastEvent::PlayNow` from `Origin::Client`  |
 
 **That row is the whole table, and deliberately so.** The stream plays in the
 user's own mpv, which owns pause, seek, volume, mute and fullscreen already,
 and the daemon adopts mpv's own playlist navigation for free
 (`adopt_playlist_pos`, `specs/playlist.md`) while a closed window is already a
 stop. Binding any of them here as well is two sources of truth for state mpv is
-authoritative about, and the second one is always the stale one. `cast.rs` still
-parses the full vocabulary — the web app, a phone and MPRIS all send it — so
-that coverage belongs in `cast_test.rs`, not beside a sender.
+authoritative about, and the second one is always the stale one. The socket
+carries the full `CastEvent` vocabulary for other controllers, and `cast.rs`
+still parses it from the web app, a phone and MPRIS, so that coverage belongs in
+`cast_test.rs`, not beside a sender.
 
-The table is session commands, and `t` (`Api::set_played`) is not one: it writes
+The table is daemon commands, and `t` (`Api::set_played`) is not one: it writes
 user data straight to the server and the daemon never sees it, which is also why
 it works with nothing playing and no daemon running at all.
 
@@ -43,22 +44,18 @@ the daemon's. The alternative — a `jellysink browse` subcommand owning its own
 `paths.mpv_socket()` being a fixed path: it could not run beside the daemon most
 users have under systemd, and it would mean two ways to be a player.
 
+The play goes over the socket rather than through the server, which relays a
+`PlayNow` to the daemon just as well, because the server's command has no field
+to carry an id: through it, jellytui could only guess which play was its own.
+Over the socket every event names the command that caused it (*A play
+starting*). The socket is local, so jellytui drives only a jellysink on the
+same machine — it shares that machine's `cred.json` for browsing anyway.
+
 **Two consequences.** The frontend is useless without a running daemon and says
-so rather than failing obscurely (`session_id` sets the "jellysink not
-connected" line). And anything it sends must be something `cast.rs` parses —
-the two halves are joined through a third process, so a misspelled command name
-fails silently at runtime. `core`'s `jellyfin/remote_test.rs` holds the
-`PLAY_NOW` constant against `CastEvent::from_ws` to catch that in CI, and takes
-a row per command sent.
-
-## Finding the daemon's session
-
-`GET /Sessions?deviceId={device_id}`, using the device id from `cred.json` —
-*not* a match on the client name. A reinstall leaves a stale session behind with
-the same `Client` of `"jellysink"`, and commands posted to that one go nowhere.
-Sharing the stored credentials means the server sees one session for both
-processes, which is what makes "my target is my own session" true; the cost is
-that jellytui only drives a jellysink on the same machine.
+so rather than failing obscurely (`play` sets the "jellysink not connected"
+line). And the frame tags and field names are a contract between two binaries
+that update separately: `core`'s `control_test.rs` and `cast_test.rs` pin every
+one, so a rename fails CI rather than going silent at runtime.
 
 ## Updating
 
@@ -83,9 +80,10 @@ download.
 
 **Replacing the daemon's binary is not restarting the daemon.** The install
 renames over the path, so a running jellysink keeps the inode it mapped and
-plays on until it is asked to restart. Whichever binary ran the update asks, over
-`stop.sock` — there is one flow (`install_both`), and the tray, `jellysink update`
-and `jellytui update` all reach the daemon the same way. It is asked only when
+plays on until it is asked to restart. Whichever binary ran the update sends a
+`restart` command on `control.sock` and waits for its reply — there is one flow
+(`install_both`), and the tray, `jellysink update` and `jellytui update` all
+reach the daemon the same way. It is asked only when
 the daemon's own binary was one of the two replaced: a restart ends playback, and
 a frontend-only update is not worth that.
 
@@ -100,9 +98,10 @@ screen would leave the detached input thread parked in `read` with no way to
 hand stdin back.
 
 A machine can still end up running a daemon older than the `jellytui` driving
-it — the binary on disk is current but the process predates it. That keeps
-working: the two are joined only by the command names in `cast.rs`, which are
-Jellyfin's own.
+it — the binary on disk is current but the process predates it. Within one
+`PROTOCOL` that keeps working, since additions are new fields and frame types
+that either side skips. Across a protocol change it reads as "jellysink not
+connected" until the daemon restarts: the skew is accepted rather than handled.
 
 ## Staying responsive
 
@@ -122,6 +121,13 @@ are the same rule four times — **the view outlives the thing it points into**:
   screen, so a reload or a resize that moves the cursor off the drawn tiles
   scrolls it back as a keypress would.
 
+The daemon connection is one long-lived task too (`player::stay_connected`). It
+forwards every frame into the same `Msg` channel, so the loop has no arm for it,
+and takes commands from `App` over a second channel. On a close or a failed
+connect it sends `Msg::Disconnected` and connects again with backoff, 250 ms
+doubling to 2 s, which also rides out the daemon's restart handoff. Commands
+still queued when a connection dies are dropped, never replayed into the next.
+
 ## Where the footer's state comes from
 
 Not from `GET /Sessions`. That response embeds `NowPlayingQueueFullItems` — a
@@ -132,12 +138,12 @@ that large after playback stops because the queue persists. Polled once a second
 on a `current_thread` runtime, that is megabytes of download, TLS decryption and
 JSON parsing per second on the thread that draws the UI.
 
-So the footer polls the daemon's own status socket (`instance::request_status`,
-the one `jellysink status` uses): **79 bytes**, no TLS, no JSON tree, and it
-carries the queue position `/Sessions` made us compute. The blocking call runs
-in `spawn_blocking` so a wedged daemon cannot stall the loop. `/Sessions` is
-still needed for the session id that addresses commands, but that is fetched
-**once** in the background at startup and cached.
+So the daemon pushes it: a `status` frame on `control.sock` after every change,
+about **79 bytes**, no TLS, no JSON tree, carrying the queue position
+`/Sessions` made us compute. During playback the daemon's progress tick makes
+that one a second, and each frame is a redraw; idle, nothing arrives and nothing
+redraws. A connection always opens with a snapshot, so the footer is right the
+moment it connects or reconnects, whatever it missed while away.
 
 Two things follow:
 
@@ -154,88 +160,66 @@ Enter to mpv having the file is two to three seconds, most of it mpv's spawn,
 and the footer spends them on a spinner. It has two sources because neither
 covers the wait alone:
 
-- **`PlayerStatus::loading`** is the daemon's `transitioning` flag
-  (`specs/session.md`), up from the moment it takes a play until mpv's
-  `file-loaded`. It covers mpv opening the file after the item is published,
-  and plays cast from a phone or the web app, which this frontend never sent.
+- **`PlayerStatus::loading`** is whether the daemon has a load up
+  (`Runtime::loading`, `specs/session.md`), from the moment it takes a play
+  until mpv's `file-loaded`. It covers mpv opening the file after the item is
+  published, and plays cast from a phone or the web app, which this frontend
+  never sent.
 - **`PendingPlay`** is set on Enter, because the daemon cannot report a command
-  it has not received and the poll can be a second behind it. It shows the
-  title the user pressed until the daemon is playing that item.
+  it has not received. It holds the command's request id and shows the title
+  the user pressed until the daemon is playing that item.
 
-**A poll is a snapshot, not a history**, so `loading` alone cannot settle the
-pending play: a load that fails in a few milliseconds rises and falls between
-two polls, and a replay of the item already playing looks exactly like the play
-it replaces. `PlayerStatus::plays_started` is what settles it — `start_current`
-bumps it, `PendingPlay` holds the value from Enter, and any higher one means the
-daemon has started a play since. Each poll then decides:
+`PendingPlay` is settled only by an event whose origin is this connection's
+`client_id` and that request id:
 
-- the item playing with `loading` clear is done, and is not announced;
-- a play picked up whose `loading` cleared without the item is
-  `jellysink could not play …` in the header;
-- one never picked up within `START_TIMEOUT` is `jellysink did not start …`. A
-  slow load the daemon has picked up is never timed out: it is still the
-  daemon's to finish;
-- a daemon that stops answering drops it silently, since the footer already
-  says so.
+- `play_started` clears it, and is not announced;
+- `play_failed` puts `jellysink could not play …` in the header;
+- `play_cancelled` clears it quietly — the footer already shows what replaced
+  it;
+- a `reply` refusing the command clears it and puts the daemon's reason in the
+  header — the daemon refuses commands while it has no session with the server;
+- a disconnect clears it, since the footer already says the daemon is gone.
 
-The count names no play: a Jellyfin `PlayNow` has no field to carry an id of
-ours, and the count at Enter is the last poll's. So any play the daemon starts
-between that poll and the command landing — another client's, or its own
-autoplay — is taken for this one. An older daemon sends neither field (`serde(default)` reads
-them as idle), so there a play is done once its item appears in place of
-whatever was playing, and a replay is only ever reported by the timeout.
+Another client's play of the same item, a cast from a phone and the daemon's
+own autoplay all carry other origins and only drive the footer. There is no
+timeout: the daemon sends exactly one outcome for every `play_loading`, and a
+daemon that dies is a disconnect.
 
-While either is up, the next poll is chained `STARTING_POLL` behind each reply
-instead of waiting for the 1 Hz tick: the spinner ends promptly and gets its
-redraws. `poll_in_flight` keeps that and the tick to one request at a time —
-`stop.sock` answers one connection at a time, and its reply timeout is longer
-than `STARTING_POLL`.
+While either source is up, the loop wakes every `SPINNER_FRAME` (100 ms) so the
+spinner turns; otherwise nothing redraws between frames and keypresses.
 
 ## Reloading on a playback change
 
 Browse rows are fetched once, when the level is opened, so an episode watched
 through jellysink leaves every view that names it wrong — an unticked row, a
-resume point that has moved, a Next Up that has advanced a week. The poll above
-already carries the answer: `on_player` compares the polled item id with the
-previous one, and any difference is a playback change. `Some` → `None` is a
-stop or a closed mpv window, `Some(a)` → `Some(b)` an episode handing over,
-`None` → `Some` a start — one comparison covers all three, so there is nothing
-to subscribe to and no second connection to keep up.
-
-**The reload is deferred by one poll.** `stop_playback` queues its `Stopped`
-report onto the report sink and calls `publish_status` without waiting for the
-POST, so at the instant jellytui can see the change the server may still answer
-with the watched state that report is about to replace. The change therefore
-arms `reload_due` and the *following* poll fires it, which is why `on_player`
-fires before it arms — doing it the other way round collapses the deferral to
-nothing. A second is free here: the poll ticks anyway, so this costs a `bool`
-and no timer.
-
-The first poll is exempt — `Daemon::Unknown`, the state the daemon-connected
-log line checks too: startup has just loaded Home, and finding something already
-playing is not news about it.
+resume point that has moved, a Next Up that has advanced a week. The daemon's
+report sink sends a `reported` event once the server has answered a report, and
+a `reported` `stopped` — a stop, a closed mpv window, an episode handing over —
+reloads at once, at the moment the server's watched state is current. The status
+cannot be the trigger: `stop_playback` publishes it without waiting for the
+`Stopped` POST, so a read on the status change can still get the watched state
+that report is about to replace.
 
 What reloads is the current screen plus Home, always — Continue Watching and
 Next Up are what finishing an episode invalidates, and they are rarely the
-screen that was up when it finished. `refresh` (the `r` key) is the same
-`reload_current_screen` call followed by a poll, so the two cannot drift.
+screen that was up when it finished. The `r` key is the same
+`reload_current_screen` call, so the two cannot drift.
 
 `reload_screen_and_home` has a second caller: a successful `t` reaches it too,
-because marking something watched invalidates exactly what finishing it does.
-There the reload is what makes the tick appear, so it is not deferred — the
-server has already answered.
+because marking something watched invalidates exactly what finishing it does,
+and there the server has already answered.
 
-The cost is one duplicate pair of requests when the Playing screen is up as an
-episode hands over: the existing `load_playing` chain fires on the change
-itself. That is deliberate — the immediate fetch is what fills the Playing
-screen, and the deferred one is what corrects the episode list's watched marks,
-which the immediate fetch reads too early.
+The Playing screen's own lookups follow the status instead: a new item id there
+loads the item and its season at once, and the `reported` reload fetches them
+again once the watched marks are current. That one duplicate pair of requests
+per handover is deliberate — the immediate fetch is what fills the Playing
+screen, and the later one is what corrects the episode list's watched marks.
 
 ## Where a complaint goes
 
 The bottom row is the key bindings and nothing else — a message there hides
 every binding the user might need to recover with. `App::message` (a failed
-request, a command sent before the session id landed) is drawn in the
+request, a play sent with no daemon connected) is drawn in the
 **header**, elided by `view::to_width`, and retired by the next keypress.
 
 The header holds four things: the tabs, that message, the update badge and the
@@ -255,9 +239,9 @@ exception and stays visible in the log pane, because no arrow reaches top or
 bottom.
 
 The dot (`view::daemon_status`) answers the one question the whole frontend
-rests on: did the status socket reply. Green for a daemon that answered, red for
-one that did not, and **grey until the first poll returns** — showing red for
-that first second would be a lie about a daemon that is fine. A successful play
+rests on: is the control socket connected. Green while it is, red while it is
+not, and **grey until the first connect resolves** — showing red for that first
+moment would be a lie about a daemon that is fine. A successful play
 is not announced: the footer turning from a spinner into the daemon's own title
 is the confirmation, and only a failed one reaches the header (*A play starting*).
 
@@ -563,15 +547,16 @@ the text takes the whole width, the way the rail vanishes rather than crowding
 the list — `playing::still_rect` returns `None` and `App::visible_covers` asks
 for nothing.
 
-The status socket carries a title and a position, not a synopsis or a season, so
+The status frame carries a title and a position, not a synopsis or a season, so
 this screen makes two requests of its own — `/Items/{id}`, then that episode's
 season. Both are keyed by the item id they were asked for and dropped if
 playback has moved on. Until they land the daemon's `display_title` holds the
 screen, so it is never blank.
 
-The lookup is sent once per item id (`App::playing_requested`), not whenever the
-poll finds no item: a lookup that failed, or is still in flight, would otherwise
-go out again every second, with a warning and a header complaint each time.
+The lookup is sent once per item id (`App::playing_requested`), not with every
+status that finds no item: a lookup that failed, or is still in flight, would
+otherwise go out again every second, with a warning and a header complaint each
+time.
 
 ## The log pane
 
@@ -585,16 +570,17 @@ an `EnvFilter` plus one `Layer` writing `LogLine`s into a bounded `VecDeque` —
 `fmt` layer, so nothing can reach stdout. The filter comes from `core`'s
 `log_filter`, so `RUST_LOG` means here what it means for the daemon, and
 `jellysink_core=debug` turns on the Jellyfin HTTP layer's own events too. The
-daemon's logs are **not** here: it is another process, and `stop.sock` has no
-command that would carry them.
+daemon's logs are **not** here: it is another process, and `control.sock`
+carries no logs.
 
 Levels are split so the default `info` is already worth reading: `info` is what
 the user did that had an effect (a play, a command sent, a search, a level
 opened) plus every request's elapsed time and row count; `debug` adds a line per
-keypress; `trace` adds the status poll and the per-cover fetch/decode
-timings. The 1 Hz poll is deliberately not at `info` — at that rate it would push
-everything else out of a 2000-line buffer inside half an hour. What is logged at
-`info` is the *transition*, connected to not and back.
+keypress; `trace` adds every daemon frame and the per-cover fetch/decode
+timings. Status frames are deliberately not at `info`: a second apart during
+playback, they would push everything else out of a 2000-line buffer inside half
+an hour. What is logged at `info` is the *transition*, connected to not and
+back.
 
 Scrolling is anchored by sequence number, not by index: the ring evicts from the
 front, so an index into it slides under a paused reader. `Ring` counts

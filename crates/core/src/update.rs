@@ -2,7 +2,7 @@
 
 use crate::VERSION;
 use crate::config::Paths;
-use crate::instance;
+use crate::{control, instance};
 use color_eyre::eyre::{WrapErr, eyre};
 use self_update::ReleaseAsset;
 use self_update::backends::github;
@@ -160,7 +160,7 @@ pub async fn install_both(paths: &Paths, bin_name: &str, force: bool) -> color_e
     }
 
     if daemon_replaced && instance::is_running(paths) {
-        match instance::request_restart(paths) {
+        match control::request_restart(paths).await {
             Ok(()) => println!("Restarting the running daemon."),
             Err(e) => println!("Updated, but could not restart the daemon: {e:#}"),
         }

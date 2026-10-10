@@ -212,9 +212,9 @@ pub(super) enum EndFileAction {
     Stop,
 }
 
-pub(super) fn end_file_action(transitioning: bool, reason: EndFileReason) -> EndFileAction {
+pub(super) fn end_file_action(loading: bool, reason: EndFileReason) -> EndFileAction {
     // Replacing a file ends the old one with `stop`; an error is the new one failing.
-    if transitioning && reason != EndFileReason::Error {
+    if loading && reason != EndFileReason::Error {
         return EndFileAction::Ignore;
     }
     match reason {

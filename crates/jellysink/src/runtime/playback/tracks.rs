@@ -106,7 +106,7 @@ impl Runtime {
     /// a Jellyfin stream index against the last settled selection.
     pub(in crate::runtime) async fn adopt_mpv_track(&mut self, kind: TrackKind) {
         // A loading file reports neither the old selection nor the new one.
-        if self.transitioning || self.current.is_none() {
+        if self.loading.is_some() || self.current.is_none() {
             return;
         }
         let Some(selected) = self.read_mpv_track(kind).await else {

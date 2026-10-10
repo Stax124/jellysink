@@ -2,8 +2,10 @@
 //! Fail-open like the tray: no session bus is a warning, not a fatal error.
 
 use crate::daemon::signal::Signal;
+use crate::runtime::CastCommand;
 use jellysink_core::APP_NAME;
 use jellysink_core::cast::CastEvent;
+use jellysink_core::control::Origin;
 use jellysink_core::status::PlayerStatus;
 use jellysink_core::ticks::{micros_to_ticks, ticks_to_micros};
 use std::collections::HashMap;
@@ -16,13 +18,16 @@ const BUS_NAME: &str = "org.mpris.MediaPlayer2.jellysink";
 
 struct Shared {
     status_rx: watch::Receiver<PlayerStatus>,
-    cmd_tx: mpsc::UnboundedSender<CastEvent>,
+    cmd_tx: mpsc::UnboundedSender<CastCommand>,
     shutdown: Signal,
 }
 
 impl Shared {
-    fn send(&self, ev: CastEvent) {
-        let _ = self.cmd_tx.send(ev);
+    fn send(&self, event: CastEvent) {
+        let _ = self.cmd_tx.send(CastCommand {
+            event,
+            origin: Origin::Mpris,
+        });
     }
 }
 
@@ -315,7 +320,7 @@ async fn emit_changes(connection: zbus::Connection, mut status_rx: watch::Receiv
 /// owning the MPRIS name, is a warning and not a fatal error.
 pub(crate) async fn start(
     status_rx: watch::Receiver<PlayerStatus>,
-    cmd_tx: mpsc::UnboundedSender<CastEvent>,
+    cmd_tx: mpsc::UnboundedSender<CastCommand>,
     shutdown: Signal,
 ) {
     let shared = Arc::new(Shared {

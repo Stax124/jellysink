@@ -80,7 +80,7 @@ async fn live_smoke_test_against_the_real_session_bus() {
     )
     .await
     .unwrap();
-    assert_eq!(cmd_rx.recv().await.unwrap(), CastEvent::Next);
+    assert_eq!(cmd_rx.recv().await.unwrap().event, CastEvent::Next);
 
     conn.call_method(
         Some(bus_name.as_str()),

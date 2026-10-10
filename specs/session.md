@@ -29,18 +29,24 @@ everything cooperatively scheduled.
 
 | Task              | Produces                             | Spawned by                       | Lifetime                            |
 | ----------------- | ------------------------------------ | -------------------------------- | ----------------------------------- |
-| Report sink       | nothing; consumes `report_tx`        | `run`                            | The daemon session.                 |
+| Report sink       | `reported` events; consumes `report_tx` | `run`                         | The daemon session.                 |
 | mpv IPC loop      | `MpvEvent`s and command replies      | `MpvSession::spawn`              | One mpv process; its `MpvSession`.  |
 | WebSocket reader  | `ws_rx` (`WsIncoming`)               | `run_session`                    | One WebSocket connection.           |
 | Update check      | nothing; badges the tray             | `cmd_run` (`spawn_update_check`) | Detached; ends after one check.     |
 | Tray update apply | nothing; consumes `apply`            | `cmd_run`                        | Detached; the process.              |
-| Stop socket listener | nothing; answers `stop.sock`      | `cmd_run`                        | Detached; until `shutdown`.         |
+| Control listener  | accepts `control.sock` into a `JoinSet` of connection tasks | `cmd_run`         | Detached; until `shutdown`.         |
+| Control connection | status, events and replies to one client | `listen_control`             | Its `JoinSet`; until the client leaves or the listener ends. |
 | MPRIS emitter     | `PropertiesChanged`/`Seeked` from `status_rx` | `mpris::start`          | Detached; the D-Bus connection.     |
 
-Two channels cross layers: `status_tx`/`status_rx` (a `watch` of `PlayerStatus`,
-written by `Runtime`, read by `instance::listen_stop` for `jellysink status` and
-by MPRIS) and `ext_tx`/`ext_rx` (unbounded `CastEvent`, written by MPRIS, read
-by `run_session`).
+Three channels cross layers, all created in `cmd_run`:
+
+- `status_tx`/`status_rx`, a `watch` of `PlayerStatus`, written by `Runtime` and
+  read by each control connection and by MPRIS;
+- `event_tx`, a `broadcast` of `Event` (`EVENT_CAPACITY`, 64), written by
+  `Runtime` and the report sink and subscribed by each control connection;
+- `command_tx`/`command_rx`, unbounded `CastCommand` (a `CastEvent` and its
+  `Origin`), written by MPRIS and the control connections and read by
+  `run_session`.
 
 Only the WebSocket reader is session-scoped. The report sink is created once in
 `run`, before the reconnect loop, precisely so a reconnect does not have to
@@ -53,7 +59,8 @@ handle. Without it a reconnect spawns a fresh WebSocket reader and leaves the
 previous one running; against a half-open TCP connection that never returns, so
 it leaks for the life of the process. The four `cmd_run` and `mpris` tasks are
 deliberately detached instead: they are process-scoped, and the process ends by
-`exec` or exit.
+`exec` or exit. The control connections are held in the listener's `JoinSet`, so
+they end with it.
 
 `run_session`'s `select!` arms, in the order they appear:
 
@@ -64,19 +71,50 @@ deliberately detached instead: they are process-scoped, and the process ends by
 | `progress.tick()`  | `tick_progress` — sample mpv and report, once a second.                                                                                            |
 | `ws_rx.recv()`     | Dispatch the parsed `WsIncoming`; see below.                                                                                                      |
 | `next_mpv_event`   | `on_mpv_event`. Pends forever while no mpv runs; a closed event channel reads as `Exited`, whose handler drops the session.                        |
-| `ext_rx.recv()`    | An MPRIS `CastEvent` to `Runtime::handle`. Disabled by `ext_closed` once the senders are gone — MPRIS is optional, so a `None` here is not fatal.  |
+| `command_rx.recv()` | A `CastCommand` to `Runtime::handle` with its origin. Disabled by `commands_closed` once the senders are gone — MPRIS and the control socket are optional, so a `None` here is not fatal. |
 
 (The outer `run` loop has a second, two-arm `select!`: `shutdown.fired()` or the
 backoff `sleep`.)
 
 `ws_rx` carries a parsed `WsIncoming`, not the raw frame — the reader task does
 that parsing so `run_session`'s loop never blocks on it. `Cast(CastEvent)` goes
-to `Runtime::handle`; `ForceKeepAlive` rebuilds the keepalive interval;
+to `Runtime::handle` with `Origin::Jellyfin`; `ForceKeepAlive` rebuilds the keepalive interval;
 `KeepAlive` and `Ignored` are no-ops. **A `None` from `ws_rx.recv()` must return
 an `Err`.** The reader owns the sender, so `None` means it is gone — the same
 condition a closed socket reports. A closed receiver is ready immediately and
 forever, so an empty arm body would leave this arm permanently hot and spin the
 loop.
+
+## The control socket
+
+`control.sock` speaks newline-delimited JSON, one frame per line of at most 64
+KiB. `control::listen_control` accepts in a two-arm `select!` (`shutdown`,
+`accept`) and spawns one `serve` task per client into its `JoinSet`, at most
+`MAX_CONNECTIONS` (16); the next is accepted and closed at once. Finished tasks
+are reaped before that count is taken, so a client that leaves frees its slot.
+
+A connection must open with a `hello` in `PROTOCOL` within `HELLO_TIMEOUT`, or
+it is closed (another protocol gets an `error` frame first). It is then sent a
+`welcome` and the current status, so a client that connects or reconnects is
+correct at once. Its `select!` is `biased`, in this order:
+
+| Arm                   | On firing                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------ |
+| `status_rx.changed()` | Write the latest status. A `watch`, so a slow client gets the newest, never a backlog.     |
+| `events.recv()`       | Write the event. `Lagged` drops the client: it reconnects and the snapshot resyncs it.     |
+| `lines.next_line()`   | Answer the command: a `reply` with its `id`, or an `error` for a line with no usable `id`. |
+
+The status goes before an event, so a client reading an outcome already has the
+state it led to. Every write is bounded by `WRITE_TIMEOUT` (2 s): a client that
+stops reading is dropped and never stalls the daemon. `restart` is answered
+before the signal fires, so the updater hears it landed before the process
+`exec`s. A cast command is refused with an error `reply` while the daemon has no
+server session (`PlayerStatus::server_connected`): `run_session` is what reads
+`command_rx`, so one accepted then would wait for the next session and play long
+after its client gave up. A shutdown closes every connection before `run`'s
+final `stop_playback`, so a client sees a load cut short by it as a disconnect
+rather than a `play_cancelled`. Nothing in a frame carries the access token (`PlayerStatus::art_url` is
+the anonymous image endpoint).
 
 ## Reconnecting
 
@@ -152,14 +190,14 @@ event tagged with the process it came from to get the same guarantee.
 `Notify::notify_waiters`. `notify_waiters` stores no permit — it only wakes
 futures already registered — and every receiver here re-creates its future on
 each loop iteration, around loop bodies that routinely await mpv IPC with a 10 s
-timeout, so a tray Quit or a `jellysink stop` landing in that window was
+timeout, so a tray Quit landing in that window was
 silently dropped. `fired()` is cancel-safe: dropping the future never consumes
 the latch.
 
 | Signal     | Fired by                                                                                             | Consumed by                                    |
 | ---------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `shutdown` | tray Quit, MPRIS `Quit`, `stop.sock` `stop`, `cmd_run` unconditionally after its top-level `select!`  | `run_session`'s loop, `instance::listen_stop`.  |
-| `restart`  | `stop.sock` `restart` (any update path)                                                              | `cmd_run`, which then `exec`s the new binary.   |
+| `shutdown` | tray Quit, MPRIS `Quit`, `cmd_run` unconditionally after its top-level `select!`                     | `run_session`'s loop, `control::listen_control`. |
+| `restart`  | a control client's `restart` command (any update path), once its reply is written                     | `cmd_run`, which then `exec`s the new binary.   |
 | `apply`    | tray **Install update**                                                                              | The update task in `cmd_run`.                   |
 
 `apply` is the one edge-triggered signal, so its consumer calls `take()` to
@@ -169,24 +207,33 @@ instead of running again.
 `cmd_run` selects over the session future, SIGTERM, SIGINT and `restart`;
 whichever arm resolves, `shutdown.fire()` runs unconditionally right after, so
 any way the daemon leaves that `select!` still tells the session loop to stop.
-The listener is not an arm, so a tray Quit or a `stop` ends `cmd_run` through
+The listener is not an arm, so a tray Quit ends `cmd_run` through
 the session future — which returns only once `stop_playback` has finished. The `restart` arm additionally sets a flag and
 **awaits the session future** before returning, so mpv is torn down and the
 final report sent before the process replaces itself.
 
-## The `transitioning` flag
+## The loading play
 
-One boolean on `Runtime` gates every mpv `end-file` (and every `sid`/`aid`
-change, see `specs/tracks.md`) while we are the ones replacing the file.
+`Runtime::loading` (`Option<Load>`: the item, where known, and the `Origin` that
+asked) gates every mpv `end-file` (and every `sid`/`aid` change, see
+`specs/tracks.md`) while we are the ones replacing the file. Being `Some` is the
+gate; `runtime/loading.rs` is the only code that raises or settles it.
 
-| Set by                                                                      | Cleared by                                                             |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `start_current`, `advance_in_mpv`, `play_previous`                          | `on_file_loaded`, `stop_playback`, and every failed step that set it.   |
+| Raised by (`begin_load`)                           | Settled by                                                                                                                                                                    |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start_current`, `advance_in_mpv`, `play_previous` | `finish_load` in `on_file_loaded` (`play_started`); `fail_load` for a failed prepare, `load_current`, `playlist-next`/`-prev`, adopt or an mpv `error` end-file (`play_failed`); `cancel_load` for a newer load or a Stop, by its origin, and in `stop_playback` for anything else, by `daemon` (`play_cancelled`). |
+
+**Every `play_loading` gets exactly one outcome**, which is what lets a client
+wait on its own command with no timeout. Settling publishes the status before it
+sends the event, so no client sees an outcome followed by an older status. A
+failed load's `error` goes through `redact_api_key`: it comes from error chains
+that can carry a stream URL.
 
 It is also what `PlayerStatus::loading` reports, which is why `start_current`
-sets it before preparing the item, while no mpv may be running yet to gate, and
-bumps `plays_started` beside it: jellytui shows a play as starting until it
-clears (`specs/tui.md`).
+raises it before preparing the item, while no mpv may be running yet to gate:
+a client sees a load in progress by it even when the command was not its own
+(`specs/tui.md`). `playlist-prev` raises it with no item id: the window
+adopts the item only on `file-loaded`.
 
 Nothing else needs gating during a stop: `stop_playback` runs to completion
 inside one `select!` arm and drops the `MpvSession`, and its queued events, with
@@ -196,20 +243,20 @@ it.
 
 | Condition                           | Action                              |
 | ----------------------------------- | ----------------------------------- |
-| `transitioning`, reason not `error` | `Ignore` — we caused this end-file. |
+| `loading`, reason not `error`       | `Ignore` — we caused this end-file. |
 | Reason `eof` or `redirect`          | `Advance`                           |
 | Reason `quit`, `stop` or `error`    | `Stop`                              |
 | Reason `other`                      | `Ignore`                            |
 
 An `error` is never ours: replacing a file ends the old one with `stop`, so an
-`error` while transitioning is the file we asked for failing to open. That is a
+`error` while loading is the file we asked for failing to open. That is a
 stop whether or not mpv would go on to a queued stub, and with nothing queued no
-`file-loaded` would ever clear the flag.
+`file-loaded` would ever settle the load.
 
-**Every step that sets `transitioning` must clear it if it fails.** Nothing
-emits `file-loaded` after a failed `playlist-next` or `playlist-prev`, so the
-flag stays set and `end_file_action` `Ignore`s every later end-file: autoplay
-dead until the daemon restarts.
+**Every step that raises a load must settle it if it fails.** Nothing emits
+`file-loaded` after a failed `playlist-next` or `playlist-prev`, so the load
+stays up and `end_file_action` `Ignore`s every later end-file: autoplay dead
+until the daemon restarts.
 
 `EndFileReason` is parsed once in `mpv/event.rs` rather than carried up as a
 `String` and matched in three places, so `end_file_action` matches exhaustively
@@ -254,39 +301,39 @@ daemon shutdown, or mpv exiting on its own (`MpvEvent::Exited`) tears mpv down.
    see `specs/tracks.md`).
 4. `MpvSession::quit` escalates — IPC `quit`, 3 s, `SIGTERM`, 2 s, `SIGKILL` —
    and dropping the session removes the IPC socket.
-5. `instance::listen_stop` breaks its loop and unlinks `stop.sock`, so the path
-   is gone as soon as nothing answers on it. `cmd_run` unlinks again after its
-   `select!`, because nothing awaits that task.
+5. `control::listen_control` breaks its loop, unlinks `control.sock` and drops
+   its connections, so the path is gone as soon as nothing answers on it.
+   `cmd_run` unlinks again after its `select!`, because nothing awaits that task.
 6. The process exits; the kernel releases the `flock` on `instance.lock`.
 
 Step 6 is why `instance::is_running` probes the lock rather than the socket
-file: a `SIGKILL` leaves `stop.sock` behind, so an `exists()` check stays true
+file: a `SIGKILL` leaves `control.sock` behind, so an `exists()` check stays true
 forever. A client connecting to that leftover is refused, which it reports as
 "jellysink is not running" rather than as a failure to connect.
 
 ## The restart handoff
 
-The unanswered window is the gap between the old image unlinking `stop.sock` and
-the new image binding it: the old image's mpv escalation (step 4, up to 5 s) plus
-the exec and startup. Either side of that gap the daemon refuses rather than
+The unanswered window is the gap between the old image unlinking `control.sock`
+and the new image binding it: the old image's mpv escalation (step 4, up to 5 s)
+plus the exec and startup. Either side of that gap the daemon refuses rather than
 stalls, because the socket path exists only while something is accepting on it —
-`listen_stop` removes it when its loop ends, and `bind_stop_socket` recreates it.
-A client in the gap reports the daemon as not running, indistinguishable from the
-`SIGKILL` leftover above and treated the same; jellytui's 1 Hz poll recovers on
-its own.
+`listen_control` removes it when its loop ends, and `bind_control_socket`
+recreates it. Every connected client sees its connection close; a client
+connecting in the gap reports the daemon as not running, indistinguishable from
+the `SIGKILL` leftover above and treated the same. Clients reconnect on their own.
 
-`listen_stop` is spawned immediately after the bind rather than being a `select!`
-arm, so the new image answers from its first await instead of from behind the
-tray and mpris's 3 s timeout. Binding alone would not do it: a connect to a bound
-socket that nothing accepts succeeds into the backlog and waits, which costs the
-client `STATUS_REPLY_TIMEOUT` and tells it the daemon is not *responding* — worse
-than the refusal it would otherwise have had.
+`listen_control` is spawned immediately after the bind rather than being a
+`select!` arm, so the new image answers from its first await instead of from
+behind the tray and mpris's 3 s timeout. Binding alone would not do it: a connect
+to a bound socket that nothing accepts succeeds into the backlog and waits, which
+costs the client `REPLY_TIMEOUT` and tells it the daemon is not *responding* —
+worse than the refusal it would otherwise have had.
 
 Two ways of closing the window instead are rejected:
 
 - **A marker file the client waits on.** The client that hits its own deadline
-  deletes a marker the daemon's restart still depends on, and a blocking retry
-  loop under a poll with no in-flight guard stacks one thread per tick.
+  deletes a marker the daemon's restart still depends on, and every client
+  would need its own blocking retry loop around it.
 - **`instance.lock` in place of the socket.** The restart depends on the flock
   being released by `execve` closing the CLOEXEC fd; `_lock` is still alive at
   `exec_updated`. A lock surviving the exec would deny the new image's own
@@ -302,31 +349,33 @@ Two ways of closing the window instead are rejected:
   session on its own timeout regardless.
 - **Reports are queued unboundedly.** A server that stops answering while
   playback continues accumulates one progress report per second.
-- **A restart reads as "not running".** Nothing answers `stop.sock` between the
-  restart decision and the new image's bind. jellytui's poll recovers on its own;
-  `jellysink status` and `stop` may need re-running. An ack on `stop`/`restart`
-  would not help: the daemon being restarted is by definition the old image, so
-  the very update that shipped the ack would not have it.
-- **`stop.sock` answers one connection at a time.** A client that sends nothing
-  is dropped after `COMMAND_READ_TIMEOUT` (200 ms), which is under the client's
-  `STATUS_REPLY_TIMEOUT`, so the connection queued behind it is still answered.
-- **`stop` returns before the daemon is gone.** It is answered by acting, and the
-  process tears mpv down before exiting, so `instance.lock` stays held for up to
-  that 5 s escalation — a `run` started straight after can still be refused.
+- **A restart reads as "not running".** Nothing answers `control.sock` between
+  the restart decision and the new image's bind. jellytui reconnects on its own;
+  `jellysink status` may need re-running.
+- **A command can still wait for the next session.** One accepted just before
+  the WebSocket drops sits in `command_rx` until `run_session` runs again.
+- **A client is only as current as it reads.** One that falls `EVENT_CAPACITY`
+  (64) events behind, or whose write blocks for `WRITE_TIMEOUT`, is dropped; it
+  reconnects and the snapshot resyncs it.
 - **An expired token retries forever.** The daemon stays up and polls every 60 s
   rather than exiting, so a systemd unit does not flap; the cost is a warning
   line per minute.
 - **One thread.** `current_thread` flavour: a blocking call anywhere stalls
   keepalives, progress reports and mpv IPC together.
 - **A wedged mpv costs 10 s per command.** That is the IPC timeout, and several
-  paths issue commands in sequence. It does not delay `status`, which is answered
-  off a `watch` receiver while that command is still awaiting its reply.
+  paths issue commands in sequence. It does not delay a client's status, which
+  each connection reads off a `watch` receiver while that command is still
+  awaiting its reply.
 - **`ForceKeepAlive` is trusted.** Whatever the server sends becomes the
   interval, floored at 1 s.
 
 ## Where this is tested
 
 Backoff in `runtime/session_test.rs`; the latch in `daemon/signal_test.rs`; the
-end-file gating in `runtime/window_test.rs`; `AuthExpired` surviving added
-context in `crates/core/src/jellyfin/auth_test.rs`; the IPC coercions and
-end-file reasons in `mpv/ipc_test.rs` and `mpv/event_test.rs`.
+control socket in `daemon/control_test.rs` and its client in
+`crates/core/src/control_test.rs`; the end-file gating in
+`runtime/window_test.rs`; the one outcome per load in `runtime/loading_test.rs`
+and, against the live server, `runtime/jellyfin_integration_test.rs`;
+`AuthExpired` surviving added context in `crates/core/src/jellyfin/auth_test.rs`;
+the IPC coercions and end-file reasons in `mpv/ipc_test.rs` and
+`mpv/event_test.rs`.

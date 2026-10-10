@@ -42,8 +42,6 @@ enum Command {
     },
     /// Run as a cast target (default)
     Run,
-    /// Ask a running instance to quit
-    Stop,
     /// Show what a running instance is doing
     Status {
         /// Print machine-readable JSON instead
@@ -100,8 +98,7 @@ async fn try_main() -> Result<()> {
             ConfigCmd::Set { key, value } => cli::cmd_config_set(&paths, &key, &value)?,
         },
         Command::Run => cli::cmd_run(paths).await?,
-        Command::Stop => cli::cmd_stop(&paths)?,
-        Command::Status { json } => cli::cmd_status(&paths, json)?,
+        Command::Status { json } => cli::cmd_status(&paths, json).await?,
         Command::Update {
             check,
             force,

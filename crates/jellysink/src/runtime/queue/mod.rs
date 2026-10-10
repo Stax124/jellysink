@@ -9,6 +9,7 @@ pub(in crate::runtime) use stubs::Fill;
 use crate::media::{self, PlayRequest, PreparedPlay, TrackKind};
 use crate::runtime::state::Runtime;
 use crate::runtime::window::{PlaylistEof, playlist_eof};
+use jellysink_core::control::Origin;
 use jellysink_core::jellyfin::auth::Api;
 use serde_json::Value;
 
@@ -48,7 +49,7 @@ impl Runtime {
         );
     }
 
-    pub(in crate::runtime) async fn play_next_or_stop(&mut self, from_eof: bool) {
+    pub(in crate::runtime) async fn play_next_or_stop(&mut self, from_eof: bool, origin: Origin) {
         self.log_queue("play-next-or-stop");
         let (playlist_pos, playlist_count) = match self.playlist_state().await {
             Ok(Some(state)) => state,
@@ -80,7 +81,7 @@ impl Runtime {
         ) {
             PlaylistEof::NextInMpv => {
                 tracing::info!(playlist_pos, playlist_count, expected_pos, "playlist-next");
-                self.advance_in_mpv().await;
+                self.advance_in_mpv(origin).await;
             }
             PlaylistEof::WaitForMpv => {
                 tracing::info!(
@@ -90,37 +91,41 @@ impl Runtime {
                     "eof; mpv will play next (waiting for file-loaded)"
                 );
             }
-            PlaylistEof::NextNotInMpv => self.advance_in_queue().await,
+            PlaylistEof::NextNotInMpv => self.advance_in_queue(origin).await,
             // Neither has anything left — which is exactly when the series may.
-            PlaylistEof::Stop => self.expand_then_advance_or_stop().await,
+            PlaylistEof::Stop => self.expand_then_advance_or_stop(origin).await,
         }
     }
 
-    async fn advance_in_mpv(&mut self) {
+    async fn advance_in_mpv(&mut self, origin: Origin) {
+        if self.mpv.is_none() {
+            return;
+        }
+        let next = self.window.peek_next().map(str::to_string);
+        self.begin_load(next, origin);
         let Some(mpv) = self.mpv.as_mut() else {
             return;
         };
-        self.transitioning = true;
         if let Err(e) = mpv.playlist_next().await {
-            // Nothing will emit file-loaded now, and a stuck flag makes
-            // end_file_action ignore every later end-file.
-            self.transitioning = false;
             tracing::error!("playlist-next failed: {e:#}");
+            // Nothing will emit file-loaded now, and a load left up makes
+            // end_file_action ignore every later end-file.
+            self.fail_load(&e);
         } else if let Err(e) = mpv.set_pause(false).await {
             tracing::warn!("could not unpause mpv: {e:#}");
         }
     }
 
-    async fn advance_in_queue(&mut self) {
+    async fn advance_in_queue(&mut self, origin: Origin) {
         if self.window.advance().is_some() {
             tracing::info!(item = self.window.current(), "advancing to queued next");
-            self.start_next_item().await;
+            self.start_next_item(origin).await;
             return;
         }
-        self.expand_then_advance_or_stop().await;
+        self.expand_then_advance_or_stop(origin).await;
     }
 
-    async fn expand_then_advance_or_stop(&mut self) {
+    async fn expand_then_advance_or_stop(&mut self, origin: Origin) {
         tracing::info!("queue exhausted; trying series expand");
         self.try_expand_from_playing_item().await;
         if self.window.advance().is_some() {
@@ -128,15 +133,15 @@ impl Runtime {
                 item = self.window.current(),
                 "advancing after series expand"
             );
-            self.start_next_item().await;
+            self.start_next_item(origin).await;
         } else {
             tracing::info!("no next episode; stopping");
             self.stop_playback(true).await;
         }
     }
 
-    async fn start_next_item(&mut self) {
-        if let Err(e) = self.start_current(&PlayRequest::default()).await {
+    async fn start_next_item(&mut self, origin: Origin) {
+        if let Err(e) = self.start_current(&PlayRequest::default(), origin).await {
             tracing::error!("next item failed: {e:#}");
         }
     }

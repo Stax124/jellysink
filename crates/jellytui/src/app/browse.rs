@@ -217,11 +217,6 @@ impl App {
         self.load_level(self.stack.len() - 1, source);
     }
 
-    pub(super) fn refresh(&mut self) {
-        self.reload_current_screen();
-        self.poll_player();
-    }
-
     pub(super) fn reload_current_screen(&mut self) {
         match self.screen {
             Screen::Home => self.load_home(),

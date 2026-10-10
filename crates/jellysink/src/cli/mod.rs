@@ -9,6 +9,6 @@ mod update;
 
 pub(crate) use auth::{cmd_login, cmd_logout};
 pub(crate) use config::{cmd_config_get, cmd_config_path, cmd_config_set};
-pub(crate) use control::{cmd_status, cmd_stop};
+pub(crate) use control::cmd_status;
 pub(crate) use run::cmd_run;
 pub(crate) use update::cmd_update;

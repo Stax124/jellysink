@@ -10,10 +10,12 @@ use color_eyre::eyre::{WrapErr, eyre};
 use futures_util::{SinkExt, StreamExt};
 use jellysink_core::cast::CastEvent;
 use jellysink_core::config::{Config, Credentials, Paths};
+use jellysink_core::control::{Event, Origin, ReportKind};
 use jellysink_core::jellyfin::auth::{Api, is_auth_expired};
 use jellysink_core::jellyfin::session::{WsIncoming, parse_ws_message, websocket_url};
 use serde_json::json;
 use std::time::{Duration, Instant};
+use tokio::sync::broadcast;
 use tokio::time::{Interval, MissedTickBehavior, sleep};
 
 type WsMessage = tokio_tungstenite::tungstenite::Message;
@@ -21,6 +23,13 @@ type WsError = tokio_tungstenite::tungstenite::Error;
 
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
+
+/// A cast from MPRIS or a control client, and who sent it.
+#[derive(Debug, PartialEq)]
+pub(crate) struct CastCommand {
+    pub(crate) event: CastEvent,
+    pub(crate) origin: Origin,
+}
 
 /// A session that stayed up at least this long is treated as having worked.
 const SESSION_HEALTHY_AFTER: Duration = Duration::from_secs(60);
@@ -45,15 +54,27 @@ pub(crate) async fn run(
     paths: Paths,
     shutdown: Signal,
     status_tx: tokio::sync::watch::Sender<jellysink_core::status::PlayerStatus>,
-    mut ext_rx: tokio::sync::mpsc::UnboundedReceiver<CastEvent>,
+    event_tx: broadcast::Sender<Event>,
+    mut command_rx: tokio::sync::mpsc::UnboundedReceiver<CastCommand>,
 ) -> color_eyre::Result<()> {
     let mut backoff = BACKOFF_MIN;
     let api = Api::from_credentials(&creds)?;
-    let (report_tx, _report_task) = spawn_report_sink(api.clone());
-    let mut rt = Runtime::new(api, config, paths, report_tx, creds.username, status_tx);
+    let (report_tx, _report_task) = spawn_report_sink(api.clone(), event_tx.clone());
+    let mut rt = Runtime::new(
+        api,
+        config,
+        paths,
+        report_tx,
+        creds.username,
+        status_tx,
+        event_tx,
+    );
     loop {
         let started = Instant::now();
-        match run_session(&mut rt, &mut ext_rx, &shutdown).await {
+        let ended = run_session(&mut rt, &mut command_rx, &shutdown).await;
+        rt.server_connected = false;
+        rt.publish_status();
+        match ended {
             // Only shutdown ends a session cleanly.
             Ok(()) => break,
             Err(e) => {
@@ -117,13 +138,28 @@ where
 
 /// Serialises session reports onto one task, so a Stopped can never overtake
 /// the Start before it. The task owns the [`Api`], so a report costs no clone.
-fn spawn_report_sink(api: Api) -> (tokio::sync::mpsc::UnboundedSender<Report>, AbortOnDrop) {
+fn spawn_report_sink(
+    api: Api,
+    event_tx: broadcast::Sender<Event>,
+) -> (tokio::sync::mpsc::UnboundedSender<Report>, AbortOnDrop) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Report>();
     let task = tokio::spawn(async move {
         while let Some(report) = rx.recv().await {
-            if let Err(e) = jellyfin::post_report(&api, &report).await {
+            let posted = jellyfin::post_report(&api, &report).await;
+            if let Err(e) = &posted {
                 tracing::warn!("session report failed: {e:#}");
             }
+            let kind = match &report {
+                Report::Start(_) => ReportKind::Start,
+                Report::Stopped(_) => ReportKind::Stopped,
+                Report::Progress(_) => continue,
+            };
+            // Fails only while no client is listening.
+            let _ = event_tx.send(Event::Reported {
+                report: kind,
+                item_id: report.state().item_id.clone(),
+                ok: posted.is_ok(),
+            });
         }
     });
     (tx, AbortOnDrop(task))
@@ -148,7 +184,7 @@ async fn next_mpv_event(mpv: &mut Option<MpvSession>) -> MpvEvent {
 /// for shutdown; every other end is an `Err` the caller reconnects from.
 async fn run_session(
     rt: &mut Runtime,
-    ext_rx: &mut tokio::sync::mpsc::UnboundedReceiver<CastEvent>,
+    command_rx: &mut tokio::sync::mpsc::UnboundedReceiver<CastCommand>,
     shutdown: &Signal,
 ) -> color_eyre::Result<()> {
     crate::jellyfin::post_capabilities(&rt.api).await?;
@@ -163,15 +199,17 @@ async fn run_session(
 
     let (mut ws_rx, _ws_task) = spawn_ws_reader(ws_read);
 
+    rt.server_connected = true;
+    rt.publish_status();
     rt.reannounce().await;
 
     let mut keepalive = keepalive_interval(Duration::from_secs(30));
     let mut progress = tokio::time::interval(Duration::from_secs(1));
     progress.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    // Not fatal like the websocket channel above: MPRIS is optional, and every
-    // clone of its sender lives forever in `cmd_run`.
-    let mut ext_closed = false;
+    // Not fatal like the websocket channel above: MPRIS and the control socket
+    // are both optional.
+    let mut commands_closed = false;
 
     loop {
         tokio::select! {
@@ -189,7 +227,7 @@ async fn run_session(
             msg = ws_rx.recv() => {
                 match msg {
                     Some(WsIncoming::Cast(ev)) => {
-                        if let Err(e) = rt.handle(ev).await {
+                        if let Err(e) = rt.handle(ev, Origin::Jellyfin).await {
                             tracing::error!("cast command failed: {e:#}");
                         }
                     }
@@ -210,14 +248,14 @@ async fn run_session(
             ev = next_mpv_event(&mut rt.mpv) => {
                 rt.on_mpv_event(ev).await;
             }
-            ev = ext_rx.recv(), if !ext_closed => {
-                match ev {
-                    Some(ev) => {
-                        if let Err(e) = rt.handle(ev).await {
-                            tracing::error!("mpris command failed: {e:#}");
+            command = command_rx.recv(), if !commands_closed => {
+                match command {
+                    Some(CastCommand { event, origin }) => {
+                        if let Err(e) = rt.handle(event, origin).await {
+                            tracing::error!(?origin, "command failed: {e:#}");
                         }
                     }
-                    None => ext_closed = true,
+                    None => commands_closed = true,
                 }
             }
         }

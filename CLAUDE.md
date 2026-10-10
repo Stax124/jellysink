@@ -79,7 +79,7 @@ If you think that you can simplify a piece of code, ask the user to do so. We wa
 ### Secrets and the filesystem
 
 - Config and credential files are written atomically (tmp file + rename); cred.json is mode 0600. The config directory itself is 0700 — `mpv.sock` lives there, it is created by mpv (so we cannot pick its mode), and `http-header-fields` on it hands out the access token.
-- The file modes are only half of it. Check **every channel the access token can leave the process by** — a D-Bus property, a JSON payload on `stop.sock`, a log line, a URL handed to another program. `redact_api_key` exists for this, and redacting the token on one path while broadcasting it unredacted on another is the inconsistency to catch.
+- The file modes are only half of it. Check **every channel the access token can leave the process by** — a D-Bus property, a frame on `control.sock`, a log line, a URL handed to another program. `redact_api_key` exists for this, and redacting the token on one path while broadcasting it unredacted on another is the inconsistency to catch.
 
 ### Specs
 

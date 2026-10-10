@@ -115,7 +115,6 @@ cargo install --git https://github.com/Stax124/jellysink --target x86_64-unknown
 ```bash
 jellysink login          # server URL, username, password
 jellysink run            # default if you pass no subcommand
-jellysink stop           # ask a running instance to quit
 jellysink status         # show what a running instance is doing
 jellysink update         # install the latest GitHub release
 jellysink update --check # print whether a newer release exists
@@ -131,12 +130,12 @@ Cast a movie or episode to **jellysink** from the Jellyfin web/Android/iOS app. 
 
 When you cast an episode, the episodes that aired before it are loaded into mpv's playlist too, so the playlist selector (and Previous) can reach the whole series rather than only what follows. Set `prepend_previous` to `false` to only look for next episodes.
 
-Quit with the tray icon, `jellysink stop`, SIGTERM, or SIGINT.
+Quit with the tray icon, MPRIS, `systemctl --user stop jellysink`, SIGTERM, or SIGINT.
 
 ## Terminal frontend
 
 `jellytui` is a Jellyfin client, not a second player: it asks the running jellysink to
-play, exactly as the web app does. So the daemon must be running, and everything it
+play over its local control socket and shows what the daemon reports back. So the daemon must be running, and everything it
 already does — DirectPlay, series autoplay, remembered tracks, progress reporting —
 applies unchanged. It logs in with the credentials `jellysink login` already stored.
 
@@ -208,6 +207,18 @@ Design notes for the trickier subsystems live in [`specs/`](specs/):
   episode data is fetched, and how entries reach mpv's playlist.
 - [`specs/tui.md`](specs/tui.md) — how `jellytui` drives the daemon, and why it
   is a remote-control client rather than a second player.
+
+### Debugging the socket (control.sock)
+
+Bash:
+```bash
+{ echo '{"type":"hello","protocol":1,"client":"socat"}'; cat; } | socat - UNIX-CONNECT:"$HOME/.config/jellysink/control.sock"
+```
+
+Fish:
+```bash
+begin; echo '{"type":"hello","protocol":1,"client":"socat"}'; cat; end | socat - UNIX-CONNECT:$HOME/.config/jellysink/control.sock
+```
 
 ### Requirements
 

@@ -1,14 +1,18 @@
 //! The long-lived player state, and the command dispatch over it.
 
+use super::loading::Load;
 use super::queue::Fill;
 use super::window::{EndFileAction, PlaylistWindow, end_file_action, ignore_stop_for_playlist};
 use crate::media::{PlayRequest, PreparedPlay, TrackKind, TrackPreference};
 use crate::mpv::{EndFileReason, MpvEvent, MpvSession, SelectedTrack};
 use crate::report::Report;
+use color_eyre::eyre::eyre;
 use jellysink_core::cast::CastEvent;
 use jellysink_core::config::{Config, Paths};
+use jellysink_core::control::{Event, Origin};
 use jellysink_core::jellyfin::auth::Api;
 use std::collections::HashMap;
+use tokio::sync::broadcast;
 
 /// Audio and subtitles go through the same [`TrackKind`]-parameterised code,
 /// so they are two values of one type rather than four separate fields.
@@ -47,12 +51,15 @@ pub(super) struct Runtime {
     /// `sid`; see [`TrackState`].
     pub(super) subtitle: TrackState,
     pub(super) report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
-    pub(super) transitioning: bool,
+    /// Gates mpv's `end-file` and track changes while we are the ones replacing
+    /// the file.
+    pub(super) loading: Option<Load>,
+    /// `run_session` is between its connect and its end.
+    pub(super) server_connected: bool,
     /// When true, playlist stubs leave the token off their URLs — mpv persists
     /// playlist entries to its watch_later files.
     pub(super) mpv_auth_header_set: bool,
     pub(super) pending_start_ticks: Option<i64>,
-    pub(super) plays_started: u64,
 
     pub(super) prepared: HashMap<String, PreparedPlay>,
     /// Item id → display title, for the playlist fill; `PlaybackInfo` is
@@ -61,9 +68,10 @@ pub(super) struct Runtime {
 
     /// The logged-in username, for `jellysink status`.
     pub(super) username: String,
-    /// Published on every state change; read by `jellysink status` over the
-    /// stop socket without ever reaching into a running `Runtime` directly.
+    /// Published on every state change; read by control clients without ever
+    /// reaching into a running `Runtime` directly.
     pub(super) status_tx: tokio::sync::watch::Sender<jellysink_core::status::PlayerStatus>,
+    pub(super) event_tx: broadcast::Sender<Event>,
 }
 
 impl Runtime {
@@ -74,6 +82,7 @@ impl Runtime {
         report_tx: tokio::sync::mpsc::UnboundedSender<Report>,
         username: String,
         status_tx: tokio::sync::watch::Sender<jellysink_core::status::PlayerStatus>,
+        event_tx: broadcast::Sender<Event>,
     ) -> Self {
         Self {
             api,
@@ -90,18 +99,19 @@ impl Runtime {
             audio: TrackState::default(),
             subtitle: TrackState::default(),
             report_tx,
-            transitioning: false,
+            loading: None,
+            server_connected: false,
             mpv_auth_header_set: false,
             pending_start_ticks: None,
-            plays_started: 0,
             prepared: HashMap::new(),
             titles: HashMap::new(),
             username,
             status_tx,
+            event_tx,
         }
     }
 
-    pub(super) async fn handle(&mut self, ev: CastEvent) -> color_eyre::Result<()> {
+    pub(super) async fn handle(&mut self, ev: CastEvent, origin: Origin) -> color_eyre::Result<()> {
         match ev {
             CastEvent::PlayNow {
                 item_ids,
@@ -121,23 +131,33 @@ impl Runtime {
                 );
                 self.window.replace(item_ids, start_index);
                 self.log_queue("play-now");
-                self.start_current(&PlayRequest {
-                    start_ticks,
-                    audio_stream_index,
-                    subtitle_stream_index,
-                    media_source_id,
-                })
+                self.start_current(
+                    &PlayRequest {
+                        start_ticks,
+                        audio_stream_index,
+                        subtitle_stream_index,
+                        media_source_id,
+                    },
+                    origin,
+                )
                 .await?;
             }
-            CastEvent::PlayNext { item_ids } => self.enqueue(item_ids, Enqueue::Next).await?,
-            CastEvent::PlayLast { item_ids } => self.enqueue(item_ids, Enqueue::Last).await?,
+            CastEvent::PlayNext { item_ids } => {
+                self.enqueue(item_ids, Enqueue::Next, origin).await?
+            }
+            CastEvent::PlayLast { item_ids } => {
+                self.enqueue(item_ids, Enqueue::Last, origin).await?
+            }
             CastEvent::PlayPause => self.toggle_pause().await?,
             CastEvent::Pause => self.apply_pause(true).await?,
             CastEvent::Unpause => self.apply_pause(false).await?,
-            CastEvent::Stop => self.stop_playback(true).await,
+            CastEvent::Stop => {
+                self.cancel_load(origin);
+                self.stop_playback(true).await;
+            }
             CastEvent::Seek { ticks } => self.seek_to(ticks).await?,
-            CastEvent::Next => self.play_next_or_stop(false).await,
-            CastEvent::Previous => self.play_previous().await?,
+            CastEvent::Next => self.play_next_or_stop(false, origin).await,
+            CastEvent::Previous => self.play_previous(origin).await?,
             CastEvent::SetVolume { volume } => self.apply_volume(volume).await?,
             CastEvent::VolumeUp => self.bump_volume(5).await?,
             CastEvent::VolumeDown => self.bump_volume(-5).await?,
@@ -161,11 +181,16 @@ impl Runtime {
     }
 
     /// PlayNext / PlayLast. With nothing playing these are just PlayNow.
-    async fn enqueue(&mut self, item_ids: Vec<String>, where_: Enqueue) -> color_eyre::Result<()> {
+    async fn enqueue(
+        &mut self,
+        item_ids: Vec<String>,
+        where_: Enqueue,
+        origin: Origin,
+    ) -> color_eyre::Result<()> {
         tracing::info!(n = item_ids.len(), ?where_, ids = %item_ids.join(","), "enqueue");
         if self.mpv.is_none() {
             self.window.replace(item_ids, 0);
-            return self.start_current(&PlayRequest::default()).await;
+            return self.start_current(&PlayRequest::default(), origin).await;
         }
         match where_ {
             Enqueue::Next => {
@@ -198,21 +223,24 @@ impl Runtime {
         Ok(())
     }
 
-    async fn play_previous(&mut self) -> color_eyre::Result<()> {
+    async fn play_previous(&mut self, origin: Origin) -> color_eyre::Result<()> {
         // Propagated rather than defaulted to 0, which would restart the
         // current item instead of stepping back.
         let playlist_pos = self.playlist_state().await?.map_or(0, |(pos, _)| pos);
-        let Some(mpv) = self.mpv.as_mut().filter(|_| playlist_pos > 0) else {
+        if self.mpv.is_none() || playlist_pos == 0 {
             self.window.previous();
-            return self.start_current(&PlayRequest::default()).await;
-        };
+            return self.start_current(&PlayRequest::default(), origin).await;
+        }
         tracing::info!(playlist_pos, "playlist-prev");
-        self.transitioning = true;
+        // No item id: the window adopts the item only once mpv has loaded it.
+        self.begin_load(None, origin);
+        let Some(mpv) = self.mpv.as_mut() else {
+            return Ok(());
+        };
         if let Err(e) = mpv.playlist_prev().await {
-            // A stuck `transitioning` makes end_file_action ignore every
-            // subsequent end-file.
-            self.transitioning = false;
             tracing::error!("playlist-prev failed: {e:#}");
+            // A load left up makes end_file_action ignore every later end-file.
+            self.fail_load(&e);
         }
         Ok(())
     }
@@ -237,7 +265,6 @@ impl Runtime {
     /// Adopts whatever mpv actually loaded, since the user may have jumped in
     /// the playlist selector rather than us asking for this file.
     async fn on_file_loaded(&mut self) {
-        self.transitioning = false;
         if let Err(e) = self.adopt_playlist_pos().await {
             tracing::warn!("adopt playlist: {e:#}");
         }
@@ -253,13 +280,13 @@ impl Runtime {
                 tracing::warn!("resume seek: {e:#}");
             }
         }
-        self.publish_status();
+        self.finish_load();
     }
 
     async fn on_end_file(&mut self, reason: EndFileReason) {
         tracing::info!(
             reason = %reason,
-            transitioning = self.transitioning,
+            loading = self.loading.is_some(),
             has_next = self.window.has_next(),
             index = self.window.index(),
             queue = self.window.len(),
@@ -267,9 +294,9 @@ impl Runtime {
             expected_pos = self.window.expected_pos(),
             "mpv end-file"
         );
-        match end_file_action(self.transitioning, reason) {
+        match end_file_action(self.loading.is_some(), reason) {
             EndFileAction::Ignore => {}
-            EndFileAction::Advance => self.play_next_or_stop(true).await,
+            EndFileAction::Advance => self.play_next_or_stop(true, Origin::Daemon).await,
             EndFileAction::Stop => self.stop_unless_playlist_moved(reason).await,
         }
     }
@@ -294,6 +321,7 @@ impl Runtime {
         }
         if reason == EndFileReason::Error {
             tracing::error!("mpv reported a playback error");
+            self.fail_load(&eyre!("mpv could not play the file"));
         }
         self.stop_playback(true).await;
     }

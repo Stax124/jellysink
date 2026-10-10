@@ -67,7 +67,7 @@ fn the_footer_names_the_paused_item_with_its_position_and_volume() {
 fn the_footer_separates_not_yet_asked_from_asked_and_absent() {
     let mut app = app();
     let screen = drawn(&mut app);
-    // Before the first poll answers there is nothing to report either way.
+    // Before the first connect resolves there is nothing to report either way.
     assert!(screen.contains("checking"), "{screen}");
     assert!(!screen.contains("not connected"), "{screen}");
 

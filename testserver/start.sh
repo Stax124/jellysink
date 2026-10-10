@@ -123,4 +123,11 @@ episodes_scanned() {
 }
 wait_for "the library scan to find $EPISODES episodes" 180 episodes_scanned
 
+# The first streams on a fresh server race to create its transcode marker and
+# one gets a 500, so the tests' concurrent plays must not be the first.
+episode="$(curl -fsS -H "Authorization: $auth" \
+    "$server/Items?Recursive=true&IncludeItemTypes=Episode&Limit=1" |
+    sed -n 's/.*"Id":"\([^"]*\)".*/\1/p')"
+curl -fsS -o /dev/null -H "Authorization: $auth" "$server/Videos/$episode/stream?static=true"
+
 echo "Jellyfin $IMAGE is up on $server as $USERNAME/$PASSWORD with $EPISODES episodes"

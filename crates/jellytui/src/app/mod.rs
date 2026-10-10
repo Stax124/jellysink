@@ -22,7 +22,7 @@ use crate::view;
 use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::VERSION;
 use jellysink_core::config::Paths;
-use jellysink_core::instance;
+use jellysink_core::control::Request;
 use jellysink_core::jellyfin::auth::Api;
 use jellysink_core::jellyfin::browse::ItemQuery;
 use jellysink_core::jellyfin::model::{Item, ItemList};
@@ -41,11 +41,8 @@ const SEARCH_LIMIT: u32 = 60;
 const PAGE_JUMP: isize = 10;
 /// Long enough that typing a word is one request, short enough to feel live.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
-const POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// Chained from each reply while a play is starting, so polls cannot stack.
-pub(crate) const STARTING_POLL: Duration = Duration::from_millis(250);
-/// A play still unfinished after this is reported rather than shown forever.
-const START_TIMEOUT: Duration = Duration::from_secs(30);
+/// The spinner's step, and how often the loop redraws while one is up.
+pub(crate) const SPINNER_FRAME: Duration = Duration::from_millis(100);
 /// The shortest gap between two batches of cover requests. A rate limit rather
 /// than a settling delay: a still cursor fetches at once, only a held key waits.
 const COVER_THROTTLE: Duration = Duration::from_millis(120);
@@ -100,19 +97,19 @@ pub(crate) struct App {
     pub(crate) query: String,
     pub(crate) results: Rows,
     pub(crate) daemon: Daemon,
+    /// The id the daemon gave this connection, which origins name.
+    client_id: Option<u64>,
+    last_request: u64,
+    control_tx: UnboundedSender<Request>,
+    /// Held until `run` hands it to the connection task, so a test's commands
+    /// still queue.
+    control_rx: Option<UnboundedReceiver<Request>>,
     pending_play: Option<PendingPlay>,
-    poll_due: Option<tokio::time::Instant>,
-    /// `stop.sock` answers one connection at a time, and a reply can outlast
-    /// `STARTING_POLL`.
-    poll_in_flight: bool,
     /// The playing item, keyed by the id it describes.
     pub(crate) playing_item: Option<(String, Item)>,
-    /// The id last looked up, so a lookup that failed is not sent again every poll.
+    /// The id last looked up, so a lookup that failed is not sent again with every status.
     playing_requested: Option<String>,
     pub(crate) playing_episodes: Rows,
-    /// Needed only to address commands, and `/Sessions` is expensive, so it is
-    /// fetched once in the background rather than polled.
-    session_id: Option<String>,
     pub(crate) covers: Covers,
     /// The last size the terminal reported, so a cover box can be worked out
     /// between frames rather than only while one is being drawn.
@@ -130,9 +127,6 @@ pub(crate) struct App {
     pub(crate) message: String,
     search_generation: u64,
     search_due: Option<tokio::time::Instant>,
-    /// Armed by a playback change and fired by the *following* poll: the daemon
-    /// publishes the new status before its `Stopped` report reaches the server.
-    reload_due: bool,
     /// Not `message`, which the next keypress clears.
     pub(crate) update: UpdateCheck,
     quit: Option<Exit>,
@@ -147,6 +141,7 @@ impl App {
         logs: LogBuffer,
     ) -> Self {
         let (tx, rx) = unbounded_channel();
+        let (control_tx, control_rx) = unbounded_channel();
         Self {
             api,
             tx,
@@ -159,13 +154,14 @@ impl App {
             query: String::new(),
             results: Rows::default(),
             daemon: Daemon::Unknown,
+            client_id: None,
+            last_request: 0,
+            control_tx,
+            control_rx: Some(control_rx),
             pending_play: None,
-            poll_due: None,
-            poll_in_flight: false,
             playing_item: None,
             playing_requested: None,
             playing_episodes: Rows::default(),
-            session_id: None,
             covers: Covers::new(picker, disk),
             viewport: Size::default(),
             cover_due: None,
@@ -178,7 +174,6 @@ impl App {
             message: String::new(),
             search_generation: 0,
             search_due: None,
-            reload_due: false,
             update: UpdateCheck::Pending,
             quit: None,
         }
@@ -187,12 +182,15 @@ impl App {
     pub(crate) async fn run(mut self) -> Result<Exit> {
         let mut terminal = view::enter()?;
         let mut input = spawn_input_thread();
-        let mut poll = tokio::time::interval(POLL_INTERVAL);
-        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        if let Some(requests) = self.control_rx.take() {
+            tokio::spawn(player::stay_connected(
+                self.paths.clone(),
+                self.tx.clone(),
+                requests,
+            ));
+        }
 
         self.load_home();
-        self.poll_player();
-        self.load_session_id();
         self.check_for_update();
 
         let result = loop {
@@ -208,19 +206,16 @@ impl App {
             if let Err(e) = terminal.draw(|frame| view::render(&self, frame)) {
                 break Err(e).wrap_err("drawing the terminal");
             }
-            let (search_deadline, cover_deadline, poll_deadline) =
-                (self.search_due, self.cover_due, self.poll_due);
+            let (search_deadline, cover_deadline) = (self.search_due, self.cover_due);
+            let spinner_deadline = (self.starting().is_some() || self.loading())
+                .then(|| tokio::time::Instant::now() + SPINNER_FRAME);
             tokio::select! {
                 event = input.recv() => match event {
                     Some(event) => self.on_event(event),
                     None => break Ok(Exit::Quit),
                 },
                 Some(msg) = self.rx.recv() => self.on_msg(msg),
-                _ = poll.tick() => self.poll_player(),
-                _ = sleep_until(poll_deadline) => {
-                    self.poll_due = None;
-                    self.poll_player();
-                }
+                _ = sleep_until(spinner_deadline) => {}
                 _ = sleep_until(search_deadline) => {
                     self.search_due = None;
                     self.run_search();
@@ -276,7 +271,7 @@ impl App {
             Intent::NextPane => self.toggle_shelf(),
             Intent::Enter => self.enter(),
             Intent::Back => self.back(),
-            Intent::Refresh => self.refresh(),
+            Intent::Refresh => self.reload_current_screen(),
             Intent::ToggleWatched => self.toggle_watched(),
             Intent::Update => self.start_update(),
             Intent::Type(c) => {

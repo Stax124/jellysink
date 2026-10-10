@@ -1,16 +1,21 @@
-//! What the spawned request tasks send back, and where it lands.
+//! What the spawned request tasks and the daemon connection send back, and
+//! where it lands.
 
 use super::*;
+use jellysink_core::control::DaemonFrame;
 
 pub(super) enum Msg {
     Home(HomePane, Vec<Item>),
     /// Lands only on the level at that depth that asked for that source.
     Level(usize, Source, Vec<Item>),
     Search(u64, Vec<Item>),
-    /// `None` when the daemon did not answer, which the footer reports as
-    /// "not connected" — the only failure this socket really has.
-    Player(Option<Box<PlayerStatus>>),
-    SessionId(String),
+    /// A connection made, with the snapshot that follows its welcome.
+    Connected {
+        client_id: u64,
+        status: Box<PlayerStatus>,
+    },
+    Control(DaemonFrame),
+    Disconnected,
     /// Both carry the item id they were asked for, so a reply arriving after
     /// playback moved on is dropped rather than describing the wrong episode.
     PlayingItem {
@@ -31,11 +36,6 @@ pub(super) enum Msg {
     /// row, so there is nothing an id could keep it from landing on.
     Watched,
     UpdateChecked(UpdateCheck),
-    /// Unlike `Error`, it also ends the play it answers, if that is still starting.
-    PlayFailed {
-        item_id: String,
-        message: String,
-    },
     Error(String),
 }
 
@@ -62,8 +62,9 @@ impl App {
                     self.results.fill(items);
                 }
             }
-            Msg::Player(player) => self.on_player(player.map(|boxed| *boxed)),
-            Msg::SessionId(session_id) => self.session_id = Some(session_id),
+            Msg::Connected { client_id, status } => self.on_connected(client_id, *status),
+            Msg::Control(frame) => self.on_frame(frame),
+            Msg::Disconnected => self.on_disconnected(),
             Msg::PlayingItem { item_id, item } => {
                 if self.is_current(&item_id) {
                     if let Some((series_id, season_id)) =
@@ -93,7 +94,6 @@ impl App {
             Msg::CoverFailed(key) => self.covers.give_up(&key),
             Msg::Watched => self.reload_screen_and_home(),
             Msg::UpdateChecked(update) => self.update = update,
-            Msg::PlayFailed { item_id, message } => self.on_play_failed(&item_id, message),
             Msg::Error(message) => {
                 tracing::warn!(%message, "request failed");
                 self.message = message;

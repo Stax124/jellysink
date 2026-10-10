@@ -58,8 +58,8 @@ fn nothing_playing_says_so_rather_than_drawing_an_empty_frame() {
 
 #[test]
 fn the_daemons_title_holds_the_screen_until_the_item_lookup_lands() {
-    // The status socket has a title from the first poll; the synopsis and the
-    // season need a round trip, and the screen must not be blank until then.
+    // The status has a title from the first frame; the synopsis and the season
+    // need a round trip, and the screen must not be blank until then.
     let mut app = app();
     playing(&mut app, "e5", "Severance - s1e05 - Optics");
     assert!(drawn(&app).contains("Severance - s1e05 - Optics"));

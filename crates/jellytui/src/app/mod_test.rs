@@ -1,5 +1,9 @@
 use super::*;
 use crate::test_support::{app, item, playing, protocol};
+use jellysink_core::cast::CastEvent;
+use jellysink_core::control::{
+    Command, DaemonFrame, Event, FrameReader, Origin, PROTOCOL, ReportKind, Request, write_frame,
+};
 
 fn playing_episode(item_id: &str) -> PlayerStatus {
     playing(item_id, "Paradise, Once More")
@@ -128,7 +132,7 @@ async fn a_reload_keeps_the_cursor_on_a_tile_that_is_drawn() {
 #[tokio::test]
 async fn playing_without_a_daemon_explains_itself_instead_of_doing_nothing() {
     let mut app = app();
-    app.on_player(None);
+    app.on_msg(Msg::Disconnected);
     app.on_msg(Msg::Home(HomePane::Resume, vec![episode("e1")]));
     app.apply(Intent::Enter);
     assert!(
@@ -139,7 +143,7 @@ async fn playing_without_a_daemon_explains_itself_instead_of_doing_nothing() {
 }
 
 #[tokio::test]
-async fn a_command_before_the_first_poll_does_not_claim_the_daemon_is_absent() {
+async fn a_play_before_the_daemon_answers_does_not_claim_it_is_absent() {
     let mut app = app();
     app.play(&episode("e1"));
     assert!(
@@ -150,23 +154,11 @@ async fn a_command_before_the_first_poll_does_not_claim_the_daemon_is_absent() {
 }
 
 #[tokio::test]
-async fn a_command_before_the_session_lookup_lands_says_so_rather_than_blaming_the_daemon() {
-    let mut app = app();
-    app.on_player(Some(playing_episode("e1")));
-    app.play(&episode("e1"));
-    assert!(
-        app.message.contains("looking up the session"),
-        "got {:?}",
-        app.message
-    );
-}
-
-#[tokio::test]
 async fn an_item_lookup_that_lands_after_playback_moved_on_is_dropped() {
     // The reply describes the episode it was asked for, not the one playing
     // now, and the Playing screen must not caption the wrong thing.
     let mut app = app();
-    app.on_player(Some(playing_episode("e1")));
+    status(&mut app, playing_episode("e1"));
 
     app.on_msg(Msg::PlayingItem {
         item_id: "e0".to_string(),
@@ -374,49 +366,16 @@ async fn a_cover_whose_request_failed_is_not_asked_for_once_a_window_forever() {
     );
 }
 
+/// Regression: a lookup that failed, or had not answered yet, was sent again
+/// with every status — a warning and a header complaint a second.
 #[tokio::test]
-async fn an_episode_ending_reloads_on_the_poll_after_the_one_that_saw_it() {
-    let mut app = app();
-    app.on_player(Some(playing_episode("e1")));
-
-    app.on_player(Some(playing_episode("e2")));
-    assert!(app.reload_due, "the transition to e2 did not arm a reload");
-
-    app.on_player(Some(playing_episode("e2")));
-    assert!(
-        !app.reload_due,
-        "the reload stayed armed and will fire again next poll"
-    );
-}
-
-#[tokio::test]
-async fn closing_the_mpv_window_arms_a_reload_like_an_episode_ending() {
-    let mut app = app();
-    app.on_player(Some(playing_episode("e1")));
-
-    app.on_player(Some(PlayerStatus::idle("s".into(), "u".into())));
-    assert!(app.reload_due);
-}
-
-#[tokio::test]
-async fn the_first_poll_is_not_a_playback_change() {
-    // Startup has just loaded Home; finding something already playing is not
-    // news about it.
-    let mut app = app();
-    app.on_player(Some(playing_episode("e1")));
-    assert!(!app.reload_due);
-}
-
-/// Regression: a lookup that failed, or had not answered yet, was sent again on
-/// every poll — a warning and a header complaint a second.
-#[tokio::test]
-async fn the_playing_item_is_looked_up_once_per_episode_not_once_per_poll() {
+async fn the_playing_item_is_looked_up_once_per_episode_not_once_per_status() {
     let mut app = app();
     let logs = crate::logs::capture(|| {
-        app.on_player(Some(playing_episode("e1")));
+        status(&mut app, playing_episode("e1"));
         app.on_msg(Msg::Error("connection refused".into()));
-        app.on_player(Some(playing_episode("e1")));
-        app.on_player(Some(playing_episode("e1")));
+        status(&mut app, playing_episode("e1"));
+        status(&mut app, playing_episode("e1"));
     });
     let lookups = |logs: &LogBuffer| {
         let lines = logs.lines();
@@ -427,7 +386,7 @@ async fn the_playing_item_is_looked_up_once_per_episode_not_once_per_poll() {
     };
     assert_eq!(lookups(&logs), 1);
 
-    let logs = crate::logs::capture(|| app.on_player(Some(playing_episode("e2"))));
+    let logs = crate::logs::capture(|| status(&mut app, playing_episode("e2")));
     assert_eq!(lookups(&logs), 1, "the next episode was not looked up");
 }
 
@@ -442,19 +401,33 @@ fn loading(status: PlayerStatus) -> PlayerStatus {
     }
 }
 
-fn after_plays(plays_started: u64, status: PlayerStatus) -> PlayerStatus {
-    PlayerStatus {
-        plays_started,
-        ..status
+/// The `client_id` the daemon gave this jellytui.
+const OWN: u64 = 3;
+
+fn own(request: u64) -> Origin {
+    Origin::Client {
+        client: OWN,
+        request,
     }
 }
 
-/// `play` sends nothing until the daemon has answered and its session is known.
 fn connected_app() -> App {
     let mut app = app();
-    app.on_player(Some(idle()));
-    app.on_msg(Msg::SessionId("session".into()));
+    app.on_msg(Msg::Connected {
+        client_id: OWN,
+        status: Box::new(idle()),
+    });
     app
+}
+
+fn status(app: &mut App, status: PlayerStatus) {
+    app.on_msg(Msg::Control(DaemonFrame::Status {
+        status: Box::new(status),
+    }));
+}
+
+fn event(app: &mut App, event: Event) {
+    app.on_msg(Msg::Control(DaemonFrame::Event(event)));
 }
 
 fn footer(app: &mut App) -> String {
@@ -469,20 +442,30 @@ async fn a_play_shows_as_starting_until_the_daemon_has_loaded_it() {
     app.play(&episode("e1"));
     assert!(footer(&mut app).contains("starting S01E01  e1"));
 
-    // The command has not reached the daemon yet.
-    app.on_player(Some(idle()));
-    assert!(footer(&mut app).contains("starting S01E01  e1"));
-
-    app.on_player(Some(after_plays(1, loading(idle()))));
+    event(
+        &mut app,
+        Event::PlayLoading {
+            item_id: Some("e1".into()),
+            origin: own(1),
+        },
+    );
+    status(&mut app, loading(idle()));
     assert!(footer(&mut app).contains("starting S01E01  e1"));
 
     // Published, but mpv has not loaded the file.
-    app.on_player(Some(after_plays(1, loading(playing_episode("e1")))));
+    status(&mut app, loading(playing_episode("e1")));
     let shown = footer(&mut app);
     assert!(shown.contains("Paradise, Once More"), "{shown}");
     assert!(!shown.contains('▶'), "{shown}");
 
-    app.on_player(Some(after_plays(1, playing_episode("e1"))));
+    status(&mut app, playing_episode("e1"));
+    event(
+        &mut app,
+        Event::PlayStarted {
+            item_id: Some("e1".into()),
+            origin: own(1),
+        },
+    );
     let shown = footer(&mut app);
     assert!(shown.contains("▶  Paradise, Once More"), "{shown}");
     assert!(
@@ -490,14 +473,65 @@ async fn a_play_shows_as_starting_until_the_daemon_has_loaded_it() {
         "a play that worked was announced: {:?}",
         app.message
     );
+    assert!(app.pending_play.is_none());
+}
+
+/// Another client's play of the same item, or a cast from a phone, is not this one.
+#[tokio::test]
+async fn a_play_is_settled_only_by_its_own_outcome() {
+    let mut app = connected_app();
+    app.play(&episode("e1"));
+    let sent = app.control_rx.as_mut().unwrap().try_recv().unwrap();
+    assert!(
+        matches!(&sent, Request { id: 1, command: Command::Cast(CastEvent::PlayNow { item_ids, .. }) } if item_ids == &["e1"]),
+        "{sent:?}"
+    );
+
+    for origin in [
+        Origin::Client {
+            client: OWN + 1,
+            request: 1,
+        },
+        Origin::Jellyfin,
+    ] {
+        event(
+            &mut app,
+            Event::PlayStarted {
+                item_id: Some("e1".into()),
+                origin,
+            },
+        );
+        assert!(app.pending_play.is_some(), "settled by {origin:?}");
+    }
+
+    event(
+        &mut app,
+        Event::PlayCancelled {
+            item_id: Some("e1".into()),
+            origin: own(1),
+            by: Origin::Jellyfin,
+        },
+    );
+    assert!(app.pending_play.is_none());
+    assert!(
+        app.message.is_empty(),
+        "a cancelled play was announced: {:?}",
+        app.message
+    );
 }
 
 #[tokio::test]
-async fn a_play_the_daemon_gave_up_on_between_two_polls_is_reported() {
+async fn a_play_the_daemon_could_not_load_is_reported() {
     let mut app = connected_app();
     app.play(&episode("e1"));
-    // `loading` went up and down unseen; only the count says it happened.
-    app.on_player(Some(after_plays(1, idle())));
+    event(
+        &mut app,
+        Event::PlayFailed {
+            item_id: Some("e1".into()),
+            origin: own(1),
+            error: "PlaybackInfo: 404".into(),
+        },
+    );
     assert!(
         app.message.contains("could not play S01E01  e1"),
         "got {:?}",
@@ -507,88 +541,112 @@ async fn a_play_the_daemon_gave_up_on_between_two_polls_is_reported() {
 }
 
 #[tokio::test]
-async fn replaying_the_item_already_playing_waits_for_the_daemon_to_start_it_again() {
+async fn a_play_the_daemon_refuses_ends_with_its_reason() {
     let mut app = connected_app();
-    app.on_player(Some(playing_episode("e1")));
     app.play(&episode("e1"));
-    // Still the earlier play of e1: the daemon has not picked the new one up.
-    app.on_player(Some(playing_episode("e1")));
-    app.on_player(Some(after_plays(1, idle())));
+    let refusal = |id| {
+        Msg::Control(DaemonFrame::Reply {
+            id,
+            error: Some("jellysink has no connection to the server".into()),
+        })
+    };
+    app.on_msg(refusal(7));
     assert!(
-        app.message.contains("could not play"),
-        "the earlier play was taken for this one: {:?}",
-        app.message
+        app.pending_play.is_some(),
+        "another command's refusal ended it"
     );
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_play_the_daemon_never_picks_up_times_out() {
-    let mut app = connected_app();
-    app.play(&episode("e1"));
-    tokio::time::advance(START_TIMEOUT).await;
-    app.on_player(Some(idle()));
+    app.on_msg(refusal(1));
+    assert!(app.pending_play.is_none());
     assert!(
-        app.message.contains("did not start S01E01  e1"),
+        app.message.contains("no connection to the server"),
         "got {:?}",
         app.message
     );
-    assert!(!footer(&mut app).contains("starting"));
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_slow_load_the_daemon_has_picked_up_is_not_timed_out() {
-    let mut app = connected_app();
-    app.play(&episode("e1"));
-    app.on_player(Some(after_plays(1, loading(idle()))));
-    tokio::time::advance(START_TIMEOUT).await;
-    app.on_player(Some(after_plays(1, loading(idle()))));
-    assert!(app.message.is_empty(), "got {:?}", app.message);
-    assert!(footer(&mut app).contains("starting S01E01  e1"));
-}
-
-#[tokio::test(start_paused = true)]
-async fn against_a_daemon_that_sends_no_count_a_play_ends_when_its_item_appears() {
-    let mut app = connected_app();
-    app.play(&episode("e1"));
-    app.on_player(Some(playing_episode("e1")));
-    tokio::time::advance(START_TIMEOUT).await;
-    app.on_player(Some(playing_episode("e1")));
-    assert!(
-        app.message.is_empty(),
-        "a play that worked was timed out: {:?}",
-        app.message
-    );
 }
 
 #[tokio::test]
-async fn a_refusal_ends_only_the_play_it_answers() {
+async fn a_disconnect_ends_a_starting_play_and_marks_the_daemon_absent() {
     let mut app = connected_app();
     app.play(&episode("e1"));
-    app.play(&episode("e2"));
-    app.on_msg(Msg::PlayFailed {
-        item_id: "e1".into(),
-        message: "POST /Sessions/session/Playing: 403".into(),
-    });
-    assert_eq!(app.message, "POST /Sessions/session/Playing: 403");
-    assert!(footer(&mut app).contains("starting S01E01  e2"));
-
-    app.on_msg(Msg::PlayFailed {
-        item_id: "e2".into(),
-        message: "POST /Sessions/session/Playing: 403".into(),
-    });
+    app.on_msg(Msg::Disconnected);
+    assert!(matches!(app.daemon, Daemon::Absent));
+    assert!(app.pending_play.is_none());
     assert!(!footer(&mut app).contains("starting"));
 }
 
 #[tokio::test]
-async fn the_status_is_polled_faster_only_while_a_play_is_starting() {
+async fn a_stop_the_server_has_recorded_reloads_the_screen_and_home() {
     let mut app = connected_app();
-    assert!(app.poll_due.is_none());
-    app.play(&episode("e1"));
-    assert!(app.poll_due.is_some());
-    app.on_player(Some(after_plays(1, playing_episode("e1"))));
-    assert!(app.poll_due.is_none());
+    let reloads = |logs: &LogBuffer| {
+        logs.lines()
+            .iter()
+            .filter(|line| line.message.contains("reloading after a playback change"))
+            .count()
+    };
+    let logs = crate::logs::capture(|| {
+        status(&mut app, playing_episode("e2"));
+        event(
+            &mut app,
+            Event::Reported {
+                report: ReportKind::Start,
+                item_id: "e2".into(),
+                ok: true,
+            },
+        );
+    });
+    assert_eq!(reloads(&logs), 0, "reloaded before the server had a stop");
 
-    // A cast from a phone: nothing was sent from here, but the daemon is loading.
-    app.on_player(Some(loading(idle())));
-    assert!(app.poll_due.is_some());
+    let logs = crate::logs::capture(|| {
+        event(
+            &mut app,
+            Event::Reported {
+                report: ReportKind::Stopped,
+                item_id: "e1".into(),
+                ok: true,
+            },
+        )
+    });
+    assert_eq!(reloads(&logs), 1);
+}
+
+/// Nothing here tracks a command from before the reconnect any more, so it must
+/// not run once the daemon is back.
+#[tokio::test(start_paused = true)]
+async fn a_command_queued_while_disconnected_is_not_replayed_on_reconnect() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let paths = Paths::from_override(Some(dir.path().to_path_buf())).unwrap();
+    let (tx, mut msgs) = unbounded_channel();
+    let (requests, queued) = unbounded_channel();
+    tokio::spawn(player::stay_connected(paths.clone(), tx, queued));
+    assert!(matches!(msgs.recv().await, Some(Msg::Disconnected)));
+
+    let stop = |id| Request {
+        id,
+        command: Command::Cast(CastEvent::Stop),
+    };
+    requests.send(stop(1)).unwrap();
+    let listener = tokio::net::UnixListener::bind(paths.control_socket()).unwrap();
+    let daemon = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut lines = FrameReader::new(read);
+        lines.next_line().await.unwrap();
+        let welcome = DaemonFrame::Welcome {
+            protocol: PROTOCOL,
+            daemon: "test".into(),
+            client_id: OWN,
+        };
+        write_frame(&mut write, &welcome).await.unwrap();
+        let status = DaemonFrame::Status {
+            status: Box::new(idle()),
+        };
+        write_frame(&mut write, &status).await.unwrap();
+        (lines.next_line().await.unwrap().unwrap(), write)
+    });
+    assert!(matches!(msgs.recv().await, Some(Msg::Connected { .. })));
+
+    requests.send(stop(2)).unwrap();
+    let (line, _write) = daemon.await.unwrap();
+    let sent: Request = serde_json::from_str(&line).unwrap();
+    assert_eq!(sent.id, 2, "a command from before the reconnect was sent");
 }
