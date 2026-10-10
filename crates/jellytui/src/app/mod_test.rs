@@ -45,6 +45,25 @@ async fn search_results_are_loading_only_while_a_query_is_out() {
     );
 }
 
+#[tokio::test]
+async fn a_search_result_opens_on_a_fresh_path_and_esc_returns_to_the_results() {
+    let mut app = app();
+    app.open_libraries();
+    app.push("Movies", Source::Folder("movies".into()));
+    app.apply(Intent::StartSearch);
+    app.apply(Intent::Type('f'));
+    app.on_msg(Msg::Search(app.search_generation, vec![tile("Frieren")]));
+
+    app.apply(Intent::Enter);
+    let trail: Vec<_> = app.stack.iter().map(|level| level.title.as_str()).collect();
+    assert_eq!(trail, ["Frieren"]);
+
+    app.apply(Intent::Back);
+    assert_eq!(app.screen, Screen::Search);
+    assert_eq!(app.query, "f");
+    assert_eq!(app.results.items.len(), 1);
+}
+
 #[test]
 fn up_and_down_move_between_the_home_shelves_and_each_keeps_its_cursor() {
     let mut app = app();

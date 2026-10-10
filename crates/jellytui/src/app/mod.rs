@@ -91,6 +91,7 @@ pub(crate) struct App {
     /// Indexed by `HomePane`; each keeps its cursor while the other has focus.
     shelves: [Rows; 2],
     pub(crate) stack: Vec<Level>,
+    screen_before_browse: Screen,
     pub(crate) query: String,
     pub(crate) results: Rows,
     pub(crate) daemon: Daemon,
@@ -144,6 +145,7 @@ impl App {
             home_pane: HomePane::Resume,
             shelves: Default::default(),
             stack: Vec::new(),
+            screen_before_browse: Screen::Home,
             query: String::new(),
             results: Rows::default(),
             daemon: Daemon::Unknown,

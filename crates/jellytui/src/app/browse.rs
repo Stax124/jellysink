@@ -160,7 +160,11 @@ impl App {
         };
         match nav::descend(&item) {
             Some(source) => {
-                self.screen = Screen::Browse;
+                if self.screen != Screen::Browse {
+                    self.screen_before_browse = self.screen;
+                    self.screen = Screen::Browse;
+                    self.stack.clear();
+                }
                 self.push(item.name.clone().unwrap_or_default(), source);
             }
             None => self.play(&item),
@@ -193,7 +197,7 @@ impl App {
             Screen::Browse => {
                 self.stack.pop();
                 if self.stack.is_empty() {
-                    self.screen = Screen::Home;
+                    self.screen = self.screen_before_browse;
                 }
             }
             Screen::Playing => self.screen = Screen::Home,
@@ -203,6 +207,7 @@ impl App {
 
     pub(super) fn open_libraries(&mut self) {
         self.screen = Screen::Browse;
+        self.screen_before_browse = Screen::Home;
         self.stack.clear();
         self.push("Libraries", Source::Libraries);
     }
