@@ -12,9 +12,6 @@ use jellysink_core::config::Paths;
 use jellysink_core::logging::init_tracing;
 use std::path::PathBuf;
 
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 #[derive(Parser)]
 #[command(
     name = "jellysink",

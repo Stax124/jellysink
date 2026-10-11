@@ -23,7 +23,6 @@ reqwest.workspace = true
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tikv-jemallocator.workspace = true
 tokio = { workspace = true, features = [
     "macros",
     "process",
