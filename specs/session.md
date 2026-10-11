@@ -22,8 +22,10 @@ memories are untouched, and `run_session`'s exit is just an `Err` the loop
 reconnects from. Only the socket, its reader and the two
 `tokio::time::interval`s are per-connection.
 
-The process runs on `#[tokio::main(flavor = "current_thread")]`: one thread,
-everything cooperatively scheduled.
+The process runs on a `current_thread` runtime built in `main`: one thread,
+everything cooperatively scheduled. Blocking-pool threads run on 256 KiB stacks,
+so a `spawn_blocking` closure keeps large buffers and deep recursion off the
+stack; `main` says why.
 
 ## Tasks and channels
 

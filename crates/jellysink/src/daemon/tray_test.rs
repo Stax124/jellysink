@@ -92,15 +92,13 @@ fn pending_update_badges_the_icon() {
 #[test]
 fn icon_pixmap_embeds_jellyfin_ico_as_argb32() {
     let icons = tray().icon_pixmap();
-    assert!(
-        !icons.is_empty(),
-        "tray should ship the bundled Jellyfin icon"
-    );
-
     let sizes: Vec<(i32, i32)> = icons.iter().map(|i| (i.width, i.height)).collect();
-    assert!(
-        sizes.contains(&(64, 64)),
-        "logo.ico includes 64x64, got {sizes:?}"
+    // Guards a heap spike: a host reading `IconPixmap` makes zbus build one
+    // `zvariant::Value` per pixmap byte.
+    assert_eq!(
+        sizes.iter().map(|&(width, height)| width.max(height)).max(),
+        Some(64),
+        "logo.ico's largest entry must be 64 px, got {sizes:?}"
     );
 
     for icon in &icons {
@@ -117,20 +115,4 @@ fn icon_pixmap_embeds_jellyfin_ico_as_argb32() {
         .unwrap();
     let center = ((32 * 64) + 32) * 4;
     assert_eq!(&large.data[center..center + 4], &[255, 188, 119, 125]);
-}
-
-/// Guards the startup spike: a host reading `IconPixmap` turns every pixmap byte into its own `zvariant::Value`.
-#[test]
-fn bundled_icon_stops_at_64px() {
-    let sizes: Vec<(i32, i32)> = tray()
-        .icon_pixmap()
-        .iter()
-        .map(|i| (i.width, i.height))
-        .collect();
-    assert!(
-        sizes
-            .iter()
-            .all(|&(width, height)| width <= 64 && height <= 64),
-        "logo.ico has an entry above 64 px: {sizes:?}"
-    );
 }

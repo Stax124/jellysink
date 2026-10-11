@@ -7,7 +7,7 @@ mod report;
 mod runtime;
 
 use clap::{Parser, Subcommand};
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::config::Paths;
 use jellysink_core::logging::init_tracing;
 use std::path::PathBuf;
@@ -75,9 +75,15 @@ enum ConfigCmd {
     },
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
-    jellysink_core::error::exit_on_usage_error(try_main().await)
+fn main() -> Result<()> {
+    // tokio leaves its last exited blocking thread unjoined, so its stack stays mapped,
+    // and THP backs a default 2 MiB one with a fully resident huge page.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .thread_stack_size(256 * 1024)
+        .build()
+        .wrap_err("building the tokio runtime")?;
+    jellysink_core::error::exit_on_usage_error(runtime.block_on(try_main()))
 }
 
 async fn try_main() -> Result<()> {
