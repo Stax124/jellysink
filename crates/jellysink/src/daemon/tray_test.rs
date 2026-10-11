@@ -71,17 +71,17 @@ fn pending_update_badges_the_icon() {
 
     let idle_large = idle
         .iter()
-        .find(|i| i.width == 256 && i.height == 256)
+        .find(|i| i.width == 64 && i.height == 64)
         .unwrap();
     let pending_large = pending
         .iter()
-        .find(|i| i.width == 256 && i.height == 256)
+        .find(|i| i.width == 64 && i.height == 64)
         .unwrap();
     assert_ne!(
         idle_large.data, pending_large.data,
         "pending icon should carry an update badge"
     );
-    let center = ((128 * 256) + 128) * 4;
+    let center = ((32 * 64) + 32) * 4;
     assert_eq!(
         &idle_large.data[center..center + 4],
         &pending_large.data[center..center + 4],
@@ -99,8 +99,8 @@ fn icon_pixmap_embeds_jellyfin_ico_as_argb32() {
 
     let sizes: Vec<(i32, i32)> = icons.iter().map(|i| (i.width, i.height)).collect();
     assert!(
-        sizes.contains(&(256, 256)),
-        "logo.ico includes 256x256, got {sizes:?}"
+        sizes.contains(&(64, 64)),
+        "logo.ico includes 64x64, got {sizes:?}"
     );
 
     for icon in &icons {
@@ -113,8 +113,24 @@ fn icon_pixmap_embeds_jellyfin_ico_as_argb32() {
 
     let large = icons
         .iter()
-        .find(|i| i.width == 256 && i.height == 256)
+        .find(|i| i.width == 64 && i.height == 64)
         .unwrap();
-    let center = ((128 * 256) + 128) * 4;
-    assert_eq!(&large.data[center..center + 4], &[255, 188, 119, 126]);
+    let center = ((32 * 64) + 32) * 4;
+    assert_eq!(&large.data[center..center + 4], &[255, 188, 119, 125]);
+}
+
+/// Guards the startup spike: a host reading `IconPixmap` turns every pixmap byte into its own `zvariant::Value`.
+#[test]
+fn bundled_icon_stops_at_64px() {
+    let sizes: Vec<(i32, i32)> = tray()
+        .icon_pixmap()
+        .iter()
+        .map(|i| (i.width, i.height))
+        .collect();
+    assert!(
+        sizes
+            .iter()
+            .all(|&(width, height)| width <= 64 && height <= 64),
+        "logo.ico has an entry above 64 px: {sizes:?}"
+    );
 }
