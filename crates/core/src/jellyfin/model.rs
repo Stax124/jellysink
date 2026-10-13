@@ -29,14 +29,33 @@ pub struct Item {
     /// endpoint sends it: `/UserViews` does, `/Items` only when asked.
     pub primary_image_aspect_ratio: Option<f64>,
     pub image_tags: ImageTags,
+    pub backdrop_image_tags: Vec<String>,
 }
 
-/// Jellyfin sends these unasked, keyed by image kind. Only the one the
-/// frontend draws is modelled.
+/// Jellyfin sends these unasked, keyed by image kind. Only the ones the
+/// frontend draws are modelled.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct ImageTags {
     pub primary: Option<String>,
+    pub thumb: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImageType {
+    Primary,
+    Thumb,
+    Backdrop,
+}
+
+impl ImageType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Primary => "Primary",
+            Self::Thumb => "Thumb",
+            Self::Backdrop => "Backdrop",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]

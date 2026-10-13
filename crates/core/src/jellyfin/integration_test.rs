@@ -3,7 +3,7 @@
 
 use super::auth::{Api, is_auth_expired, login};
 use super::browse::ItemQuery;
-use super::model::{Item, ItemList};
+use super::model::{ImageType, Item, ItemList};
 use crate::config::Credentials;
 use crate::error::UsageError;
 use serde::Deserialize;
@@ -118,9 +118,25 @@ async fn the_library_browses_the_way_jellytui_walks_it() {
 
     let item = Item::deserialize(api.get_item(&series.id).await.unwrap()).unwrap();
     assert_eq!(item.production_year, Some(2018));
-    let tag = item.primary_image_tag().expect("the series poster");
-    let poster = api.primary_image(&series.id, tag, 64, 64).await.unwrap();
-    assert!(poster.is_some_and(|bytes| !bytes.is_empty()));
+    let images = [
+        (ImageType::Primary, item.primary_image_tag()),
+        (ImageType::Thumb, item.image_tags.thumb.as_deref()),
+        (
+            ImageType::Backdrop,
+            item.backdrop_image_tags.first().map(String::as_str),
+        ),
+    ];
+    for (image_type, tag) in images {
+        let tag = tag.unwrap_or_else(|| panic!("the series has no {image_type:?} tag"));
+        let image = api
+            .image(&series.id, image_type, tag, 64, 64)
+            .await
+            .unwrap();
+        assert!(
+            image.is_some_and(|bytes| !bytes.is_empty()),
+            "{image_type:?}"
+        );
+    }
 }
 
 #[tokio::test]

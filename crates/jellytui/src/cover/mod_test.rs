@@ -35,6 +35,50 @@ fn an_item_with_no_artwork_is_never_asked_for() {
 }
 
 #[test]
+fn a_landscape_box_draws_a_posters_thumb_then_its_backdrop_then_the_poster() {
+    let covers = covers();
+    let (landscape, portrait) = (Size::new(16, 4), Size::new(4, 8));
+    let mut movie = serde_json::json!({
+        "Id": "m1", "Name": "m1", "Type": "Movie",
+        "ImageTags": { "Primary": "poster", "Thumb": "thumb" },
+        "BackdropImageTags": ["backdrop"],
+    });
+    let chosen = |raw: &serde_json::Value, size| {
+        let key = covers
+            .key(&crate::test_support::item(raw.clone()), size)
+            .unwrap();
+        (key.image_type, key.image_tag)
+    };
+    assert_eq!(
+        chosen(&movie, landscape),
+        (ImageType::Thumb, "thumb".into())
+    );
+    assert_eq!(
+        chosen(&movie, portrait),
+        (ImageType::Primary, "poster".into())
+    );
+    movie["ImageTags"]["Thumb"] = serde_json::Value::Null;
+    assert_eq!(
+        chosen(&movie, landscape),
+        (ImageType::Backdrop, "backdrop".into())
+    );
+    movie["BackdropImageTags"] = serde_json::json!([]);
+    assert_eq!(
+        chosen(&movie, landscape),
+        (ImageType::Primary, "poster".into())
+    );
+
+    let episode = serde_json::json!({
+        "Id": "e1", "Name": "e1", "Type": "Episode",
+        "ImageTags": { "Primary": "still", "Thumb": "series-thumb" },
+    });
+    assert_eq!(
+        chosen(&episode, landscape),
+        (ImageType::Primary, "still".into())
+    );
+}
+
+#[test]
 fn a_resized_terminal_asks_for_a_new_encoding_instead_of_stretching_the_old() {
     let mut covers = covers();
     let small = covers

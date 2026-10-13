@@ -105,7 +105,7 @@ impl App {
                     Mode::Synopsis => view::synopsis::split(self.body_area())[0],
                     Mode::List => return None,
                 };
-                grid::metrics_for(area, items, self.covers.font_size(), grid::TARGET_ROWS)
+                grid::metrics_for(area, items, self.covers.font_size())
             }
             Screen::Search | Screen::Playing | Screen::Logs => None,
         }
@@ -114,11 +114,10 @@ impl App {
     /// A shelf's tiles whether or not it has focus: the covers in the other
     /// one are on screen too and still have to be asked for.
     pub(crate) fn shelf_metrics(&self, pane: HomePane) -> Option<grid::Metrics> {
-        grid::metrics_for(
+        grid::shelf_metrics_for(
             view::body::shelves(self.body_area())[pane as usize],
             &self.shelf(pane).items,
             self.covers.font_size(),
-            grid::SHELF_ROWS,
         )
     }
 

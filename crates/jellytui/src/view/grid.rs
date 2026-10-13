@@ -21,9 +21,9 @@ const LABEL_HEIGHT: u16 = 3;
 
 /// Rows of tiles a grid aims to fill the height with. Spending a big monitor's
 /// height on bigger covers reads better than five rows of thumbnails.
-pub(crate) const TARGET_ROWS: u16 = 2;
+const TARGET_ROWS: u16 = 2;
 /// A Home shelf is one row of tiles in half the body.
-pub(crate) const SHELF_ROWS: u16 = 1;
+const SHELF_ROWS: u16 = 1;
 /// The floor under that, which stops a 16:9 still taking a third of a wide
 /// screen. A level with fewer items than this spreads over its own count.
 const MIN_COLUMNS: u16 = 4;
@@ -129,22 +129,37 @@ fn metrics(area: Rect, aspect: f32, font_size: FontSize, shape: Shape) -> Metric
 }
 
 /// The grid `items` fill in `area`, the block included; `None` when there are none.
-pub(crate) fn metrics_for(
-    area: Rect,
-    items: &[Item],
-    font_size: FontSize,
-    target_rows: u16,
-) -> Option<Metrics> {
+pub(crate) fn metrics_for(area: Rect, items: &[Item], font_size: FontSize) -> Option<Metrics> {
     let first = items.first()?;
     Some(metrics(
         inner(area),
         cover::primary_aspect(first),
         font_size,
         Shape {
-            target_rows,
+            target_rows: TARGET_ROWS,
             item_count: items.len(),
         },
     ))
+}
+
+/// A Home shelf mixes movies with episodes, so it is landscape whatever its
+/// first item is.
+pub(crate) fn shelf_metrics_for(
+    area: Rect,
+    items: &[Item],
+    font_size: FontSize,
+) -> Option<Metrics> {
+    (!items.is_empty()).then(|| {
+        metrics(
+            inner(area),
+            cover::LANDSCAPE,
+            font_size,
+            Shape {
+                target_rows: SHELF_ROWS,
+                item_count: items.len(),
+            },
+        )
+    })
 }
 
 /// Scrolls by the least that brings the selection back on screen.

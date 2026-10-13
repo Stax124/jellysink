@@ -7,7 +7,7 @@ pub(crate) use disk::CoverDisk;
 
 use color_eyre::eyre::{Result, WrapErr};
 use jellysink_core::jellyfin::auth::Api;
-use jellysink_core::jellyfin::model::Item;
+use jellysink_core::jellyfin::model::{ImageType, Item};
 use ratatui::Frame;
 use ratatui::backend::WindowSize;
 use ratatui::layout::{Rect, Size};
@@ -32,6 +32,7 @@ const NEW_GRID_THRESHOLD: f32 = 0.05;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct CoverKey {
     item_id: String,
+    image_type: ImageType,
     image_tag: String,
     size: Size,
     cell: Size,
@@ -62,9 +63,11 @@ impl Covers {
 
     pub(super) fn key(&self, item: &Item, size: Size) -> Option<CoverKey> {
         let font_size = self.picker.font_size();
+        let (image_type, image_tag) = image_for(item, size, font_size)?;
         Some(CoverKey {
             item_id: item.id.clone(),
-            image_tag: item.primary_image_tag()?.to_string(),
+            image_type,
+            image_tag: image_tag.to_string(),
             size,
             cell: Size::new(font_size.width, font_size.height),
         })
@@ -174,6 +177,8 @@ fn repicker(picker: &Picker, cell: Size) -> Picker {
     rebuilt
 }
 
+pub(super) const LANDSCAPE: f32 = 16.0 / 9.0;
+
 /// The shape of an item's primary image, as width ÷ height: the server's own
 /// measurement where it sent one, otherwise a guess from the kind.
 pub(super) fn primary_aspect(item: &Item) -> f32 {
@@ -181,7 +186,26 @@ pub(super) fn primary_aspect(item: &Item) -> f32 {
     item.primary_image_aspect_ratio
         .map(|ratio| ratio as f32)
         .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
-        .unwrap_or(if wide { 16.0 / 9.0 } else { 2.0 / 3.0 })
+        .unwrap_or(if wide { LANDSCAPE } else { 2.0 / 3.0 })
+}
+
+/// A poster in a landscape box would be a sliver, so the box gets the item's
+/// landscape art instead where the server has any.
+fn image_for(item: &Item, size: Size, font_size: FontSize) -> Option<(ImageType, &str)> {
+    let primary = item
+        .primary_image_tag()
+        .map(|tag| (ImageType::Primary, tag));
+    let landscape_box = u32::from(size.width) * u32::from(font_size.width)
+        > u32::from(size.height) * u32::from(font_size.height);
+    if !landscape_box || primary_aspect(item) >= 1.0 {
+        return primary;
+    }
+    let thumb = item.image_tags.thumb.as_deref();
+    let backdrop = item.backdrop_image_tags.first().map(String::as_str);
+    thumb
+        .map(|tag| (ImageType::Thumb, tag))
+        .or(backdrop.map(|tag| (ImageType::Backdrop, tag)))
+        .or(primary)
 }
 
 /// How many rows a cover `width` cells wide needs to hold `aspect`. A cell is
@@ -274,7 +298,7 @@ pub(super) async fn fetch(
     let width = u32::from(size.width) * u32::from(font_size.width);
     let height = u32::from(size.height) * u32::from(font_size.height);
     let Some(bytes) = api
-        .primary_image(&key.item_id, &key.image_tag, width, height)
+        .image(&key.item_id, key.image_type, &key.image_tag, width, height)
         .await?
     else {
         return Ok(None);

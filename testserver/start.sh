@@ -54,6 +54,9 @@ wait_for() {
 rm -rf "$media"
 mkdir -p "$series_dir"
 cp "$here/tvshow.nfo" "$here/poster.jpg" "$series_dir/"
+# The poster again under the names Jellyfin reads as a Thumb and a Backdrop.
+cp "$here/poster.jpg" "$series_dir/landscape.jpg"
+cp "$here/poster.jpg" "$series_dir/backdrop.jpg"
 while IFS=$'\t' read -r season episode title; do
     season_dir="$series_dir/$(printf 'Season %02d' "$season")"
     if [[ ! -d "$season_dir" ]]; then

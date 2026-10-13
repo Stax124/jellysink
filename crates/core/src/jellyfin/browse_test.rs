@@ -18,7 +18,13 @@ fn value_of(query: &str, key: &str) -> Option<String> {
 }
 
 fn image_query(max_width: u32, max_height: u32) -> String {
-    let path = primary_image_path("f137a2dd", "9e4d2c", max_width, max_height);
+    let path = image_path(
+        "f137a2dd",
+        ImageType::Primary,
+        "9e4d2c",
+        max_width,
+        max_height,
+    );
     path.split_once('?').expect("query string").1.to_string()
 }
 
@@ -102,7 +108,7 @@ fn an_image_names_its_format_and_quality() {
 
 #[test]
 fn an_image_tag_cannot_inject_parameters() {
-    let path = primary_image_path("f137a2dd", "a&Foo=1", 144, 224);
+    let path = image_path("f137a2dd", ImageType::Primary, "a&Foo=1", 144, 224);
     assert!(path.contains("tag=a%26Foo%3D1"), "{path}");
     assert!(!path.contains("&Foo=1"), "{path}");
 }

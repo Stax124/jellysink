@@ -43,7 +43,7 @@ fn tiles_fill_the_row_and_posters_pack_tighter_than_stills() {
 /// A grid of `items` drawn into `area`, and the metrics it was drawn with.
 fn draw_grid(items: Vec<Item>, area: Rect) -> (Buffer, Metrics) {
     let covers = covers();
-    let grid = metrics_for(area, &items, covers.font_size(), TARGET_ROWS).unwrap();
+    let grid = metrics_for(area, &items, covers.font_size()).unwrap();
     let mut rows = Rows::default();
     rows.fill(items);
     let buffer = render_buffer(area.width, area.height, |frame| {
@@ -190,6 +190,19 @@ fn tiles_hang_from_the_top_rather_than_floating_in_the_middle_of_the_body() {
     let area = Rect::new(0, 0, 60, 30);
     let (buffer, grid) = draw_grid(libraries, area);
     assert_eq!(rule_row(&buffer), inner(area).y + grid.cover.height);
+}
+
+#[test]
+fn a_shelf_led_by_a_movie_poster_still_lays_out_stills() {
+    // Guards the poster-shaped shelf that hung every still above a gap.
+    let movie = item(json!({ "Id": "m1", "Name": "m1", "Type": "Movie" }));
+    let episode = item(json!({ "Id": "e1", "Name": "e1", "Type": "Episode" }));
+    let shelf = shelf_metrics_for(Rect::new(0, 0, 160, 22), &[movie, episode], FONT_SIZE).unwrap();
+    let (width, height) = (
+        shelf.cover.width * FONT_SIZE.width,
+        shelf.cover.height * FONT_SIZE.height,
+    );
+    assert!(width > height, "{shelf:?}");
 }
 
 #[test]

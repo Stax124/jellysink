@@ -54,8 +54,9 @@ impl CoverDisk {
         let width = bucket_pixels(u32::from(key.size.width) * u32::from(key.cell.width));
         let height = bucket_pixels(u32::from(key.size.height) * u32::from(key.cell.height));
         self.dir.join(format!(
-            "{}-{}-{width}x{height}.img",
+            "{}-{}-{}-{width}x{height}.img",
             sanitize(&key.item_id),
+            key.image_type.as_str(),
             sanitize(&key.image_tag)
         ))
     }

@@ -1,4 +1,5 @@
 use super::auth::Api;
+use super::model::ImageType;
 use super::url::encode_query_value;
 use color_eyre::eyre::{Result, WrapErr};
 use serde_json::Value;
@@ -91,9 +92,16 @@ pub fn bucket_pixels(pixels: u32) -> u32 {
     pixels.max(1).div_ceil(IMAGE_BUCKET_PIXELS) * IMAGE_BUCKET_PIXELS
 }
 
-fn primary_image_path(item_id: &str, image_tag: &str, max_width: u32, max_height: u32) -> String {
+fn image_path(
+    item_id: &str,
+    image_type: ImageType,
+    image_tag: &str,
+    max_width: u32,
+    max_height: u32,
+) -> String {
     format!(
-        "/Items/{item_id}/Images/Primary?maxWidth={}&maxHeight={}&format=Webp&quality={IMAGE_QUALITY}&tag={}",
+        "/Items/{item_id}/Images/{}?maxWidth={}&maxHeight={}&format=Webp&quality={IMAGE_QUALITY}&tag={}",
+        image_type.as_str(),
         bucket_pixels(max_width),
         bucket_pixels(max_height),
         encode_query_value(image_tag)
@@ -145,14 +153,15 @@ impl Api {
         self.get_json(&path).await
     }
 
-    pub async fn primary_image(
+    pub async fn image(
         &self,
         item_id: &str,
+        image_type: ImageType,
         image_tag: &str,
         max_width: u32,
         max_height: u32,
     ) -> Result<Option<Vec<u8>>> {
-        let path = primary_image_path(item_id, image_tag, max_width, max_height);
+        let path = image_path(item_id, image_type, image_tag, max_width, max_height);
         let response = self.get(&path).await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);

@@ -259,9 +259,12 @@ Libraries screen that changed shape with its sort order would be the bug.
 Two screens override it. **Search** is always a list — its rows are mixed kinds,
 so a grid would be tiles of three different shapes. **Home** is two grids,
 Continue Watching above Next Up, each owning half the body and holding a single
-row, which is why `grid::metrics_for` takes the rows it is asked to fill rather
-than assuming `TARGET_ROWS`. A shelf scrolls horizontally, so the `offset` that
-scrolls a level by rows scrolls a shelf by screenfuls of one.
+row, which is why `grid::metrics` takes the rows it is asked to fill rather
+than assuming `TARGET_ROWS`. A shelf is landscape whatever its first item is
+(`grid::shelf_metrics_for`): Continue Watching mixes movies with episodes, and
+the first-row rule would hang every still in a poster box. A shelf scrolls
+horizontally, so the `offset` that scrolls a level by rows scrolls a shelf by
+screenfuls of one.
 `App::visible_covers` asks for the tiles in both shelves while `grid_metrics`
 answers for the focused one only, so Home does not go through it. `grid::render`
 draws with the `Metrics` `App` worked out rather than its own, so the covers
@@ -373,7 +376,7 @@ off stdin, which the alternate screen would swallow. When it fails — tmux
 without passthrough, a plain xterm — `Picker::halfblocks()` is the fallback, so
 every terminal gets a picture rather than a hole.
 
-Images are fetched through `Api::primary_image`, which goes through `Api::get`
+Images are fetched through `Api::image`, which goes through `Api::get`
 and so carries the cached auth header. `jellyfin::url::image_url` is *not* used
 here: that one is for MPRIS, which hands the URL to a desktop widget to fetch
 itself, so it carries no token (the image endpoint is anonymous), and it stays
@@ -408,7 +411,7 @@ Three things are worth stating because getting them wrong is invisible:
   stays enabled alongside it.
 - **A cover's size is part of its identity.** A `Protocol` is encoded against one
   rect at one cell size, so after a terminal resize the cached one is the *wrong*
-  encoding, not a stale one. `CoverKey` is `(item id, image tag, size, cell)`,
+  encoding, not a stale one. `CoverKey` is `(item id, image type, image tag, size, cell)`,
   and because `visible_covers` is recomputed every loop iteration a resize asks
   for the new size without anything having to notice the resize. The cell is the
   pixel grid below: it catches the case the size cannot, a move to a display of
@@ -417,12 +420,20 @@ Three things are worth stating because getting them wrong is invisible:
   around what `cover::primary_aspect` answers: the server's own
   `PrimaryImageAspectRatio` where it sent one, otherwise 16:9 for an episode's
   still or a library's banner and 2:3 for a poster. A box reserved for the wrong
-  shape shows up as a gap between the picture and the text under it, and a grid
-  sizes every tile from its first row, so one mis-shaped library mis-shapes the
-  whole screen. The measurement cannot carry it alone — `/UserViews` sends the
-  ratio and `/Items` only when asked, and a library the server has no artwork
-  for sends none at all — which is why the guess stays and why a
-  `CollectionFolder` guesses a banner rather than the poster its kind suggests.
+  shape shows up as a gap between the picture and the text under it, and a
+  Browse grid sizes every tile from its first row, so one mis-shaped library
+  mis-shapes the whole screen. The measurement cannot carry it alone —
+  `/UserViews` sends the ratio and `/Items` only when asked, and a library the
+  server has no artwork for sends none at all — which is why the guess stays
+  and why a `CollectionFolder` guesses a banner rather than the poster its kind
+  suggests.
+
+  The box decides which image fills it (`cover::image_for`). A landscape box
+  takes an item's Primary when that is landscape too, and otherwise its `Thumb`,
+  then its first `Backdrop`, then the poster after all. This is how a movie
+  joins the stills on a shelf. Nothing has to pass the choice along: the rail
+  and `3 Playing` cut the box to the item's own Primary, and a Browse grid cuts
+  it to its first row's.
 
 ### HiDPI: the measured cell size
 
@@ -517,7 +528,7 @@ would also cost the daemon a tokio feature it does not need.
 Four rules:
 
 - **The key is the bucket, not the box.** An entry is
-  `{item_id}-{image_tag}-{bucket_w}x{bucket_h}.img`, rounded through core's
+  `{item_id}-{image_type}-{image_tag}-{bucket_w}x{bucket_h}.img`, rounded through core's
   `bucket_pixels` — the same rounding the request makes. Keying on the exact box
   would store a file per pixel of a window drag while the requests behind them
   were all the same one. The key is its own filename and nothing is hashed; the
