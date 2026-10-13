@@ -1,618 +1,164 @@
 # jellytui
 
-`jellytui` browses Jellyfin in the terminal and starts playback in a running
-jellysink. This note covers the decisions the code cannot state for itself: why
-it is a client of the daemon rather than a second copy of it, and why it talks
-to it over a Unix socket rather than through the server.
+`jellytui` browses Jellyfin in the terminal and starts playback in a running jellysink. This covers what the code cannot say for itself: why it is a client of the daemon, and why it talks to it over a Unix socket.
 
-## It is a remote, not a player
-
-The daemon already does the playing — queue, series autoplay, remembered
-tracks, progress reporting — so the frontend needs none of that machinery. It
-sends one command over the daemon's control socket and watches what the daemon
-pushes back (`specs/session.md`, *The control socket*):
+## A remote, not a player
 
 ```
 jellytui ──control.sock──> jellysink ──> mpv
 ```
 
-| jellytui       | frame on `control.sock`                                | arrives as                                  |
-| -------------- | ------------------------------------------------------ | ------------------------------------------- |
-| Enter on a row | `{"id": n, "command": "play_now", "item_ids": […], …}` | `CastEvent::PlayNow` from `Origin::Client`  |
-
-**That row is the whole table, and deliberately so.** The stream plays in the
-user's own mpv, which owns pause, seek, volume, mute and fullscreen already,
-and the daemon adopts mpv's own playlist navigation for free
-(`adopt_playlist_pos`, `specs/playlist.md`) while a closed window is already a
-stop. Binding any of them here as well is two sources of truth for state mpv is
-authoritative about, and the second one is always the stale one. The socket
-carries the full `CastEvent` vocabulary for other controllers, and `cast.rs`
-still parses it from the web app, a phone and MPRIS, so that coverage belongs in
-`cast_test.rs`, not beside a sender.
-
-The table is daemon commands, and `t` (`Api::set_played`) is not one: it writes
-user data straight to the server and the daemon never sees it, which is also why
-it works with nothing playing and no daemon running at all.
-
-The one capability with no mpv equivalent is Next when the following episode is
-not yet loaded into mpv's window (`NextNotInMpv`); stubs normally keep an entry
-either side, so it is reachable from the web app and rare in practice.
-
-Queue building, series autoplay, remembered tracks and progress reporting stay
-the daemon's. The alternative — a `jellysink browse` subcommand owning its own
-`Runtime` — is ruled out by `InstanceLock::acquire` being exclusive and
-`paths.mpv_socket()` being a fixed path: it could not run beside the daemon most
-users have under systemd, and it would mean two ways to be a player.
-
-The play goes over the socket rather than through the server, which relays a
-`PlayNow` to the daemon just as well, because the server's command has no field
-to carry an id: through it, jellytui could only guess which play was its own.
-Over the socket every event names the command that caused it (*A play
-starting*). The socket is local, so jellytui drives only a jellysink on the
-same machine — it shares that machine's `cred.json` for browsing anyway.
-
-**Two consequences.** The frontend is useless without a running daemon and says
-so rather than failing obscurely (`play` sets the "jellysink not connected"
-line). And the frame tags and field names are a contract between two binaries
-that update separately: `core`'s `control_test.rs` and `cast_test.rs` pin every
-one, so a rename fails CI rather than going silent at runtime.
+- **The only key bound to a daemon command is Enter, sending `play_now`** (`{"id": n, "command": "play_now", "item_ids": […], …}`, arriving as `CastEvent::PlayNow` from `Origin::Client`). mpv already owns pause, seek, volume, mute and fullscreen, the daemon adopts mpv's playlist navigation (`specs/playlist.md`), and closing the window is a stop; binding them here too would be a second, stale source of truth.
+- **The rest of the `CastEvent` vocabulary is for other controllers**, so its coverage belongs in `cast_test.rs`, not beside a sender.
+- **`t` (`Api::set_played`) is not a daemon command**: it writes to the server directly, so it works with no daemon at all.
+- **Next to an episode not yet in mpv's window (`NextNotInMpv`) has no mpv equivalent**, so jellytui does not offer it; stubs normally keep an entry either side, and the web app reaches it in the rare case.
+- Rejected: **a `jellysink browse` subcommand owning its own `Runtime`.** `InstanceLock::acquire` is exclusive and `paths.mpv_socket()` is fixed, so it could not run beside a systemd daemon, and it would be a second player.
+- Rejected: **playing through the server.** Its `PlayNow` has no field for a request id, so jellytui could not tell its own play apart; over the socket every event names its cause. The socket is local, so jellytui drives only a jellysink on the same machine, which shares its `cred.json` anyway.
+- **Without a running daemon it says so** (`play` sets "jellysink not connected") rather than failing obscurely.
+- **The frame tags and field names are a contract between separately updated binaries**, pinned by `core`'s `control_test.rs` and `cast_test.rs`.
 
 ## Updating
 
-`core/src/update.rs` is the one updater, parameterised by binary name. It pins
-the release asset to `<bin_name>-<target>` by exact name, because every asset of
-the release carries the target triple and `self_update`'s default substring
-match would otherwise be free to pick the other binary or a `.sha256`.
-
-Either binary updates both. Each replaces itself with `self_replace` and then
-its neighbour with `install_sibling`, unconditionally — the two update
-separately, so either can be behind. A sibling's baseline is its own
-`--version` rather than the running process's, for that same reason.
-`bin_install_path` routes it through a plain move, which is also why it needs an
-explicit `chmod`: a bare-binary asset extracts 0644 and only `self_replace`
-carries the old mode over. A neighbour that cannot be replaced is reported, not
-raised; this binary's own update has already landed by then.
-
-`--force` pins the baseline every comparison uses to `0.0.0` rather than naming
-a release to fetch, so the latest always counts as newer and is installed again
-over both binaries. It is refused alongside `--check`, which exists to *not*
-download.
-
-**Replacing the daemon's binary is not restarting the daemon.** The install
-renames over the path, so a running jellysink keeps the inode it mapped and
-plays on until it is asked to restart. Whichever binary ran the update sends a
-`restart` command on `control.sock` and waits for its reply — there is one flow
-(`install_both`), and the tray, `jellysink update` and `jellytui update` all
-reach the daemon the same way. It is asked only when
-the daemon's own binary was one of the two replaced: a restart ends playback, and
-a frontend-only update is not worth that.
-
-The check runs once at startup and, when it finds something, sets the header
-badge; failure is a log line and nothing more. `App::update` keeps the check's
-state rather than a bare offer, so `u` pressed before it answers, or after it
-failed, says so instead of calling the binary current. `u` ends the loop rather
-than downloading behind the TUI: `App::run` returns an `Exit`,
-`ratatui::restore()` runs as it always does, and `main` installs on the normal screen before
-`exec_updated` brings the TUI back. Suspending and re-entering the alternate
-screen would leave the detached input thread parked in `read` with no way to
-hand stdin back.
-
-A machine can still end up running a daemon older than the `jellytui` driving
-it — the binary on disk is current but the process predates it. Within one
-`PROTOCOL` that keeps working, since additions are new fields and frame types
-that either side skips. Across a protocol change it reads as "jellysink not
-connected" until the daemon restarts: the skew is accepted rather than handled.
+- **`core/src/update.rs` is the one updater, parameterised by binary name.** It matches the release asset `<bin_name>-<target>` exactly, because `self_update`'s substring match could pick the other binary or a `.sha256`.
+- **Either binary updates both**: itself with `self_replace`, then the `sibling_binary` beside it, unconditionally, since either can be behind. A sibling's baseline is its own `--version`, not the running process's.
+- **The sibling install moves through `bin_install_path` and needs an explicit `chmod`**: a bare-binary asset extracts 0644 and only `self_replace` keeps the old mode. A sibling that cannot be replaced is reported, not raised, since this binary's own update has already landed.
+- **`--force` pins the comparison baseline to `0.0.0`**, reinstalling the latest over both; it is refused with `--check`.
+- **Replacing the daemon's binary does not restart it**: the rename leaves the running process on its old inode. Whichever binary updated sends `restart` on `control.sock` and waits for the reply — `install_both` is the one flow for the tray, `jellysink update` and `jellytui update` — and only when the daemon's binary was replaced, since a restart ends playback.
+- **The startup check only badges the header**; a failure is a log line. `App::update` keeps the check's state, so `u` before it answers or after it fails says so instead of calling the binary current.
+- **`u` exits the loop rather than downloading behind the TUI**: `App::run` returns an `Exit`, `ratatui::restore()` runs, `main` installs on the normal screen and `exec_updated` brings the TUI back. Rejected: suspending the alternate screen, which leaves the detached input thread parked in `read` holding stdin.
+- **A daemon older than jellytui keeps working within one `PROTOCOL`**, since additions are fields and frames either side skips; across a change it reads as "not connected" until restarted. The skew is accepted.
 
 ## Staying responsive
 
-Every request runs in a spawned task reporting back over one `mpsc` channel
-(`Msg`), so no keystroke waits on HTTP. Four staleness rules follow, and they
-are the same rule four times — **the view outlives the thing it points into**:
+Every request is a spawned task reporting over one `mpsc` (`Msg`), so no keystroke waits on HTTP. The staleness rules are one rule — **the view outlives what it points into**:
 
-- **Search** is debounced `SEARCH_DEBOUNCE` and each request carries a
-  generation number, so a slow earlier response is dropped rather than
-  overwriting a newer one.
-- **Level loads** carry their depth and their `Source`, and land only on the
-  level at that depth that asked for that source. A depth alone is not enough:
-  going back and opening another level puts a different one at the same depth.
-- **`Rows::fill`** pulls the cursor back into range when a reload returns fewer
-  rows, because the selection outlives the list it points into.
-- **`App::rescroll`** runs at the head of every loop iteration, for each grid on
-  screen, so a reload or a resize that moves the cursor off the drawn tiles
-  scrolls it back as a keypress would.
+- **Search** is debounced `SEARCH_DEBOUNCE` and carries a generation, so a slow older response is dropped.
+- **Level loads** carry their depth and `Source` and land only on the matching level; depth alone fails after going back and opening another level.
+- **`Rows::fill`** pulls the cursor back into range when a reload returns fewer rows.
+- **`App::rescroll`** runs at the head of every iteration for each grid on screen, so a reload or resize scrolls the cursor back into view.
 
-The daemon connection is one long-lived task too (`player::stay_connected`). It
-forwards every frame into the same `Msg` channel, so the loop has no arm for it,
-and takes commands from `App` over a second channel. On a close or a failed
-connect it sends `Msg::Disconnected` and connects again with backoff, 250 ms
-doubling to 2 s, which also rides out the daemon's restart handoff. Commands
-still queued when a connection dies are dropped, never replayed into the next.
+**The daemon connection is one task, `player::stay_connected`**, forwarding frames into `Msg` (so the loop has no arm for it) and taking commands over a second channel. On a close or failed connect it sends `Msg::Disconnected` and retries with backoff, 250 ms doubling to 2 s, which rides out a restart. Commands queued on a dead connection are dropped, never replayed.
 
-## Where the footer's state comes from
+## The footer's state
 
-Not from `GET /Sessions`. That response embeds `NowPlayingQueueFullItems` — a
-full item DTO per queue entry — and **no request parameter trims it**: `fields`,
-`EnableFullItems` and `enableImages` were all measured against a real server and
-changed nothing. With a 103-episode series queued it is **2.4 MB**, and it stays
-that large after playback stops because the queue persists. Polled once a second
-on a `current_thread` runtime, that is megabytes of download, TLS decryption and
-JSON parsing per second on the thread that draws the UI.
-
-So the daemon pushes it: a `status` frame on `control.sock` after every change,
-about **79 bytes**, no TLS, no JSON tree, carrying the queue position
-`/Sessions` made us compute. During playback the daemon's progress tick makes
-that one a second, and each frame is a redraw; idle, nothing arrives and nothing
-redraws. A connection always opens with a snapshot, so the footer is right the
-moment it connects or reconnects, whatever it missed while away.
-
-Two things follow:
-
-- The status carries the duration alongside the position, so the progress bar
-  needs no request of its own and no key to guard against a stale total.
-- The footer's title is the daemon's `display_title`, not `Item::label`, so it
-  reads the same as the mpv window title regardless of who started playback —
-  which also means the footer works for playback started from a phone or the web
-  app.
+- **Rejected: polling `GET /Sessions`.** It embeds a full item per `NowPlayingQueueFullItems` entry and no parameter trims it (`fields`, `EnableFullItems` and `enableImages` were measured); a 103-episode queue is 2.4 MB, even after playback stops, parsed every second on the UI thread.
+- **The daemon pushes a `status` frame instead**, about 79 bytes, after every change, carrying the queue position. During playback that is once a second; idle, nothing arrives and nothing redraws. Every connection opens with a snapshot.
+- **The status carries the duration**, so the progress bar needs no request of its own.
+- **The footer title is the daemon's `display_title`, not `Item::label`**, so it matches the mpv window whoever started playback.
 
 ## A play starting
 
-Enter to mpv having the file is two to three seconds, most of it mpv's spawn,
-and the footer spends them on a spinner. It has two sources because neither
-covers the wait alone:
+Enter to `file-loaded` takes 2–3 s, mostly mpv's spawn, shown as a spinner fed by two sources because neither covers the wait alone:
 
-- **`PlayerStatus::loading`** is whether the daemon has a load up
-  (`Runtime::loading`, `specs/session.md`), from the moment it takes a play
-  until mpv's `file-loaded`. It covers mpv opening the file after the item is
-  published, and plays cast from a phone or the web app, which this frontend
-  never sent.
-- **`PendingPlay`** is set on Enter, because the daemon cannot report a command
-  it has not received. It holds the command's request id and shows the title
-  the user pressed until the daemon is playing that item.
+- **`PlayerStatus::loading`** is the daemon's `Runtime::loading` (`specs/session.md`). It covers mpv opening the file and plays cast from a phone or the web app.
+- **`PendingPlay`** is set on Enter with the request id, since the daemon cannot report a command it has not received, and shows the pressed title until the daemon plays that item.
 
-`PendingPlay` is settled only by an event whose origin is this connection's
-`client_id` and that request id:
+`PendingPlay` settles only on an event carrying this connection's `client_id` and that request id:
 
-- `play_started` clears it, and is not announced;
+- `play_started` clears it silently;
 - `play_failed` puts `jellysink could not play …` in the header;
-- `play_cancelled` clears it quietly — the footer already shows what replaced
-  it;
-- a `reply` refusing the command clears it and puts the daemon's reason in the
-  header — the daemon refuses commands while it has no session with the server;
-- a disconnect clears it, since the footer already says the daemon is gone.
+- `play_cancelled` clears it quietly, since the footer already shows what replaced it;
+- a refusing `reply` clears it and puts the daemon's reason in the header (it refuses while it has no server session);
+- a disconnect clears it.
 
-Another client's play of the same item, a cast from a phone and the daemon's
-own autoplay all carry other origins and only drive the footer. There is no
-timeout: the daemon sends exactly one outcome for every `play_loading`, and a
-daemon that dies is a disconnect.
-
-While either source is up, the loop wakes every `SPINNER_FRAME` (100 ms) so the
-spinner turns; otherwise nothing redraws between frames and keypresses.
+- **There is no timeout**: the daemon sends exactly one outcome per `play_loading`, and a dead daemon is a disconnect. Events of other origins only drive the footer.
+- **While either source is up the loop wakes every `SPINNER_FRAME` (100 ms)**; otherwise it redraws only on frames and keys.
 
 ## Reloading on a playback change
 
-Browse rows are fetched once, when the level is opened, so an episode watched
-through jellysink leaves every view that names it wrong — an unticked row, a
-resume point that has moved, a Next Up that has advanced a week. The daemon's
-report sink sends a `reported` event once the server has answered a report, and
-a `reported` `stopped` — a stop, a closed mpv window, an episode handing over —
-reloads at once, at the moment the server's watched state is current. The status
-cannot be the trigger: `stop_playback` publishes it without waiting for the
-`Stopped` POST, so a read on the status change can still get the watched state
-that report is about to replace.
-
-What reloads is the current screen plus Home, always — Continue Watching and
-Next Up are what finishing an episode invalidates, and they are rarely the
-screen that was up when it finished. The `r` key is the same
-`reload_current_screen` call, so the two cannot drift.
-
-`reload_screen_and_home` has a second caller: a successful `t` reaches it too,
-because marking something watched invalidates exactly what finishing it does,
-and there the server has already answered.
-
-The Playing screen's own lookups follow the status instead: a new item id there
-loads the item and its season at once, and the `reported` reload fetches them
-again once the watched marks are current. That one duplicate pair of requests
-per handover is deliberate — the immediate fetch is what fills the Playing
-screen, and the later one is what corrects the episode list's watched marks.
+- **A `reported` `stopped` event reloads the current screen plus Home**, since browse rows are fetched once and go stale as episodes are watched. Rejected: the status as the trigger — `stop_playback` publishes it before the `Stopped` POST is answered, so a read then can get the old watched state.
+- **Home always reloads** because Continue Watching and Next Up are what finishing invalidates. The screen half is the `reload_current_screen` that `r` calls, so the two cannot drift; a successful `t` calls `reload_screen_and_home` too.
+- **The Playing screen fetches its item and season on a new item id, and again on `reported`**: the first fills the screen, the second corrects the watched marks. The duplicate pair per handover is deliberate.
 
 ## Where a complaint goes
 
-The bottom row is the key bindings and nothing else — a message there hides
-every binding the user might need to recover with. `App::message` (a failed
-request, a play sent with no daemon connected) is drawn in the
-**header**, elided by `view::to_width`, and retired by the next keypress.
+- **The bottom row is key bindings only.** `App::message` (a failed request, a play with no daemon) goes in the **header**, elided by `view::to_width` and retired by the next keypress.
+- **The header holds the tabs (`Fill(1)`), the message, the update badge and the daemon dot.** The badge eats the message's budget, so it appears only when an update is offered, and it carries its key (`↑<version> u`) because no hint row has room.
+- **Every row fits 80 columns, held by a test.** `render_hint` does not wrap, so an overrun silently cuts the last bindings (usually `q quit`). Hence arrows rather than `h`/`j`/`k`/`l`, no `/` (Search is a tab), and `g`/`G` only in the log pane, since no arrow reaches top or bottom.
+- **The dot (`view::daemon_status`) is green while the control socket is connected, red while not, and grey until the first connect resolves.** A successful play is not announced; the footer's title is the confirmation.
 
-The header holds four things: the tabs, that message, the update badge and the
-daemon dot. The tabs take `Fill(1)` and the other three fixed widths, so the
-message's elision budget is what is left after the badge — which is why the
-badge is only there when an update is offered, and why it carries the key
-(`↑<version> u`) that no hint row has the columns to name.
+## View modes
 
-**Every row has to fit 80 columns**, and a test holds each screen to it.
-`render_hint` draws a `Paragraph` with no wrap, so an overrun is cut mid-word
-with no ellipsis and the bindings nearest the end stop existing for the user —
-`q quit` sits at the end of most rows. That budget is why the rows name arrows
-rather than `h`/`j`/`k`/`l`, and why none of them names `/`: the vim keys are
-bound and Search is a header tab, and spending columns on a second spelling of a
-key that already has one buys nothing. `g`/`G` is the
-exception and stays visible in the log pane, because no arrow reaches top or
-bottom.
+- **A level is a grid or a list with a detail rail, chosen by item kind, not `Source`** (`nav::mode`): `Series`, `Season`, `Movie`, `BoxSet`, libraries and `Episode` get the grid. By kind, a folder of movies gets the grid whichever route reached it, and it is one function to test rather than a table kept in step with the browse stack. Only the first row is asked, so kinds sharing a screen must answer alike: `CollectionFolder` and `UserView` both come from `/UserViews`, and a Libraries screen changing shape with its sort order would be the bug.
+- **Search is always a list**, its rows being mixed kinds.
+- **Home is two one-row grids**, Continue Watching above Next Up, which is why `grid::metrics` takes the row count. A shelf is always landscape (`grid::shelf_metrics_for`), since Continue Watching mixes movies and episodes, and `offset` scrolls it horizontally by screenfuls.
+- **`grid::render` draws with the `Metrics` `App` computed**, so requested covers and drawn tiles cannot disagree. Home bypasses `App::grid_metrics`, which answers only for the focused shelf; `App::visible_covers` asks for both.
+- **The rail splits the width in half (`rail::split`)**, since row text elides gracefully and the cover is worth the width; below `MIN_BODY_WIDTH` there is no rail.
 
-The dot (`view::daemon_status`) answers the one question the whole frontend
-rests on: is the control socket connected. Green while it is, red while it is
-not, and **grey until the first connect resolves** — showing red for that first
-moment would be a lie about a daemon that is fine. A successful play
-is not announced: the footer turning from a spinner into the daemon's own title
-is the confirmation, and only a failed one reaches the header (*A play starting*).
+### Keys
 
-## Two view modes
+- **In a grid, `h`/`j`/`k`/`l` and the arrows move the cursor and `Esc` is the only way back.** Up and down move a whole row, so `App` stores the terminal size each iteration; on Home they switch shelves (`App::move_vertically`), each with its own cursor.
+- **`keys.rs` is a pure mapping**; `App::apply` drops `Intent::Left`/`Right` outside a grid, so in a list `Esc` and `Enter` are the only ways back and in.
 
-A level is a grid of covers or a list with a detail rail, chosen by **item kind,
-not by `Source`** (`nav::mode`): `Series`, `Season`, `Movie`, `BoxSet`, a library
-and an `Episode` carry artwork and get the grid, everything else stays a list. By
-kind, a folder full of movies gets the grid whichever route reached it, and it is one
-function to test rather than a table kept in step with the browse stack. Only
-the first row is asked, so kinds that share a screen have to answer alike —
-`CollectionFolder` and `UserView` both come back from `/UserViews`, and a
-Libraries screen that changed shape with its sort order would be the bug.
+### Tiles, rail and synopsis band
 
-Two screens override it. **Search** is always a list — its rows are mixed kinds,
-so a grid would be tiles of three different shapes. **Home** is two grids,
-Continue Watching above Next Up, each owning half the body and holding a single
-row, which is why `grid::metrics` takes the rows it is asked to fill rather
-than assuming `TARGET_ROWS`. A shelf is landscape whatever its first item is
-(`grid::shelf_metrics_for`): Continue Watching mixes movies with episodes, and
-the first-row rule would hang every still in a poster box. A shelf scrolls
-horizontally, so the `offset` that scrolls a level by rows scrolls a shelf by
-screenfuls of one.
-`App::visible_covers` asks for the tiles in both shelves while `grid_metrics`
-answers for the focused one only, so Home does not go through it. `grid::render`
-draws with the `Metrics` `App` worked out rather than its own, so the covers
-requested and the tiles drawn cannot disagree.
+- **The rule under each cover is the progress bar**; the caption carries what it cannot (`46 left · ★ 8.0`, no count when finished), and selection is the caption's highlight.
+- **`rail::meta` splits on `kind()`**: a playable item shows its runtime, a series or season counts its children, because a series' `RunTimeTicks` is one episode's length. The year is `ProductionYear`; `Status` and `EndDate` describe season one. Genres only when sent.
+- **`ITEM_FIELDS` requests `RecursiveItemCount`, and `seasons()` passes it**: a series' progress comes only from `UserData.PlayedPercentage`, which the server leaves null without it. `ChildCount` and `Genres` ride along for about 10 KB per hundred rows.
+- **Every grid but Libraries sits over a fixed `synopsis::HEIGHT` band** (`Mode::Synopsis`) with the selected item's title, meta and clipped synopsis. `App::grid_metrics` sizes the grid from what `synopsis::split` leaves. Rejected: a band sized to the synopsis, which resizes the grid and re-requests every cover per cursor move.
+- **The band's meta drops series and year**, which the title carries, for runtime, rating, `♥` and last-watched day; series, seasons and collections drop runtime too.
+- **`view::overview` handles the basic HTML some providers write into overviews**, which the web client renders as markdown: `<br>`/`<p>` break, `<i>`/`<em>`/`<b>`/`<strong>` style, other tags keep their text, a stray `<` stays; whitespace follows markdown, and markdown syntax shows as written. Rejected: `tui-markdown`, which prints inline HTML, and `html2text`, a whole html5ever parser for a handful of tags.
 
-The list beside a rail is split by share rather than a fixed width
-(`rail::split`): half each, because a row is text that elides gracefully while
-the cover beside it is the thing worth the width. Below `MIN_BODY_WIDTH` there
-is no rail at all.
+### Tile sizing
 
-**Keys.** A grid has a second axis, so `h`/`j`/`k`/`l` and all four arrows move
-the cursor while one is focused and `Esc` is the only way back. Up and down move
-by a whole row, which is why `App` stores the terminal size each iteration —
-key handling and the draw both take the grid's `Metrics` from it. On Home they move between the shelves instead
-(`App::move_vertically`), each keeping its own cursor. Left and right mean *only*
-that: `keys.rs` stays a pure mapping and `App::apply` drops `Intent::Left`/
-`Right` unless a grid is focused, so in a list `Esc` and `Enter` are the single
-way back and in.
+- **Tiles are sized by height**: `grid::metrics` divides the body into `TARGET_ROWS` and derives the cover width, so a tall screen gets bigger covers rather than more rows. Its bounds:
+  - no narrower than `minimum_cover_width` (16 cells for 2:3, 24 for 16:9), unless the area is too short for one row that wide;
+  - never so wide that a row holds fewer than `MIN_COLUMNS`, which stops a still taking a third of a wide screen, unless the level has fewer items;
+  - no height budget when even the minimum width cannot reach `TARGET_ROWS`, since capping a cover that could never fit two rows only shrinks the one row that does.
+- **No budget is not no cap.** `render` skips a tile taller than its area, so every cover is held to `one_row_budget`. A one-row shelf takes that as its budget and drops the width floor, since height binds it and widening a tile only fits fewer of the same covers; a grid too short for one row at the floor drops it too.
+- **`cover::fit` fits against both the evened-out width and the budget**, since evening the columns hands each a few extra cells and a poster would outgrow the height.
+- **`Metrics::rows` is what is drawn, not what fits.** The budget always divides by `TARGET_ROWS`, so a short level never gets taller covers. Tiles start at the top: centring against undrawn rows leaves a gap above the only row.
 
-**What a tile says.** There is no room for the `64%` a list row shows, so the
-rule under each cover *is* the progress bar and the caption spends its one row
-on what the rule cannot carry — `46 left · ★ 8.0`, with a finished item dropping
-the count. Selection is the caption's highlight, which leaves the rule to mean
-one thing.
+## Artwork
 
-`rail::meta` splits on `kind()` for the same reason: a playable item gives its
-runtime, a series or a season counts its children (`2018 · 5 seasons · 103
-episodes · 46 left · TV-14`), because a series' own `RunTimeTicks` is the
-nominal length of one episode and reads as a claim about the whole show. The
-year is `ProductionYear`; `Status` and `EndDate` describe season one and are
-worse — Jellyfin reports Slime as `Ended` while its fourth season is dated 2026.
-Genres appear only when the response carried them.
+- **`Picker::from_query_stdio()` must run before `view::enter()`**: it writes an escape and reads the answer from stdin, which the alternate screen swallows. On failure (tmux without passthrough, a plain xterm) `Picker::halfblocks()` is the fallback.
+- **Images come through `Api::image` → `Api::get`**, carrying the cached auth header. `jellyfin::url::image_url` is for MPRIS only: tokenless (the endpoint is anonymous), JPEG at 600 px since WebP is unsafe for a third-party widget, and with a named quality (a 265 KB poster is 226 KB with only the cap, 75 KB with the quality).
+- **The server resizes**, to the next 64 px bucket above the cell box, as WebP. `maxWidth`/`maxHeight` keep aspect and cap both sides; `fillWidth`/`fillHeight` return a full poster whatever the box. A rail cover is about 40 KB.
+- **The bucket is for the server's cache**: `ImageProcessor` re-encodes on demand, keyed by dimensions, format and quality, so exact `cells × font size` would encode per resize. It does not cut our requests (`Covers::claim` is keyed on the exact size and cell); the bandwidth win is WebP's.
+- **The final downscale is local, with `FilterType::Lanczos3`**; the default `Nearest` is visibly bad on small tiles. `format=Webp` is not guaranteed (the original comes back for unsupported sources and GIFs), so the JPEG decoder stays.
+- **A cover's size is part of its identity.** A `Protocol` is encoded for one rect at one cell size, so `CoverKey` is `(item id, image type, image tag, size, cell)`. `visible_covers` is recomputed each iteration, so a resize needs no notice; the cell catches a scale change that keeps the grid.
+- **`Primary` is not always a poster.** `cover::primary_aspect` uses the server's `PrimaryImageAspectRatio` when sent, else 16:9 for an episode still or library banner and 2:3 for a poster. The guess stays because `/Items` sends the ratio only when asked and an artless library sends none; a `CollectionFolder` guesses a banner. A wrong box shows as a gap, and a grid sized from its first row mis-shapes the whole screen.
+- **The box picks the image (`cover::image_for`)**: a landscape box takes a landscape Primary, else `Thumb`, then the first `Backdrop`, then the poster. The rail and `3 Playing` cut the box to the item's own Primary; a grid to its first row's.
 
-That is why `ITEM_FIELDS` asks for `RecursiveItemCount` and `seasons()` passes
-it too: a series or a season has `PlaybackPositionTicks` of 0, so its progress
-can only come from `UserData.PlayedPercentage`, which the server leaves null
-unless the count was requested. `ChildCount` and `Genres` ride along on the same
-listing for about 10 KB on a hundred rows.
+### HiDPI
 
-**Tiles are sized by the height**, not by a fixed width: `grid::metrics` divides
-the body into `TARGET_ROWS` and takes the cover width from that, so a big
-monitor spends its extra height on bigger covers rather than a fifth row of
-thumbnails. Three bounds keep that honest:
-
-- never narrower than `minimum_cover_width` — 16 cells for a 2:3 poster, 24 for
-  a 16:9 still — below which the artwork is not worth drawing, unless the area
-  is too short for one row of tiles that wide;
-- never so wide that a row holds fewer than `MIN_COLUMNS` — which stops a still
-  taking a third of a wide screen on its own — unless the level has fewer items
-  than that, in which case they spread over their own count, since there is
-  nothing left for a wide tile to crowd out;
-- and **no budget at all** when the area cannot reach `TARGET_ROWS` even at the
-  minimum width, since capping a cover that was never going to fit two rows only
-  shrinks the one row that does fit.
-
-The last is why the budget is an `Option`, but no budget is not no cap: `render`
-skips a tile taller than its area, so an uncapped cover on a short terminal
-leaves the grid blank under a live cursor. Every cover is held to
-`one_row_budget`, and a shelf asked for one row takes it as its budget. A shelf
-drops the width floor for the same reason it keeps the cap — height binds it, so
-widening a tile would only fit fewer of the same covers — and a grid too short
-for one row at the floor drops it the same way. The cover is then `cover::fit`
-against both the evened-out width and that budget, because evening the columns
-out across the area hands each one a few more than it asked for and a poster
-obeying its aspect would grow out of the height with them.
-
-`Metrics::rows` is what the grid **draws**, not what it could hold: the height
-budget always divides by `TARGET_ROWS`, so a level too short to fill the grid
-never spends the second row's height on a taller cover, and a level with one row
-of items reserves one row of height. Tiles are drawn from the top of the body,
-which is the only place the leftover can go — a wide screen caps the tile by width, so the covers cannot
-grow into the spare height however it is divided, and centring a block against
-rows that were never going to be drawn is what puts a gap above the only row
-there is.
-
-**The synopsis band.** A tile has one caption row, and a synopsis is worth
-reading without opening the item, so every grid but the Libraries screen sits
-over a band holding the selected item's title, a meta line and its synopsis
-(`Mode::Synopsis`). A library has no synopsis, so it keeps the bare grid. A movie
-library grouped into collections lists `Movie` and `BoxSet` on one screen, which
-is why every kind with an overview answers alike. The meta line drops the series
-and the year — the block's title carries an episode's, and a movie's label its
-own — for the runtime, the rating, a `♥` and the day it was last watched. A
-series, a season or a collection drops the runtime too, for the reason
-`rail::meta` counts children instead.
-
-The band is a fixed `synopsis::HEIGHT`, and a synopsis longer than it is
-clipped. `App::grid_metrics` sizes the grid from what `synopsis::split` leaves
-above the band, so the tiles and the cover requests come from the same shorter
-area. A band that grew to each synopsis was rejected: the grid would resize
-under it, and every cursor move would ask for every cover at a new size.
-
-**Overviews** are what the web client renders as markdown with basic HTML
-allowed, and some metadata providers write the HTML: `<br>`, `<i>`, links,
-entities. `view::overview` turns that into styled lines for the band, the rail
-and `3 Playing` alike. `<br>` and `<p>` break, `<i>`/`<em>` and `<b>`/`<strong>`
-style, any other tag keeps only its text, and a `<` that opens no tag stays.
-Whitespace follows markdown, so a single newline is a space and a blank line a
-paragraph; markdown's own syntax is shown as written. `tui-markdown` was
-rejected because it prints inline HTML literally, and `html2text` because
-html5ever is a whole parser for the handful of tags providers use.
-
-## Where the artwork comes from
-
-`ratatui-image` draws the covers, with `Picker::from_query_stdio()` deciding
-between kitty, sixel, iTerm2 and halfblocks. That query **has to run before
-`view::enter()`**: it writes an escape sequence to stdout and reads the answer
-off stdin, which the alternate screen would swallow. When it fails — tmux
-without passthrough, a plain xterm — `Picker::halfblocks()` is the fallback, so
-every terminal gets a picture rather than a hole.
-
-Images are fetched through `Api::image`, which goes through `Api::get`
-and so carries the cached auth header. `jellyfin::url::image_url` is *not* used
-here: that one is for MPRIS, which hands the URL to a desktop widget to fetch
-itself, so it carries no token (the image endpoint is anonymous), and it stays
-JPEG at a fixed 600 px because WebP is not a safe assumption about someone
-else's widget. It names a quality
-for the same reason the covers do — a measured 265 KB poster came back at 226 KB
-under the cap alone, and at 75 KB once the quality was named.
-
-Three things are worth stating because getting them wrong is invisible:
-
-- **The server does the resizing**, bounded to the next 64 px bucket around the
-  cell box the cover will be drawn in, and asked for as WebP.
-  `maxWidth`/`maxHeight` keep the aspect ratio and cap both sides;
-  `fillWidth`/`fillHeight` do neither and hand back a full-height poster however
-  short the box is. This is the `/Sessions` lesson at a smaller scale — a rail
-  cover is about 40 KB rather than a megabyte.
-
-  The bucket is for the *server*, not for us. Jellyfin has no prepared variants:
-  `ImageProcessor` re-encodes on demand and caches under a key including the
-  dimensions, format and quality, so an exact `cells × font size` — which moves
-  with every resize, font and display scale — walks it through a Skia encode per
-  request that is then used once. Rounding up costs a few percent more pixels
-  and turns a drag-resize into cache hits. It does not reduce our *request*
-  count: `Covers::claim` is keyed on the exact size and cell, so the client still
-  asks once per distinct box, and the bandwidth win is WebP's alone.
-
-  Because the bucket is wider than the box, the last downscale happens locally
-  on every cover, with `FilterType::Lanczos3` — the default `Nearest` at these
-  ratios is visible, worst on the small shelf tiles. `format=Webp` is a request
-  rather than a guarantee: the server returns the original untouched when its
-  encoder cannot handle the source, or for a GIF, which is why the JPEG decoder
-  stays enabled alongside it.
-- **A cover's size is part of its identity.** A `Protocol` is encoded against one
-  rect at one cell size, so after a terminal resize the cached one is the *wrong*
-  encoding, not a stale one. `CoverKey` is `(item id, image type, image tag, size, cell)`,
-  and because `visible_covers` is recomputed every loop iteration a resize asks
-  for the new size without anything having to notice the resize. The cell is the
-  pixel grid below: it catches the case the size cannot, a move to a display of
-  another scale that leaves the columns and rows exactly where they were.
-- **An item's `Primary` is not always a poster.** `cover::fit` sizes the box
-  around what `cover::primary_aspect` answers: the server's own
-  `PrimaryImageAspectRatio` where it sent one, otherwise 16:9 for an episode's
-  still or a library's banner and 2:3 for a poster. A box reserved for the wrong
-  shape shows up as a gap between the picture and the text under it, and a
-  Browse grid sizes every tile from its first row, so one mis-shaped library
-  mis-shapes the whole screen. The measurement cannot carry it alone —
-  `/UserViews` sends the ratio and `/Items` only when asked, and a library the
-  server has no artwork for sends none at all — which is why the guess stays
-  and why a `CollectionFolder` guesses a banner rather than the poster its kind
-  suggests.
-
-  The box decides which image fills it (`cover::image_for`). A landscape box
-  takes an item's Primary when that is landscape too, and otherwise its `Thumb`,
-  then its first `Backdrop`, then the poster after all. This is how a movie
-  joins the stills on a shelf. Nothing has to pass the choice along: the rail
-  and `3 Playing` cut the box to the item's own Primary, and a Browse grid cuts
-  it to its first row's.
-
-### HiDPI: the measured cell size
-
-Kitty is told an image's **pixel** dimensions (`s=`/`v=` in the transmit) and no
-column or row count, so it works out how many cells the placement covers by
-dividing those pixels by the terminal's *real* cell size. `ratatui-image`,
-meanwhile, encodes and lays out against the cell size the terminal reported over
-`CSI 16 t` — once, before the alternate screen, because that query cannot be run
-again mid-session. Where the two disagree, every cover lands in the top-left
-corner of its box at 1/scale of the size while the box, caption and progress
-rule stay where the grid put them. Dragging the window to a display of another
-scale is the same disagreement arriving later.
-
-So the cell size is measured, once a loop iteration, rather than trusted from
-startup. `cover::cell_size` divides the window's pixel size (`ws_xpixel` /
-`ws_ypixel`, which `Backend::window_size` reads out of `TIOCGWINSZ`) by the
-grid, and `Covers::set_cell_size` rebuilds the picker at that font size, keeping
-the protocol the query settled on — `Picker::from_fontsize` is deprecated in
-favour of the query, and 11.x has no way to hand a new font size to a picker it
-already returned.
-
-The measurement lives at the head of the loop beside the `terminal.size()` read
-rather than in an `Event::Resize` arm, because a change of scale need not be a
-resize at all: the compositor can hand the terminal more device pixels for the
-same grid. A change drops every entry in the cache — the keys carry the cell, so
-those encodings could never be looked up again — and requests still in flight
-land under the old key rather than on screen. A measurement within a few percent
-of the current cell is the window's padding, counted in the window's pixel size
-but not in a cell, and is ignored. A terminal that reports no pixel size (tmux,
-a plain xterm) is left with the query's answer.
-
-**Do not encode a cover larger than its box.** `Image::render` draws *nothing at
-all* when the protocol's size exceeds its area unless `allow_clipping` is set,
-so an over-encoded cover is not a sharper one, it is a missing one. A
-scale factor belongs in the picker's font size, where the encoding still comes
-out at the size of the box, never in the box itself.
+- **The cell size is measured each iteration, not trusted from startup.** Kitty is given pixel sizes and divides by the real cell size, while `ratatui-image` lays out against the `CSI 16 t` answer from before the alternate screen, which cannot be re-queried. When they disagree covers draw at 1/scale in the box's top-left corner; dragging to another display does the same.
+- **`cover::cell_size` divides `ws_xpixel`/`ws_ypixel` (`Backend::window_size`, from `TIOCGWINSZ`) by the grid**, and `Covers::set_cell_size` rebuilds the picker at that font size keeping the queried protocol. `Picker::from_fontsize` is deprecated and 11.x cannot update a returned picker.
+- **It runs at the head of the loop, not in `Event::Resize`**, since a scale change need not resize the grid. A change drops the whole cache (keys carry the cell) and in-flight results land under the old key. A change within a few percent is window padding and ignored; a terminal reporting no pixel size keeps the query's answer.
+- **Never encode a cover larger than its box**: `Image::render` draws nothing on overflow without `allow_clipping`. Scale belongs in the picker's font size.
 
 ### Fetching
 
-Decode and encode run in `spawn_blocking` — jellytui is a `current_thread`
-runtime and both are real CPU work on the thread that draws. The finished
-`Protocol` comes back over the `Msg` channel like every other reply, so covers
-need no `select!` arm of their own.
+- **Decode and encode run in `spawn_blocking`**, being real CPU work on the drawing thread; the `Protocol` returns over `Msg`, so covers need no `select!` arm.
+- **Fetches are rate-limited to one batch per `COVER_THROTTLE`, leading edge**: the first change after a quiet spell goes out at once, later ones wait for the window, and the last change standing fires, so a resting cursor is always fetched. Rejected: a trailing debounce, which makes every keypress pay the window on top of a round trip of similar length. `Covers::claim` keeps a resting cursor or revisited row to one request.
+- **The batch gate is `Covers::any_missing`, not "the wanted set changed"**; otherwise a cover evicted after the cursor stops (a drag-resize churns the `CACHE_CAPACITY` entries) stays lost.
+- **A failed request is final.** With that gate a retryable failure would re-request every throttle window forever. `Covers::give_up` files failures with absent images in `unavailable`, answered for the session and cleared only by a scale change; eviction is unaffected. Both log at `debug`, for the `L` pane.
 
-Fetches are throttled to one batch per `COVER_THROTTLE`, and `Covers::claim`
-keeps a resting cursor, and a second visit to the same row, to one request. The
-throttle is a rate limit rather than a settling delay: the first change after a
-quiet spell goes out **immediately**, because that is a cursor arriving
-somewhere, and only changes inside the window wait — otherwise holding `j`
-through a 218-item library would fire 218 requests. Waiting ones are scheduled
-for when the window opens rather than for 120 ms after the last keypress, and
-the last change standing is the one that fires, so a cursor coming to rest is
-always fetched. A trailing-edge debounce instead makes every single keypress pay
-the full window before its request even starts, against an HTTP round trip of
-about the same.
+### Disk cache
 
-**A still screen is not evidence that every cover on it arrived.** The gate on
-starting a batch is `Covers::any_missing` — is anything wanted still waiting on
-a cover it may yet get — and not whether the wanted set *changed*. With the
-latter, a cover evicted after the cursor came to rest stays lost until the
-cursor happens to move again; a drag-resize puts a key per intermediate size
-through a `CACHE_CAPACITY`-entry cache, so a slow result for a size nobody wants
-any more pushes out one just fetched for the size on screen.
-
-That gate is why **a failed request is final**. It makes the blank tile itself
-the thing that starts a request, so a key put back to unsettled by a failure
-would be asked for once per throttle window for as long as the screen is open —
-against a server refusing connections, a full grid is a batch every 120 ms and a
-redraw per failure, forever. `Covers::give_up` therefore files a failure
-alongside an image the server does not have: both land in `unavailable`, both
-are answered from memory for the rest of the session, and only a display-scale
-change clears them. An evicted key was never failed, so eviction is unaffected —
-and re-fetching it is a read from the disk cache rather than a round trip. Both a failure and an absent image log at `debug`, because the next one of
-these should be readable in the `L` pane rather than inferred from a blank tile.
-
-### The disk cache
-
-The in-memory cache holds `CACHE_CAPACITY` covers and stops there on purpose. A
-`Protocol` is a decoded frame encoded against one rect at one cell size, so
-holding more is straight memory growth — and every one is invalidated by a
-resize or a move to another display scale, which is why none can be persisted.
-
-What is persisted is the layer underneath: the **bytes the server sent**, about
-40 KB of WebP each, under `Paths::cover_cache_dir` (a `--config` override takes
-the cache with it, so an isolated run stays isolated). A memory miss then costs
-a local read and a decode instead of an HTTP round trip, at no extra resident
-memory. `cover/disk.rs` owns it and `cover/mod.rs` calls it from inside the
-`spawn_blocking` that was already doing the decode — plain `std::fs` on a thread
-that is already blocking, rather than a second hop through `tokio::fs`, which
-would also cost the daemon a tokio feature it does not need.
-
-Four rules:
-
-- **The key is the bucket, not the box.** An entry is
-  `{item_id}-{image_type}-{image_tag}-{bucket_w}x{bucket_h}.img`, rounded through core's
-  `bucket_pixels` — the same rounding the request makes. Keying on the exact box
-  would store a file per pixel of a window drag while the requests behind them
-  were all the same one. The key is its own filename and nothing is hashed; the
-  id and the tag are sanitised on the way in, because they come from the server
-  and a `/` or a `..` in one would make the key a path.
-- **Absence stays in memory.** `Covers::unavailable` answers for the session; a
-  negative entry on disk would need an invalidation rule of its own for no gain.
-- **Nothing here may fail a cover.** Every path in `disk.rs` degrades to a miss,
-  and a miss is a fetch. A file that will not decode — a half-write that survived
-  a kill — is removed rather than re-decoded on every scroll.
-- **Eviction is LRU by mtime**, under `cover_cache_mb` (default 256, `0` off). A
-  read touches the file, so what is being looked at outlives what was merely
-  fetched first. A write prunes inline once it has written a quarter of the
-  budget since the last prune, which is what bounds a long browse; `main.rs`
-  prunes once at startup as well, so a budget the user has just lowered takes
-  effect even in a session that never writes a cover. A prune goes to 90% of
-  budget rather than exactly to it, or a full cache would prune again on the
-  next cover.
+- **Memory holds at most `CACHE_CAPACITY` `Protocol`s**, since each is a decoded frame and more is straight memory growth; they are resize- and scale-specific, so none persist.
+- **Disk holds the server's bytes** (about 40 KB of WebP each) under `Paths::cover_cache_dir`, which `--config` moves too, turning a memory miss into a local read and decode. `cover/disk.rs` uses plain `std::fs` inside the existing `spawn_blocking`; `tokio::fs` would also cost the daemon a tokio feature.
+- **The key is the bucket, not the box**: `{item_id}-{image_type}-{image_tag}-{bucket_w}x{bucket_h}.img` through core's `bucket_pixels`, the request's own rounding, or a window drag would store a file per pixel for one request. It is unhashed, so the id and tag are sanitised: a `/` or `..` would make the key a path.
+- **Absence stays in memory** (`Covers::unavailable`); a negative disk entry would need its own invalidation.
+- **Nothing on disk may fail a cover**: every path degrades to a miss, and an undecodable file (a half-write) is removed.
+- **LRU by mtime under `cover_cache_mb`** (default 256, `0` off), and reads touch the file. A write prunes after a quarter of the budget has been written since the last prune, and `main.rs` prunes at startup so a lowered budget applies. Pruning goes to 90%, or a full cache would prune again on the next cover.
 
 ## The Playing screen
 
-`3` opens a screen for whatever the daemon is on: a banner carrying the
-episode's own still with the title, meta, rating and synopsis beside it, then a
-rule, then the rest of the season with the playing episode accented and `Enter`
-free to jump to another one. Below `MIN_BANNER_WIDTH` the still is dropped and
-the text takes the whole width, the way the rail vanishes rather than crowding
-the list — `playing::still_rect` returns `None` and `App::visible_covers` asks
-for nothing.
-
-The status frame carries a title and a position, not a synopsis or a season, so
-this screen makes two requests of its own — `/Items/{id}`, then that episode's
-season. Both are keyed by the item id they were asked for and dropped if
-playback has moved on. Until they land the daemon's `display_title` holds the
-screen, so it is never blank.
-
-The lookup is sent once per item id (`App::playing_requested`), not with every
-status that finds no item: a lookup that failed, or is still in flight, would
-otherwise go out again every second, with a warning and a header complaint each
-time.
+- **`3` shows what the daemon plays**: a banner with the episode still, title, meta, rating and synopsis, then the season with the playing episode accented and `Enter` to jump. Below `MIN_BANNER_WIDTH` the still is dropped (`playing::still_rect` → `None`).
+- **The status lacks synopsis and season, so the screen fetches `/Items/{id}` and then its season**, keyed by item id and dropped if playback moved on; the daemon's `display_title` fills it until then.
+- **The lookup is sent once per item id (`App::playing_requested`)**, or a failing or slow one repeats every second with a warning each time.
 
 ## The log pane
 
-`L` opens it and `L` or Esc closes it. It is not in the tab strip: the strip
-names it only while it is up, because it is a debugging screen rather than
-somewhere to browse.
-
-`logs::install` builds the subscriber in `main`, before the alternate screen is
-taken and while a bad filter can still be reported on the normal one. It is
-an `EnvFilter` plus one `Layer` writing `LogLine`s into a bounded `VecDeque` — no
-`fmt` layer, so nothing can reach stdout. The filter comes from `core`'s
-`log_filter`, so `RUST_LOG` means here what it means for the daemon, and
-`jellysink_core=debug` turns on the Jellyfin HTTP layer's own events too. The
-daemon's logs are **not** here: it is another process, and `control.sock`
-carries no logs.
-
-Levels are split so the default `info` is already worth reading: `info` is what
-the user did that had an effect (a play, a command sent, a search, a level
-opened) plus every request's elapsed time and row count; `debug` adds a line per
-keypress; `trace` adds every daemon frame and the per-cover fetch/decode
-timings. Status frames are deliberately not at `info`: a second apart during
-playback, they would push everything else out of a 2000-line buffer inside half
-an hour. What is logged at `info` is the *transition*, connected to not and
-back.
-
-Scrolling is anchored by sequence number, not by index: the ring evicts from the
-front, so an index into it slides under a paused reader. `Ring` counts
-`first_seq` past everything it has dropped and `log_anchor` holds the sequence
-number of the top visible line — the same rule search generations and level
-depths follow. Reaching the bottom clears the anchor rather than pinning it,
-because a view pinned at the tail would stop following the moment the next line
-arrived.
+- **`L` opens it and `L` or Esc closes it; the tab strip names it only while open**, being a debugging screen.
+- **`logs::install` builds the subscriber in `main` before the alternate screen**, so a bad filter is reported on the normal one. It is an `EnvFilter` plus one `Layer` into a bounded `VecDeque` with no `fmt` layer, so nothing reaches stdout. The filter is `core`'s `log_filter`, so `RUST_LOG` means what it does for the daemon and `jellysink_core=debug` adds the HTTP layer's events. The daemon's logs are not here: `control.sock` carries none.
+- **Levels**: `info` is user actions with an effect plus each request's time and row count; `debug` adds keypresses; `trace` adds daemon frames and cover timings. Status frames are not `info` — once a second they would flush the 2000-line buffer within half an hour; the connected/disconnected transition is.
+- **Scrolling is anchored by sequence number**, since the ring evicts from the front. `Ring` counts `first_seq` past dropped lines and `log_anchor` holds the top line's; reaching the bottom clears the anchor so the view follows again.
 
 ## Terminal ownership
 
-mpv is a separate process with its own window and all three stdio handles on
-`/dev/null`, so it never contends for the terminal. Two rules follow from owning
-the alternate screen:
-
-- `jellytui` never calls `init_tracing`, which builds a `fmt` layer on stdout.
-  It installs a subscriber of its own whose only sink is memory.
-- `view::enter` is `ratatui::try_init`, which installs a panic hook that
-  restores the terminal before delegating, so a panic does not leave the user
-  in a raw-mode alternate screen.
-
-`crossterm::event::read` blocks, so input is read on a dedicated OS thread and
-forwarded over a channel into the `select!` loop. That thread is detached: at
-exit it is parked in `read`, and the process is going away anyway.
+- **mpv has all three stdio handles on `/dev/null`** and its own window.
+- **`jellytui` never calls `init_tracing`**, whose `fmt` layer writes to stdout.
+- **`view::enter` is `ratatui::try_init`**, whose panic hook restores the terminal.
+- **Input is read on a detached OS thread**, since `crossterm::event::read` blocks; at exit it is parked in `read` and the process ends anyway.

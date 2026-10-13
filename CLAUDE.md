@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-Guidance for AI coding agents working in this repository.
-
 ## Project
 
 jellysink is a headless Jellyfin cast target for Linux, written in Rust (edition 2024). It registers as a remote player, receives Play commands over a WebSocket, and DirectPlays the stream in the user's installed `mpv`.
@@ -13,84 +11,71 @@ cargo build                                             # both binaries
 testserver/start.sh                                     # the Jellyfin the tests need (docker, or CONTAINER=podman)
 cargo nextest run                                       # the whole workspace (CI runs this, not `cargo test`)
 testserver/stop.sh                                      # remove that server
-cargo fmt                                               # format; `cargo fmt --check` must stay clean
-cargo clippy --workspace --all-targets -- -D warnings   # lints; CI denies warnings
+cargo fmt                                               # `cargo fmt --check` must stay clean
+cargo clippy --workspace --all-targets -- -D warnings   # CI denies warnings
 cargo run -p jellysink -- run                           # the daemon (default subcommand)
 cargo run -p jellytui                                   # the terminal frontend
 ```
 
-A workspace of three crates.
-- `crates/core` is the library (`jellysink-core`): everything both binaries touch.
-- `crates/jellysink` and `crates/jellytui` are plain **bin** crates over it — neither has a `lib.rs`, so everything inside them stays `pub(crate)` and `dead_code` covers all of it. `default-members` is unset, so a bare `cargo build` or `cargo nextest run` covers all three; the `-p` in the run commands is only because the workspace has two binaries.
+## Workspace
 
-`core` is the only crate with a `pub` surface, and it is kept to what a binary actually names: anything neither binary uses is `pub(crate)` there too, or `dead_code` stops working in core.
+- **`crates/core`** (`jellysink-core`) is the library holding everything both binaries touch.
+- **`crates/jellysink` and `crates/jellytui` are bin-only crates.** Neither has a `lib.rs`, so everything inside them stays `pub(crate)` and `dead_code` covers all of it.
+- **`core`'s `pub` surface is only what a binary actually names.** Everything else is `pub(crate)`, or `dead_code` stops working there.
 
-## Architecture
+## Specs
 
-Design notes for the trickier subsystems live in `specs/`
+Design notes live in `specs/`: `playlist.md` (queue, episode fetching, handing it to mpv), `tracks.md` (audio/subtitle mapping), `tui.md` (jellytui), `session.md` (daemon wiring, tasks and channels).
 
-## Conventions
+- **Read the spec covering a file before touching it.** Also read `specs/session.md` whenever you add a `tokio::spawn` or `select!` arm anywhere in the daemon; it documents the task and channel contract for the whole daemon.
+- **A change that contradicts a documented invariant edits the spec in the same commit.** For example, every spawned task is wrapped in an `AbortOnDrop` (`runtime/task.rs`); a detached `tokio::spawn` needs the spec to record the exception and why.
+- **A change that makes an inventory stale updates it.** `specs/session.md` carries a task/channel table and a `select!`-arm table; a new channel, task or arm gets its row.
 
-Everything below is a rule `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` cannot express. Those two already cover formatting and lints; this section is the rest, and it is what review checks.
+## Comments
 
-### Comments
+- **Write the present, not the change.** What a thing used to do or what was removed belongs to git; "X once did Y, now it does Z" is just "X does Z". This binds `specs/` too.
+- **Two kinds of history stay:** the reason a plausible alternative was rejected, and a test comment naming the regression it guards (`mpv/ipc_test.rs`, `runtime/queue/stubs_test.rs`).
+- **Two lines is the ceiling, doc comments included.** If a comment names the constraint and then keeps going, cut the continuation; anything longer belongs in `specs/` or the commit message.
+- **A missing comment is a defect only when you can name what the reader would guess about:** an unwritten invariant or rejected alternative.
 
-- **The default is none.** Write one only where a competent Rust reader would still be guessing — a non-obvious constraint, an invariant, the reason the obvious approach was rejected. Simple code gets no comment at all; "say why" is not a licence to justify something self-evident, and a doc comment is not owed to every item.
-- Never say a thing twice. If an assert message, error string, function name or test name already carries it, the comment gets deleted, not reworded. Never narrate what the next line does.
-- Never list your own call sites, or any other inventory of the code as it stands today — it is wrong the moment someone adds a fourth one. Invariants age well; inventories do not.
-- **Write the present, not the change.** What a thing used to do, what was removed, and when it changed belong to git; a reader arriving without that history reads them as claims about the code in front of them. "X once did Y, now it does Z" is just "X does Z" — delete the first clause, do not soften it. This binds `specs/` exactly as it binds a comment: a spec edited alongside a change states the invariant that now holds rather than narrating the edit, and the diff and commit message carry the rest. Two things are not history and stay: the reason a plausible alternative was **rejected**, and a test comment naming the **regression it guards** (`mpv/ipc_test.rs`, `runtime/queue/stubs_test.rs`), which is that test's whole reason to exist.
-- **Keep it extremely short: two lines is the ceiling, doc comments included.** One sentence is the target. A third line is justified only when a single invariant genuinely does not fit in two and every word of it is that invariant. The failure shape is a comment that names the constraint and then keeps going — a second clause restating the first, an aside about which endpoint the data came from, a consequence the reader can derive. Delete the continuation and keep the first sentence; that is a cut, not a rewrite. Anything still too long for two lines belongs in `specs/` or the commit message, not above the item.
-- The inverse is a defect too, but only where you can name the thing a reader would be guessing about: an invariant or a rejected alternative left unwritten.
+## Naming
 
-### Names
+- **Abbreviate only where the short form is the domain term** (mpv's `sid`/`aid`, `ipc`, `url`), and take the full name once the value leaves that boundary.
+- **Conventional short bindings are fine** (`e`, `ctx`, `conn`, `iface`); abbreviating a field or type spelled out elsewhere (`np` for `now_playing`, `prep` for `PreparedPlay`) is not.
 
-- Names spell things out: `audio_stream_id`, not `aid`; `subtitle_index`, not `sidx`. Abbreviate only where the short form *is* the domain term (mpv's own `sid`/`aid` properties, `ipc`, `url`), and take the full name the moment the value crosses out of that boundary into our own code.
-- Conventional short bindings for errors, contexts, connections and iterator variables (`e`, `ctx`, `conn`, `iface`) are fine. What is not is an abbreviation of a field or type the codebase spells out elsewhere — `np` for a `now_playing` field, `prep` for a `PreparedPlay`. That contrast is the test.
+## Errors
 
-### Errors
+- **`color_eyre` with context naming the failed resource.** Use `wrap_err`/`wrap_err_with` with the path, URL or socket; a bare `?` on filesystem, network or IPC calls loses it, even if the adjacent code does the same. `thiserror` only for typed error enums.
+- **CLI mistakes use `usage_err` (`UsageError`).** The binary prints the message and exits 1 without a color-eyre dump; a plain `eyre!` there is wrong.
+- **Every discarded error (`let _ =`, `if let Ok(..)`, ignored `Result`) is either policy or a defect.** Fail-open is fine where documented (no session bus for tray/MPRIS, a send to a dropped receiver); a dropped failure only the daemon would ever see gets a `warn!`.
 
-- `color_eyre` (`eyre::Result`), `wrap_err`/`wrap_err_with` with context that names the resource that failed — the path, the URL, the socket. A bare `?` on a filesystem, network or IPC call loses it. `thiserror` only for typed error enums.
-- CLI mistakes (not logged in, already running, unknown config key) use `usage_err` (`UsageError`) — the binary prints the message and exits 1 without a color-eyre dump. A user-facing CLI error raised as a plain `eyre!` is wrong.
-- Matching the adjacent function is a partial defence, not a full one. If the surrounding code already drops the path, the new code still carries it.
-- **A discarded error is the judgement call that comes up most.** Every `let _ = …`, `if let Ok(..)` and ignored `Result` is one of two things. Correct, where fail-open is the stated policy — the tray and MPRIS document that no session bus is a warning and not a fatal error, and a send on a channel whose receiver is gone is often genuinely nothing. Or a defect, where the daemon is the only thing that will ever see the failure and it keeps no record of it: a dropped write or serialize error with no `tracing` call leaves the operator with nothing, and often makes the *other* end report the wrong failure. The second kind gets a `warn!`.
+## Logging
 
-### Logging
+- **`tracing` in daemon code, never `println!`.** `println!` is for CLI subcommand output only.
 
-`tracing` macros in daemon code, never `println!` there; `println!` is for CLI subcommand output only.
+## Tests
 
-### Tests
-
-- **Every test needs a reason to exist.** Don't assert that a constant still holds its value, that an enum still has its variants, that a constructor assigned its arguments, or that a derived `Serialize`/`Deserialize` round-trips with no serde attributes pinning anything down — the compiler already says all of that, and such a test only ever breaks when someone edits it. Test behaviour in a realistic scenario instead (feed a real payload through the parser, drive the state machine to the edge case), or pin the thing that is actually a contract, such as the serialized field names `status.rs` promises the other binary.
-- Tests live in a sibling file next to the one they test: `streams.rs` → `streams_test.rs`, `mod.rs` → `mod_test.rs`. The file under test ends with the three-line declaration
+- **Don't test what the compiler already guarantees.** No asserting constants, enum variants, constructor assignments or plain derived serde round-trips; pin real contracts instead, such as the serialized field names `status.rs` promises the other binary.
+- **Tests live in a sibling `_test.rs` file** (`streams.rs` → `streams_test.rs`, `mod.rs` → `mod_test.rs`), declared at the end of the file under test with:
   ```rust
   #[cfg(test)]
   #[path = "streams_test.rs"]
   mod tests;
   ```
-  `#[path]` rather than a plain sibling `mod` in the parent `mod.rs`, because this keeps `tests` a *child* module and most test modules read their parent's private items (`config::parse_mpv_args`, `PlaylistWindow`'s private `queue` field, …). Test paths are unchanged by this (`media::streams::tests::…`), so `cargo nextest run <filter>` works. `tempfile::TempDir` for anything touching the filesystem. A `mod tests` inline in the file under test is wrong.
-- **A test that answers for an external program rather than for us belongs in its own identifiable file**, so a failure in an environment lacking that program lands in one module. `crates/jellysink/src/mpv/integration_test.rs` (`mpv::integration_tests`) is the established instance: it drives a real player, and is where mpv behaviour we depend on but cannot fake belongs — `#EXTINF` titles surviving a `loadlist`, `insert-at` not moving the playing entry, `sid`/`aid` observers firing, and which `end-file` reason each way of ending a file produces. It plays `crates/jellysink/tests/fixtures/sample.mkv` (3 s, two audio and two subtitle tracks, 31 KB, regenerate with the `make-fixtures.sh` beside it). Add a case here when a bug turns out to be mpv doing something other than what we assumed. `crates/jellysink/src/daemon/mpris_integration_test.rs` (`daemon::mpris::integration_tests`) is the same shape for a live D-Bus session; any other external daemon wants the same treatment. Jellyfin has it too: `crates/core/src/jellyfin/integration_test.rs` for the `Api` calls and `crates/jellysink/src/runtime/jellyfin_integration_test.rs` for the daemon end to end, against the server `testserver/start.sh` starts (Jellyfin 12.1, one series of 106 episodes named from `testserver/episodes.tsv`). A bug in what the server accepts, such as a token parameter it rejects, gets its case there.
-- **No sleep-based synchronization.** A bare `sleep(50ms)` before an assert, or a `while !path.exists()` poll loop, is flaky by construction, and a green run has to mean the tests ran. Wait on a channel, a readiness signal, or a bounded retry that fails for real at the end.
-- Always look if there is not a test already covering the behaviour you are about to add. If so, extend, not duplicate.
+  This keeps `tests` a child module so it can read its parent's private items. An inline `mod tests` is wrong.
+- **`tempfile::TempDir` for anything touching the filesystem.**
+- **Tests that answer for an external program go in their own file**, so a missing program fails one module:
+  - `crates/jellysink/src/mpv/integration_test.rs` — real mpv behaviour we depend on but cannot fake; add a case when a bug turns out to be mpv not doing what we assumed. Plays `crates/jellysink/tests/fixtures/sample.mkv` (regenerate with `make-fixtures.sh` beside it).
+  - `crates/jellysink/src/daemon/mpris_integration_test.rs` — a live D-Bus session.
+  - `crates/core/src/jellyfin/integration_test.rs` (`Api` calls) and `crates/jellysink/src/runtime/jellyfin_integration_test.rs` (daemon end to end) — against the `testserver/start.sh` server (Jellyfin 12.1, one series of 106 episodes from `testserver/episodes.tsv`).
+- **Bounded waits only.** Wait on a channel, readiness signal, or a retry that fails for real at the end; never a bare sleep or an unbounded `while !path.exists()` poll.
+- **Extend an existing test before writing a new one** covering the same behaviour.
 
-### Maintainability
+## Secrets and the filesystem
 
-If you think that you can simplify a piece of code, ask the user to do so. We want to keep the codebase as small and maintainable as possible.
+- **Config and credential files are written atomically** (tmp file + rename); `cred.json` is 0600 and the config directory is 0700, since mpv creates `mpv.sock` there and `http-header-fields` on it hands out the access token.
+- **Check every channel the access token can leave by** — a D-Bus property, a `control.sock` frame, a log line, a URL handed to another program. Use `redact_api_key`, consistently on every path.
 
-### Secrets and the filesystem
+## Checks
 
-- Config and credential files are written atomically (tmp file + rename); cred.json is mode 0600. The config directory itself is 0700 — `mpv.sock` lives there, it is created by mpv (so we cannot pick its mode), and `http-header-fields` on it hands out the access token.
-- The file modes are only half of it. Check **every channel the access token can leave the process by** — a D-Bus property, a frame on `control.sock`, a log line, a URL handed to another program. `redact_api_key` exists for this, and redacting the token on one path while broadcasting it unredacted on another is the inconsistency to catch.
-
-### Specs
-
-Read the spec that covers a file before touching it (`specs/playlist.md`, `specs/tracks.md`, `specs/tui.md`, `specs/session.md` — see Architecture for which covers what), **and also whenever you add a `tokio::spawn` or a `select!` arm anywhere in the daemon**, wherever the spawning code lives: `specs/session.md` documents the task and channel contract for the whole daemon, not just for `runtime/session.rs`, and the file that breaks it is often somewhere else entirely.
-
-Two ways to break one, both of which mean editing the spec in the same commit:
-
-- The change **contradicts** a documented invariant. Every spawned task being wrapped in an `AbortOnDrop` (`runtime/task.rs`) is one such invariant — a detached `tokio::spawn` either violates it or needs the spec amended to record the deliberate exception and why.
-- The change makes an **inventory** stale. `specs/session.md` carries a task/channel table and a `select!`-arm table; adding a channel, task or arm leaves them silently wrong without contradicting anything. Update the row.
-
-### Checks
-
-- A subagent should be launched after feature is implemented to verify that it adheres to CLAUDE.md conventions and guidelines
-- `.claude/skills/drive-jellytui` should be ran to allow the model to verify any changes or fixes it made and ensure that nothing else was broken along the way. Such action should only be taken after cargo tests ran successfully.
+- **Run `.claude/skills/drive-jellytui` after the cargo tests pass** to verify the change in the real TUI and that nothing else broke.
