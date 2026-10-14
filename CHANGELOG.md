@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.2
+### Fixed
+- jellytui Home covers no longer change shape with the item type: Continue Watching and Next Up are always landscape, and movies show their thumb or backdrop art instead of a squeezed poster.
+
 ## 2.0.1
 ### Fixed
 - Lower idle memory use: switched from jemalloc to the musl allocator, slimmed the tray icon, and cut the tokio worker thread stack size.
