@@ -162,6 +162,25 @@ pub(crate) fn shelf_metrics_for(
     })
 }
 
+/// Search mixes kinds, so every result is a poster whatever its first item is.
+pub(crate) fn search_metrics_for(
+    area: Rect,
+    items: &[Item],
+    font_size: FontSize,
+) -> Option<Metrics> {
+    (!items.is_empty()).then(|| {
+        metrics(
+            inner(area),
+            cover::POSTER,
+            font_size,
+            Shape {
+                target_rows: TARGET_ROWS,
+                item_count: items.len(),
+            },
+        )
+    })
+}
+
 /// Scrolls by the least that brings the selection back on screen.
 pub(crate) fn scroll_to(offset: usize, selected: usize, metrics: &Metrics) -> usize {
     let row = selected / metrics.columns;

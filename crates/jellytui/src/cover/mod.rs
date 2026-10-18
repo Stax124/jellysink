@@ -63,9 +63,9 @@ impl Covers {
 
     pub(super) fn key(&self, item: &Item, size: Size) -> Option<CoverKey> {
         let font_size = self.picker.font_size();
-        let (image_type, image_tag) = image_for(item, size, font_size)?;
+        let (item_id, image_type, image_tag) = image_for(item, size, font_size)?;
         Some(CoverKey {
-            item_id: item.id.clone(),
+            item_id: item_id.to_string(),
             image_type,
             image_tag: image_tag.to_string(),
             size,
@@ -178,6 +178,7 @@ fn repicker(picker: &Picker, cell: Size) -> Picker {
 }
 
 pub(super) const LANDSCAPE: f32 = 16.0 / 9.0;
+pub(super) const POSTER: f32 = 2.0 / 3.0;
 
 /// The shape of an item's primary image, as width ÷ height: the server's own
 /// measurement where it sent one, otherwise a guess from the kind.
@@ -186,25 +187,38 @@ pub(super) fn primary_aspect(item: &Item) -> f32 {
     item.primary_image_aspect_ratio
         .map(|ratio| ratio as f32)
         .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
-        .unwrap_or(if wide { LANDSCAPE } else { 2.0 / 3.0 })
+        .unwrap_or(if wide { LANDSCAPE } else { POSTER })
 }
 
-/// A poster in a landscape box would be a sliver, so the box gets the item's
-/// landscape art instead where the server has any.
-fn image_for(item: &Item, size: Size, font_size: FontSize) -> Option<(ImageType, &str)> {
+/// A landscape box prefers landscape art; a portrait box prefers a poster, the
+/// series' where the item has none of its own.
+fn image_for(item: &Item, size: Size, font_size: FontSize) -> Option<(&str, ImageType, &str)> {
     let primary = item
         .primary_image_tag()
-        .map(|tag| (ImageType::Primary, tag));
+        .map(|tag| (item.id.as_str(), ImageType::Primary, tag));
     let landscape_box = u32::from(size.width) * u32::from(font_size.width)
         > u32::from(size.height) * u32::from(font_size.height);
-    if !landscape_box || primary_aspect(item) >= 1.0 {
+    let landscape_art = primary_aspect(item) >= 1.0;
+    if !landscape_box {
+        let series_poster = item
+            .series_id
+            .as_deref()
+            .zip(item.series_primary_image_tag.as_deref())
+            .map(|(series_id, tag)| (series_id, ImageType::Primary, tag));
+        return primary
+            .filter(|_| !landscape_art)
+            .or(series_poster)
+            .or(primary);
+    }
+    if landscape_art {
         return primary;
     }
+    let own = |image_type, tag| (item.id.as_str(), image_type, tag);
     let thumb = item.image_tags.thumb.as_deref();
     let backdrop = item.backdrop_image_tags.first().map(String::as_str);
     thumb
-        .map(|tag| (ImageType::Thumb, tag))
-        .or(backdrop.map(|tag| (ImageType::Backdrop, tag)))
+        .map(|tag| own(ImageType::Thumb, tag))
+        .or(backdrop.map(|tag| own(ImageType::Backdrop, tag)))
         .or(primary)
 }
 

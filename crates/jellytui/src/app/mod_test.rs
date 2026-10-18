@@ -305,6 +305,23 @@ fn tile(id: &str) -> Item {
     }))
 }
 
+#[test]
+fn search_results_are_a_grid_the_arrows_move_through() {
+    let mut app = app();
+    app.viewport = Size::new(120, 40);
+    app.apply(Intent::StartSearch);
+    app.on_msg(Msg::Search(
+        app.search_generation,
+        (0..12).map(|index| tile(&index.to_string())).collect(),
+    ));
+    let columns = app.grid_metrics().expect("results are a grid").columns;
+
+    app.apply(Intent::Right);
+    assert_eq!(selected(&app), 1);
+    app.apply(Intent::Down);
+    assert_eq!(selected(&app), 1 + columns);
+}
+
 /// A cursor that has been still asks for its covers at once: the throttle is
 /// a rate limit, not a settling delay.
 #[tokio::test(start_paused = true)]

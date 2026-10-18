@@ -35,6 +35,10 @@ fn navigation_keys_keep_working_inside_the_search_box() {
         Some(Intent::Down)
     );
     assert_eq!(
+        map(key(KeyCode::Right, KeyModifiers::NONE), true),
+        Some(Intent::Right)
+    );
+    assert_eq!(
         map(key(KeyCode::Enter, KeyModifiers::NONE), true),
         Some(Intent::Enter)
     );

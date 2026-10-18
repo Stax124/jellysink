@@ -96,10 +96,13 @@ fn render_pending(frame: &mut Frame, area: Rect, title: &str, failed: bool) {
     frame.render_widget(Paragraph::new(status).centered(), middle);
 }
 
+/// The search box above the results. `App` sizes the grid from the second.
+pub(crate) fn search_split(body: Rect) -> [Rect; 2] {
+    Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(body)
+}
+
 pub(super) fn render_search(app: &App, frame: &mut Frame, area: Rect) {
-    let area = rail::beside(frame, area, app.results.selected_item(), &app.covers);
-    let [input, results] =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
+    let [input, results] = search_split(area);
     let search_box = Block::default().borders(Borders::ALL).title(" Search ");
     frame.render_widget(
         Paragraph::new(format!("{}▏", app.query)).block(search_box),
@@ -110,7 +113,21 @@ pub(super) fn render_search(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         format!("Results ({})", app.results.items.len())
     };
-    render_list(frame, results, &title, &app.results);
+    let [grid_area, band] = synopsis::split(results);
+    grid::render(
+        frame,
+        grid_area,
+        Line::from(format!(" {title} ")),
+        grid::View {
+            rows: &app.results,
+            metrics: app.grid_metrics(),
+            focused: true,
+        },
+        &app.covers,
+    );
+    if let Some(item) = app.results.selected_item() {
+        synopsis::render(frame, band, item);
+    }
 }
 
 fn render_list(frame: &mut Frame, area: Rect, title: &str, rows: &Rows) {

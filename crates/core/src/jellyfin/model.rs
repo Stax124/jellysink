@@ -29,6 +29,7 @@ pub struct Item {
     /// endpoint sends it: `/UserViews` does, `/Items` only when asked.
     pub primary_image_aspect_ratio: Option<f64>,
     pub image_tags: ImageTags,
+    pub series_primary_image_tag: Option<String>,
     pub backdrop_image_tags: Vec<String>,
 }
 

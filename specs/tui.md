@@ -82,14 +82,14 @@ Enter to `file-loaded` takes 2–3 s, mostly mpv's spawn, shown as a spinner fed
 - **A level is a grid or a list with a detail rail, chosen by item kind, not `Source`** (`nav::mode`): `Series`, `Season`, `Movie`, `BoxSet`, libraries and `Episode` get the grid. By kind, a folder of movies gets the grid whichever route reached it, and it is one function to test rather than a table kept in step with the browse stack. Only the first row is asked, so kinds sharing a screen must answer alike: `CollectionFolder` and `UserView` both come from `/UserViews`, and a Libraries screen changing shape with its sort order would be the bug.
 - **A level still loading is one panel with a spinner** (`body::render_pending`), whatever it will become: `nav::mode` needs a row. The loop wakes every `SPINNER_FRAME` until it fills or fails. Rejected: guessing the shape from `Source`, since a `Folder` can turn out a list or a grid.
 - **A failed load lands on its level** (`Msg::LevelFailed`, matched like `Msg::Level`) while it has no rows: the panel says "could not load" and stops spinning until `r` loads it again, while the error goes to the header like any other. Matching has no generation, so an older request's failure can flag a newer load still in flight; its rows clear it on arrival, and `REQUEST_TIMEOUT` bounds how long that takes.
-- **Search is always a list**, its rows being mixed kinds.
+- **Search is always a poster grid over the synopsis band** (`grid::search_metrics_for`), its rows being mixed kinds: sized from its first row, one episode would turn every movie into a still.
 - **Home is two one-row grids**, Continue Watching above Next Up, which is why `grid::metrics` takes the row count. A shelf is always landscape (`grid::shelf_metrics_for`), since Continue Watching mixes movies and episodes, and `offset` scrolls it horizontally by screenfuls.
 - **`grid::render` draws with the `Metrics` `App` computed**, so requested covers and drawn tiles cannot disagree. Home bypasses `App::grid_metrics`, which answers only for the focused shelf; `App::visible_covers` asks for both.
 - **The rail splits the width in half (`rail::split`)**, since row text elides gracefully and the cover is worth the width; below `MIN_BODY_WIDTH` there is no rail.
 
 ### Keys
 
-- **In a grid, `h`/`j`/`k`/`l` and the arrows move the cursor and `Esc` is the only way back.** Up and down move a whole row, so `App` stores the terminal size each iteration; on Home they switch shelves (`App::move_vertically`), each with its own cursor.
+- **In a grid, `h`/`j`/`k`/`l` and the arrows move the cursor and `Esc` is the only way back.** In Search only the arrows do, since letters are the query. Up and down move a whole row, so `App` stores the terminal size each iteration; on Home they switch shelves (`App::move_vertically`), each with its own cursor.
 - **`keys.rs` is a pure mapping**; `App::apply` drops `Intent::Left`/`Right` outside a grid, so in a list `Esc` and `Enter` are the only ways back and in.
 
 ### Tiles, rail and synopsis band
@@ -120,7 +120,7 @@ Enter to `file-loaded` takes 2–3 s, mostly mpv's spawn, shown as a spinner fed
 - **The final downscale is local, with `FilterType::Lanczos3`**; the default `Nearest` is visibly bad on small tiles. `format=Webp` is not guaranteed (the original comes back for unsupported sources and GIFs), so the JPEG decoder stays.
 - **A cover's size is part of its identity.** A `Protocol` is encoded for one rect at one cell size, so `CoverKey` is `(item id, image type, image tag, size, cell)`. `visible_covers` is recomputed each iteration, so a resize needs no notice; the cell catches a scale change that keeps the grid.
 - **`Primary` is not always a poster.** `cover::primary_aspect` uses the server's `PrimaryImageAspectRatio` when sent, else 16:9 for an episode still or library banner and 2:3 for a poster. The guess stays because `/Items` sends the ratio only when asked and an artless library sends none; a `CollectionFolder` guesses a banner. A wrong box shows as a gap, and a grid sized from its first row mis-shapes the whole screen.
-- **The box picks the image (`cover::image_for`)**: a landscape box takes a landscape Primary, else `Thumb`, then the first `Backdrop`, then the poster. The rail and `3 Playing` cut the box to the item's own Primary; a grid to its first row's.
+- **The box picks the image (`cover::image_for`)**: a landscape box takes a landscape Primary, else `Thumb`, then the first `Backdrop`, then the poster; a portrait box takes the item's own poster, else its `SeriesPrimaryImageTag` (an episode without a still sends no Primary tag at all), else its still. The rail and `3 Playing` cut the box to the item's own Primary; a Browse grid to its first row's, Search to 2:3 and a shelf to 16:9.
 
 ### HiDPI
 

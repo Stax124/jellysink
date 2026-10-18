@@ -99,8 +99,7 @@ impl App {
             .unwrap_or(PAGE_JUMP)
     }
 
-    /// The grid the focused screen is drawing, if it is drawing one. Search
-    /// stays a list whatever it turned up, because its rows are mixed kinds.
+    /// The grid the focused screen is drawing, if it is drawing one.
     pub(crate) fn grid_metrics(&self) -> Option<grid::Metrics> {
         match self.screen {
             Screen::Home => self.shelf_metrics(self.home_pane),
@@ -113,7 +112,15 @@ impl App {
                 };
                 grid::metrics_for(area, items, self.covers.font_size())
             }
-            Screen::Search | Screen::Playing | Screen::Logs => None,
+            Screen::Search => {
+                let results = view::body::search_split(self.body_area())[1];
+                grid::search_metrics_for(
+                    view::synopsis::split(results)[0],
+                    &self.results.items,
+                    self.covers.font_size(),
+                )
+            }
+            Screen::Playing | Screen::Logs => None,
         }
     }
 
@@ -246,11 +253,11 @@ impl App {
         }
     }
 
-    /// The item whose art the rail is showing. Home has no rail.
+    /// The item whose art the rail is showing; only Browse has a rail.
     pub(super) fn rail_item(&self) -> Option<&Item> {
         match self.screen {
-            Screen::Browse | Screen::Search => self.selected_item(),
-            Screen::Home | Screen::Playing | Screen::Logs => None,
+            Screen::Browse => self.selected_item(),
+            Screen::Home | Screen::Search | Screen::Playing | Screen::Logs => None,
         }
     }
 }

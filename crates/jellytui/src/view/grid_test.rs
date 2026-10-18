@@ -206,6 +206,18 @@ fn a_shelf_led_by_a_movie_poster_still_lays_out_stills() {
 }
 
 #[test]
+fn search_results_led_by_an_episode_still_lay_out_posters() {
+    let episode = item(json!({ "Id": "e1", "Name": "e1", "Type": "Episode" }));
+    let movie = item(json!({ "Id": "m1", "Name": "m1", "Type": "Movie" }));
+    let grid = search_metrics_for(Rect::new(0, 0, 160, 40), &[episode, movie], FONT_SIZE).unwrap();
+    let (width, height) = (
+        grid.cover.width * FONT_SIZE.width,
+        grid.cover.height * FONT_SIZE.height,
+    );
+    assert!(width < height, "{grid:?}");
+}
+
+#[test]
 fn a_wide_area_keeps_a_row_of_stills_rather_than_a_couple_of_huge_ones() {
     let grid = metrics(
         Rect::new(0, 0, 238, 54),

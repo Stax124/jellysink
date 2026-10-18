@@ -79,6 +79,28 @@ fn a_landscape_box_draws_a_posters_thumb_then_its_backdrop_then_the_poster() {
 }
 
 #[test]
+fn a_portrait_box_draws_an_episodes_series_poster_else_its_still() {
+    // An episode without a still of its own has no Primary tag at all.
+    let covers = covers();
+    let mut episode = serde_json::json!({
+        "Id": "e1", "Name": "e1", "Type": "Episode", "SeriesId": "s1",
+        "ImageTags": { "Primary": "still" }, "SeriesPrimaryImageTag": "poster",
+    });
+    let chosen = |raw: &serde_json::Value| {
+        let key = covers
+            .key(&crate::test_support::item(raw.clone()), Size::new(4, 8))
+            .unwrap();
+        (key.item_id, key.image_tag)
+    };
+    assert_eq!(chosen(&episode), ("s1".into(), "poster".into()));
+    episode["ImageTags"] = serde_json::json!({});
+    assert_eq!(chosen(&episode), ("s1".into(), "poster".into()));
+    episode["ImageTags"] = serde_json::json!({ "Primary": "still" });
+    episode["SeriesPrimaryImageTag"] = serde_json::Value::Null;
+    assert_eq!(chosen(&episode), ("e1".into(), "still".into()));
+}
+
+#[test]
 fn a_resized_terminal_asks_for_a_new_encoding_instead_of_stretching_the_old() {
     let mut covers = covers();
     let small = covers

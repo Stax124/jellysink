@@ -297,7 +297,7 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
             "↑/↓ episode · Enter play · Esc back · t watched · r reload · q quit".into()
         }
         Screen::Search => format!(
-            "type to search · ↑/↓ move · Enter {} · Esc leave search · ^C quit",
+            "type to search · ↑/↓/←/→ move · Enter {} · Esc leave search · ^C quit",
             app.enter_verb()
         )
         .into(),
