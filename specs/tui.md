@@ -113,7 +113,8 @@ Enter to `file-loaded` takes 2–3 s, mostly mpv's spawn, shown as a spinner fed
 
 ## Artwork
 
-- **`Picker::from_query_stdio()` must run before `view::enter()`**: it writes an escape and reads the answer from stdin, which the alternate screen swallows. On failure (tmux without passthrough, a plain xterm) `Picker::halfblocks()` is the fallback.
+- **`cover::detect_picker` must run before `view::enter()`**: it writes an escape and reads the answer from stdin, which the alternate screen swallows. On failure (tmux without passthrough, a plain xterm) `Picker::halfblocks()` is the fallback.
+- **The query opts into kitty `o=z` compression**, used only if the terminal accepts the probe. The transmit is written inside `draw` while deflating runs in `encode`'s `spawn_blocking`, so the frame that first shows a large cover gets about 20 ms shorter.
 - **Images come through `Api::image` → `Api::get`**, carrying the cached auth header. `jellyfin::url::image_url` is for MPRIS only: tokenless (the endpoint is anonymous), JPEG at 600 px since WebP is unsafe for a third-party widget, and with a named quality (a 265 KB poster is 226 KB with only the cap, 75 KB with the quality).
 - **The server resizes**, to the next 64 px bucket above the cell box, as WebP. `maxWidth`/`maxHeight` keep aspect and cap both sides; `fillWidth`/`fillHeight` return a full poster whatever the box. A rail cover is about 40 KB.
 - **The bucket is for the server's cache**: `ImageProcessor` re-encodes on demand, keyed by dimensions, format and quality, so exact `cells × font size` would encode per resize. It does not cut our requests (`Covers::claim` is keyed on the exact size and cell); the bandwidth win is WebP's.
@@ -125,7 +126,7 @@ Enter to `file-loaded` takes 2–3 s, mostly mpv's spawn, shown as a spinner fed
 ### HiDPI
 
 - **The cell size is measured each iteration, not trusted from startup.** Kitty is given pixel sizes and divides by the real cell size, while `ratatui-image` lays out against the `CSI 16 t` answer from before the alternate screen, which cannot be re-queried. When they disagree covers draw at 1/scale in the box's top-left corner; dragging to another display does the same.
-- **`cover::cell_size` divides `ws_xpixel`/`ws_ypixel` (`Backend::window_size`, from `TIOCGWINSZ`) by the grid**, and `Covers::set_cell_size` rebuilds the picker at that font size keeping the queried protocol. `Picker::from_fontsize` is deprecated and 11.x cannot update a returned picker.
+- **`cover::cell_size` divides `ws_xpixel`/`ws_ypixel` (`Backend::window_size`, from `TIOCGWINSZ`) by the grid**, and `Covers::set_cell_size` rebuilds the picker at that font size keeping the queried protocol. `Picker::from_fontsize` is deprecated and 11.x cannot update a returned picker, so the rebuild loses the queried capabilities and transmits uncompressed.
 - **It runs at the head of the loop, not in `Event::Resize`**, since a scale change need not resize the grid. A change drops the whole cache (keys carry the cell) and in-flight results land under the old key. A change within a few percent is window padding and ignored; a terminal reporting no pixel size keeps the query's answer.
 - **Never encode a cover larger than its box**: `Image::render` draws nothing on overflow without `allow_clipping`. Scale belongs in the picker's font size.
 

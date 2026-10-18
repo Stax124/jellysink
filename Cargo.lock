@@ -2074,13 +2074,14 @@ dependencies = [
 
 [[package]]
 name = "ratatui-image"
-version = "11.0.8"
-source = "git+https://github.com/Stax124/ratatui-image?rev=988d3b9e11aa279cc4b038fa8d53b0a6711f8a6d#988d3b9e11aa279cc4b038fa8d53b0a6711f8a6d"
+version = "11.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9593d10c61ec2007f429d1fafc4f4a19fecdbae4d06b531a2d505227fb82f5ea"
 dependencies = [
  "base64-simd",
+ "flate2",
  "icy_sixel",
  "image",
- "miniz_oxide 0.8.9",
  "rand 0.8.8",
  "ratatui",
  "rustix 0.38.44",

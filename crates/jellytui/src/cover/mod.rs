@@ -16,6 +16,7 @@ use ratatui_image::FontSize;
 use ratatui_image::Image;
 use ratatui_image::Resize;
 use ratatui_image::picker::Picker;
+use ratatui_image::picker::cap_parser::QueryStdioOptions;
 use ratatui_image::protocol::Protocol;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -267,9 +268,14 @@ pub(super) fn cell_size(window: WindowSize) -> Option<Size> {
     ))
 }
 
-/// Queries the terminal for its graphics protocol and cell size.
+/// Queries the terminal for its graphics protocol and cell size. Kitty
+/// compression is worth it here: deflating runs in `encode`, off the drawing thread.
 pub(super) fn detect_picker() -> Picker {
-    Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
+    let options = QueryStdioOptions {
+        kitty_compression: true,
+        ..QueryStdioOptions::default()
+    };
+    Picker::from_query_stdio_with_options(options).unwrap_or_else(|_| Picker::halfblocks())
 }
 
 /// One cover, resized by the server rather than downloaded whole. Decode and
