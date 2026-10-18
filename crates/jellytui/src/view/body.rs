@@ -1,13 +1,13 @@
 //! The three screen bodies: the Home shelves, a browse level and search
 //! results.
 
-use super::{ACCENT, DIM, SELECTED, panel};
+use super::{ACCENT, DIM, SELECTED, WARN, panel, spinner};
 use crate::app::{App, HomePane};
 use crate::nav::{self, Mode, Rows};
 use crate::view::{grid, rail, synopsis};
 use jellysink_core::jellyfin::model::Item;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
@@ -38,17 +38,16 @@ pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
     let Some(level) = app.stack.last() else {
         return;
     };
-    let trail = app
+    let title = app
         .stack
         .iter()
         .map(|level| level.title.as_str())
         .collect::<Vec<_>>()
         .join(" › ");
-    let title = if level.rows.loading {
-        format!("{trail} — loading…")
-    } else {
-        trail
-    };
+    if level.rows.loading {
+        render_pending(frame, area, &title, level.failed);
+        return;
+    }
     if let Some(metrics) = app.grid_metrics() {
         let (area, band) = match nav::mode(&level.rows.items) {
             Mode::Synopsis => {
@@ -75,6 +74,26 @@ pub(super) fn render_browse(app: &App, frame: &mut Frame, area: Rect) {
     }
     let area = rail::beside(frame, area, level.rows.selected_item(), &app.covers);
     render_list(frame, area, &title, &level.rows);
+}
+
+/// Without a row `nav::mode` cannot tell what the level will be, so this does
+/// not guess at a grid or list.
+fn render_pending(frame: &mut Frame, area: Rect, title: &str, failed: bool) {
+    let block = panel(format!(" {title} ")).border_style(Style::default().fg(ACCENT));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [middle] = Layout::vertical([Constraint::Length(1)])
+        .flex(Flex::Center)
+        .areas(inner);
+    let status = if failed {
+        Line::from(Span::styled("could not load", Style::default().fg(WARN)))
+    } else {
+        Line::from(vec![
+            Span::styled(spinner(), Style::default().fg(ACCENT)),
+            Span::styled("  loading", Style::default().fg(DIM)),
+        ])
+    };
+    frame.render_widget(Paragraph::new(status).centered(), middle);
 }
 
 pub(super) fn render_search(app: &App, frame: &mut Frame, area: Rect) {

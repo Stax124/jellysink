@@ -8,6 +8,7 @@ pub(super) enum Msg {
     Home(HomePane, Vec<Item>),
     /// Lands only on the level at that depth that asked for that source.
     Level(usize, Source, Vec<Item>),
+    LevelFailed(usize, Source, color_eyre::Report),
     Search(u64, Vec<Item>),
     /// A connection made, with the snapshot that follows its welcome.
     Connected {
@@ -50,11 +51,18 @@ impl App {
         match msg {
             Msg::Home(pane, items) => self.shelf_mut(pane).fill(items),
             Msg::Level(depth, source, items) => {
-                if let Some(level) = self.stack.get_mut(depth)
-                    && level.source == source
-                {
+                if let Some(level) = self.level_mut(depth, &source) {
                     level.rows.fill(items);
                 }
+            }
+            Msg::LevelFailed(depth, source, e) => {
+                if let Some(level) = self
+                    .level_mut(depth, &source)
+                    .filter(|level| level.rows.loading)
+                {
+                    level.failed = true;
+                }
+                self.on_msg(e.into());
             }
             // A slower earlier request must not overwrite a newer result.
             Msg::Search(generation, items) => {
@@ -101,6 +109,12 @@ impl App {
         }
     }
 
+    fn level_mut(&mut self, depth: usize, source: &Source) -> Option<&mut Level> {
+        self.stack
+            .get_mut(depth)
+            .filter(|level| level.source == *source)
+    }
+
     /// Runs `task` off the loop, so no request can block key handling, and
     /// delivers what it returns.
     pub(super) fn spawn_msg(&self, task: impl Future<Output = Option<Msg>> + Send + 'static) {
@@ -122,10 +136,25 @@ impl App {
     ) where
         F: Future<Output = Result<serde_json::Value>> + Send + 'static,
     {
+        self.spawn_or(label, request, wrap, Msg::from);
+    }
+
+    /// [`Self::spawn`] for a request whose failure the screen has to show.
+    pub(super) fn spawn_or<F>(
+        &self,
+        label: &'static str,
+        request: F,
+        wrap: impl FnOnce(Vec<Item>) -> Msg + Send + 'static,
+        fail: impl FnOnce(color_eyre::Report) -> Msg + Send + 'static,
+    ) where
+        F: Future<Output = Result<serde_json::Value>> + Send + 'static,
+    {
         self.spawn_msg(async move {
             let started = std::time::Instant::now();
-            let list = request
+            let list = tokio::time::timeout(REQUEST_TIMEOUT, request)
                 .await
+                .wrap_err_with(|| format!("{label} request"))
+                .flatten()
                 .and_then(|body| ItemList::deserialize(&body).wrap_err("decoding items"));
             Some(match list {
                 Ok(list) => {
@@ -137,7 +166,7 @@ impl App {
                     );
                     wrap(list.items)
                 }
-                Err(e) => e.into(),
+                Err(e) => fail(e),
             })
         });
     }

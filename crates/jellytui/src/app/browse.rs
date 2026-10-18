@@ -42,6 +42,12 @@ impl App {
             .map(|(_, item)| item)
     }
 
+    /// The browse level on screen while it has no rows yet, loading or failed.
+    pub(crate) fn pending_level(&self) -> Option<&Level> {
+        let level = self.stack.last().filter(|level| level.rows.loading)?;
+        (self.screen == Screen::Browse).then_some(level)
+    }
+
     pub(super) fn selected_item(&self) -> Option<&Item> {
         self.focused()?.selected_item()
     }
@@ -220,11 +226,10 @@ impl App {
         match self.screen {
             Screen::Home => self.load_home(),
             Screen::Browse => {
-                if let Some((depth, source)) = self
-                    .stack
-                    .last()
-                    .map(|level| (self.stack.len() - 1, level.source.clone()))
-                {
+                let depth = self.stack.len().saturating_sub(1);
+                if let Some(level) = self.stack.last_mut() {
+                    level.failed = false;
+                    let source = level.source.clone();
                     self.load_level(depth, source);
                 }
             }

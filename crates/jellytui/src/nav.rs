@@ -51,6 +51,8 @@ pub(super) struct Level {
     pub(super) title: String,
     pub(super) source: Source,
     pub(super) rows: Rows,
+    /// The last load of a level still without rows failed; `r` clears it.
+    pub(super) failed: bool,
 }
 
 /// What produced a level's rows, which is also how it is reloaded.
@@ -71,6 +73,7 @@ impl Level {
             title: title.into(),
             source,
             rows: Rows::loading(),
+            failed: false,
         }
     }
 }

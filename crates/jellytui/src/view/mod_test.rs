@@ -281,14 +281,44 @@ fn the_hint_names_what_enter_does_to_the_selected_item_not_the_screen_shape() {
     assert!(hints_at(&mut app, 90).contains("Enter open"));
 }
 
+fn loading_level() -> App {
+    let mut app = app();
+    app.stack.push(Level::loading("Movies", Source::Libraries));
+    app.screen = Screen::Browse;
+    app
+}
+
 #[test]
 fn an_empty_library_says_so_rather_than_drawing_a_blank_box() {
-    let mut app = app();
-    let mut level = Level::loading("Movies", Source::Libraries);
-    level.rows.fill(Vec::new());
-    app.stack.push(level);
-    app.screen = Screen::Browse;
+    let mut app = loading_level();
+    app.stack[0].rows.fill(Vec::new());
     assert!(drawn(&mut app).contains("nothing here"));
+}
+
+#[test]
+fn a_level_still_loading_is_one_panel_rather_than_an_empty_list_and_rail() {
+    let screen = drawn(&mut loading_level());
+    for shown in ["Movies", "loading"] {
+        assert!(screen.contains(shown), "missing {shown}:\n{screen}");
+    }
+    for gone in ["nothing here", "Details"] {
+        assert!(!screen.contains(gone), "still draws {gone}:\n{screen}");
+    }
+}
+
+#[test]
+fn a_level_that_failed_to_load_says_so_in_place_of_the_spinner() {
+    let mut app = loading_level();
+    app.stack[0].failed = true;
+    let screen = drawn(&mut app);
+    assert!(screen.contains("could not load"), "{screen}");
+    assert!(!screen.contains("loading"), "{screen}");
+}
+
+#[test]
+fn a_level_still_loading_offers_no_key_that_needs_a_row() {
+    let hints = hints_at(&mut loading_level(), 90);
+    assert_eq!(hints, "Esc back · r reload · q quit");
 }
 
 fn watched(mut item: Item, played: bool, position_ticks: i64) -> Item {

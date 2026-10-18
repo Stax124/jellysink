@@ -212,6 +212,49 @@ async fn rows_for_a_level_the_user_left_do_not_fill_the_one_that_replaced_it() {
     assert!(app.stack[0].rows.loading);
 }
 
+fn failed_movies_level() -> App {
+    let mut app = app();
+    app.screen = Screen::Browse;
+    let movies = Source::Folder("movies".into());
+    app.push("Movies", movies.clone());
+    let refused = color_eyre::eyre::eyre!("connection refused");
+    app.on_msg(Msg::LevelFailed(0, movies, refused));
+    app
+}
+
+#[tokio::test]
+async fn a_failed_level_load_marks_the_level_and_names_the_error_in_the_header() {
+    let app = failed_movies_level();
+    assert!(app.pending_level().is_some_and(|level| level.failed));
+    assert!(
+        app.message.contains("connection refused"),
+        "{}",
+        app.message
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_listing_the_server_never_answers_fails_after_the_timeout() {
+    let mut app = app();
+    app.spawn_or(
+        "level",
+        std::future::pending(),
+        |items| Msg::Level(0, Source::Libraries, items),
+        |e| Msg::LevelFailed(0, Source::Libraries, e),
+    );
+    let started = tokio::time::Instant::now();
+    let msg = app.rx.recv().await;
+    assert!(matches!(msg, Some(Msg::LevelFailed(..))));
+    assert_eq!(started.elapsed(), REQUEST_TIMEOUT);
+}
+
+#[tokio::test]
+async fn reloading_a_failed_level_puts_it_back_to_loading() {
+    let mut app = failed_movies_level();
+    app.apply(Intent::Refresh);
+    assert!(app.pending_level().is_some_and(|level| !level.failed));
+}
+
 #[test]
 fn enter_on_an_empty_list_does_not_panic() {
     let mut app = app();

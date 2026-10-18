@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0
+### Changed
+- jellytui shows a single panel with a spinner while a library, series or season loads, instead of an empty list beside an empty details pane.
+### Fixed
+- jellytui no longer shows "loading" forever when a library, series or season fails to load: it says "could not load", and `r` retries.
+- jellytui gives up on a listing after 10 seconds instead of waiting forever on an unresponsive server.
+
 ## 2.0.2
 ### Fixed
 - jellytui Home covers no longer change shape with the item type: Continue Watching and Next Up are always landscape, and movies show their thumb or backdrop art instead of a squeezed poster.

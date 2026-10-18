@@ -16,8 +16,8 @@ impl App {
 
     pub(super) fn load_level(&self, depth: usize, source: Source) {
         tracing::info!(depth, ?source, "opening level");
-        let (api, requested) = (self.api.clone(), source.clone());
-        self.spawn(
+        let (api, requested, failed_source) = (self.api.clone(), source.clone(), source.clone());
+        self.spawn_or(
             "level",
             async move {
                 match source {
@@ -31,6 +31,7 @@ impl App {
                 }
             },
             move |items| Msg::Level(depth, requested, items),
+            move |e| Msg::LevelFailed(depth, failed_source, e),
         );
     }
 

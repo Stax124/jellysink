@@ -310,6 +310,7 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
             }
         )
         .into(),
+        _ if app.pending_level().is_some() => "Esc back · r reload · q quit".into(),
         // In a grid every arrow moves, so Esc and Enter need naming.
         _ if app.grid_metrics().is_some() => format!(
             "↑/↓/←/→ move · Enter {} · Esc back · t watched · r reload · q quit",

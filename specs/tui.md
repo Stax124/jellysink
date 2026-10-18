@@ -30,7 +30,7 @@ jellytui ──control.sock──> jellysink ──> mpv
 
 ## Staying responsive
 
-Every request is a spawned task reporting over one `mpsc` (`Msg`), so no keystroke waits on HTTP. The staleness rules are one rule — **the view outlives what it points into**:
+Every request is a spawned task reporting over one `mpsc` (`Msg`), so no keystroke waits on HTTP. **A listing fails after `REQUEST_TIMEOUT` (10 s)**, so a hung server cannot leave a screen loading. Rejected: the timeout on core's client, which would also cut the daemon's PlaybackInfo while the server opens a live stream. The staleness rules are one rule — **the view outlives what it points into**:
 
 - **Search** is debounced `SEARCH_DEBOUNCE` and carries a generation, so a slow older response is dropped.
 - **Level loads** carry their depth and `Source` and land only on the matching level; depth alone fails after going back and opening another level.
@@ -80,6 +80,8 @@ Enter to `file-loaded` takes 2–3 s, mostly mpv's spawn, shown as a spinner fed
 ## View modes
 
 - **A level is a grid or a list with a detail rail, chosen by item kind, not `Source`** (`nav::mode`): `Series`, `Season`, `Movie`, `BoxSet`, libraries and `Episode` get the grid. By kind, a folder of movies gets the grid whichever route reached it, and it is one function to test rather than a table kept in step with the browse stack. Only the first row is asked, so kinds sharing a screen must answer alike: `CollectionFolder` and `UserView` both come from `/UserViews`, and a Libraries screen changing shape with its sort order would be the bug.
+- **A level still loading is one panel with a spinner** (`body::render_pending`), whatever it will become: `nav::mode` needs a row. The loop wakes every `SPINNER_FRAME` until it fills or fails. Rejected: guessing the shape from `Source`, since a `Folder` can turn out a list or a grid.
+- **A failed load lands on its level** (`Msg::LevelFailed`, matched like `Msg::Level`) while it has no rows: the panel says "could not load" and stops spinning until `r` loads it again, while the error goes to the header like any other. Matching has no generation, so an older request's failure can flag a newer load still in flight; its rows clear it on arrival, and `REQUEST_TIMEOUT` bounds how long that takes.
 - **Search is always a list**, its rows being mixed kinds.
 - **Home is two one-row grids**, Continue Watching above Next Up, which is why `grid::metrics` takes the row count. A shelf is always landscape (`grid::shelf_metrics_for`), since Continue Watching mixes movies and episodes, and `offset` scrolls it horizontally by screenfuls.
 - **`grid::render` draws with the `Metrics` `App` computed**, so requested covers and drawn tiles cannot disagree. Home bypasses `App::grid_metrics`, which answers only for the focused shelf; `App::visible_covers` asks for both.

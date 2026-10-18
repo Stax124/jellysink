@@ -45,6 +45,9 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 pub(crate) const SPINNER_FRAME: Duration = Duration::from_millis(100);
 /// The shortest gap between two batches of cover requests. A rate limit rather
 /// than a settling delay: a still cursor fetches at once, only a held key waits.
+/// Here rather than on core's client: the daemon's PlaybackInfo can take longer
+/// while the server opens a live stream.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const COVER_THROTTLE: Duration = Duration::from_millis(120);
 const SEARCH_TYPES: &str = "Movie,Series,Episode";
 
@@ -207,8 +210,10 @@ impl App {
                 break Err(e).wrap_err("drawing the terminal");
             }
             let (search_deadline, cover_deadline) = (self.search_due, self.cover_due);
-            let spinner_deadline = (self.starting().is_some() || self.loading())
-                .then(|| tokio::time::Instant::now() + SPINNER_FRAME);
+            let spinner_deadline = (self.starting().is_some()
+                || self.loading()
+                || self.pending_level().is_some_and(|level| !level.failed))
+            .then(|| tokio::time::Instant::now() + SPINNER_FRAME);
             tokio::select! {
                 event = input.recv() => match event {
                     Some(event) => self.on_event(event),
