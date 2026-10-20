@@ -10,7 +10,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 
 /// The two Home shelves, one above the other and indexed by `HomePane`. Each
 /// is a single row of tiles, which is all half the body has the height for.
@@ -103,7 +103,10 @@ pub(crate) fn search_split(body: Rect) -> [Rect; 2] {
 
 pub(super) fn render_search(app: &App, frame: &mut Frame, area: Rect) {
     let [input, results] = search_split(area);
-    let search_box = Block::default().borders(Borders::ALL).title(" Search ");
+    let search_box = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(" Search ");
     frame.render_widget(
         Paragraph::new(format!("{}▏", app.query)).block(search_box),
         input,
